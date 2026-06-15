@@ -13,6 +13,7 @@
 #include <QMenuBar>
 #include <QSettings>
 #include <QStatusBar>
+#include <QStringList>
 #include <QTimer>
 
 namespace {
@@ -113,10 +114,13 @@ void MainWindow::refreshNoteList() {
     m_noteList->clear();
     if (!m_vault)
         return;
+    QStringList titles;
     for (const Note &n : m_vault->notes()) {
         auto *item = new QListWidgetItem(n.title, m_noteList);
         item->setData(kPathRole, n.path);
+        titles << n.title;
     }
+    m_editor->setCompletions(titles);
     selectInList(m_noteList, m_currentPath);
 }
 

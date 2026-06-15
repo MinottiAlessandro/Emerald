@@ -10,7 +10,8 @@ files, inline live preview. Built to stay small and maintainable.
   `[[wiki-links]]` render in place; the syntax markers collapse away on every
   line except the one your cursor is on.
 - **Full link system.** `[[Note]]` links are clickable (Ctrl+click), auto-create
-  the target if it doesn't exist, and feed a live **Backlinks** panel.
+  the target if it doesn't exist, and feed a live **Backlinks** panel. Typing
+  `[[` pops a fuzzy autocomplete of existing note titles.
 - **Debounced autosave.** Your notes are written to disk as you type.
 - **Dark theme**, embedded in the binary.
 
@@ -44,7 +45,6 @@ without a display.
 
 ## Roadmap
 
-- `[[` autocomplete
 - Graph view
 - Full-text search & tags
 - Inline images / tables in preview

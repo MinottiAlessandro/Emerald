@@ -48,6 +48,23 @@ QDockWidget::title {
     letter-spacing: 1px;
 }
 
+/* [[ autocomplete popup */
+QListView#completer {
+    background: #16161e;
+    color: #c0caf5;
+    border: 1px solid #2a2e42;
+    border-radius: 6px;
+    padding: 4px;
+    outline: 0;
+}
+QListView#completer::item {
+    padding: 5px 10px;
+    border-radius: 4px;
+}
+QListView#completer::item:selected {
+    background: #2a2e42;
+}
+
 QMenuBar {
     background: #16161e;
     color: #a9b1d6;

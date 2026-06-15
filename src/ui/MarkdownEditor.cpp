@@ -3,8 +3,13 @@
 #include "MarkdownHighlighter.h"
 #include "core/WikiLink.h"
 
+#include <QAbstractItemView>
+#include <QCompleter>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QRegularExpression>
+#include <QScrollBar>
+#include <QStringListModel>
 #include <QTextBlock>
 
 MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
@@ -25,6 +30,69 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
         m_highlighter->setActiveBlock(textCursor().blockNumber());
     });
+
+    m_completionModel = new QStringListModel(this);
+    m_completer = new QCompleter(m_completionModel, this);
+    m_completer->setWidget(this);
+    m_completer->setCompletionMode(QCompleter::PopupCompletion);
+    m_completer->setCaseSensitivity(Qt::CaseInsensitive);
+    m_completer->setFilterMode(Qt::MatchContains);
+    m_completer->popup()->setObjectName(QStringLiteral("completer"));
+    connect(m_completer, qOverload<const QString &>(&QCompleter::activated), this,
+            &MarkdownEditor::insertCompletion);
+}
+
+void MarkdownEditor::setCompletions(const QStringList &titles) {
+    m_completionModel->setStringList(titles);
+}
+
+QString MarkdownEditor::wikiContextPrefix(bool *inContext) const {
+    *inContext = false;
+    const QTextCursor cursor = textCursor();
+    const QString before = cursor.block().text().left(cursor.positionInBlock());
+    const int open = before.lastIndexOf(QStringLiteral("[["));
+    if (open < 0)
+        return {};
+    // An intervening "]]" means the link is already closed before the cursor.
+    if (before.mid(open).contains(QStringLiteral("]]")))
+        return {};
+    *inContext = true;
+    return before.mid(open + 2);
+}
+
+void MarkdownEditor::updateCompletionPopup() {
+    bool inContext = false;
+    const QString prefix = wikiContextPrefix(&inContext);
+    if (!inContext) {
+        m_completer->popup()->hide();
+        return;
+    }
+    if (prefix != m_completer->completionPrefix())
+        m_completer->setCompletionPrefix(prefix);
+    if (m_completer->completionCount() == 0) {
+        m_completer->popup()->hide();
+        return;
+    }
+    m_completer->popup()->setCurrentIndex(
+        m_completer->completionModel()->index(0, 0));
+
+    QRect rect = cursorRect();
+    rect.translate(viewport()->pos()); // account for the centered margins
+    rect.setWidth(m_completer->popup()->sizeHintForColumn(0) +
+                  m_completer->popup()->verticalScrollBar()->sizeHint().width());
+    m_completer->complete(rect);
+}
+
+void MarkdownEditor::insertCompletion(const QString &completion) {
+    QTextCursor cursor = textCursor();
+    const int prefixLen = m_completer->completionPrefix().length();
+    cursor.setPosition(cursor.position() - prefixLen, QTextCursor::KeepAnchor);
+    cursor.insertText(completion);
+    // Close the link unless the user already typed the brackets.
+    if (cursor.block().text().mid(cursor.positionInBlock(), 2) !=
+        QStringLiteral("]]"))
+        cursor.insertText(QStringLiteral("]]"));
+    setTextCursor(cursor);
 }
 
 QString MarkdownEditor::linkAt(const QPoint &pos) const {
@@ -70,4 +138,23 @@ void MarkdownEditor::updateMargins() {
 void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     QPlainTextEdit::resizeEvent(event);
     updateMargins();
+}
+
+void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
+    if (m_completer->popup()->isVisible()) {
+        // These keys belong to the popup while it is open.
+        switch (event->key()) {
+        case Qt::Key_Enter:
+        case Qt::Key_Return:
+        case Qt::Key_Escape:
+        case Qt::Key_Tab:
+        case Qt::Key_Backtab:
+            event->ignore();
+            return;
+        default:
+            break;
+        }
+    }
+    QPlainTextEdit::keyPressEvent(event);
+    updateCompletionPopup();
 }

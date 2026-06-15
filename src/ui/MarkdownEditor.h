@@ -1,16 +1,22 @@
 #pragma once
 
 #include <QPlainTextEdit>
+#include <QStringList>
 
 class MarkdownHighlighter;
+class QCompleter;
+class QStringListModel;
 
 // The writing surface: a plain-text editor wired to the live-preview
-// highlighter, with a centered reading measure and Ctrl-click navigation
-// for [[wiki-links]].
+// highlighter, with a centered reading measure, Ctrl-click navigation for
+// [[wiki-links]], and a completion popup that fires while typing inside [[ ]].
 class MarkdownEditor : public QPlainTextEdit {
     Q_OBJECT
 public:
     explicit MarkdownEditor(QWidget *parent = nullptr);
+
+    // The note titles offered by [[ autocomplete. Call when the vault changes.
+    void setCompletions(const QStringList &titles);
 
 signals:
     void linkClicked(const QString &target);
@@ -19,11 +25,19 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private:
-    // Cleaned link target under the given viewport point, or empty.
     QString linkAt(const QPoint &pos) const;
     void updateMargins();
 
-    MarkdownHighlighter *m_highlighter;
+    // Completion: the partial title typed after the nearest unclosed "[[" on
+    // the current line, or empty with *inContext=false when not inside a link.
+    QString wikiContextPrefix(bool *inContext) const;
+    void updateCompletionPopup();
+    void insertCompletion(const QString &completion);
+
+    MarkdownHighlighter *m_highlighter = nullptr;
+    QCompleter *m_completer = nullptr;
+    QStringListModel *m_completionModel = nullptr;
 };
