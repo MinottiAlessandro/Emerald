@@ -6,7 +6,9 @@
 
 class Vault;
 class MarkdownEditor;
+class GraphView;
 class QListWidget;
+class QDockWidget;
 class QTimer;
 
 class MainWindow : public QMainWindow {
@@ -31,6 +33,8 @@ private:
     void onLinkClicked(const QString &target);
     void updateBacklinks();
     void selectInList(QListWidget *list, const QString &path);
+    void toggleGraph();
+    void refreshGraph();
 
     Vault *m_vault = nullptr;
     LinkIndex m_index;
@@ -38,7 +42,10 @@ private:
     MarkdownEditor *m_editor = nullptr;
     QListWidget *m_noteList = nullptr;
     QListWidget *m_backlinks = nullptr;
+    GraphView *m_graph = nullptr;
+    QDockWidget *m_graphDock = nullptr;
     QTimer *m_saveTimer = nullptr;
+    bool m_graphInit = false;
 
     QString m_currentPath;
     QString m_currentTitle;

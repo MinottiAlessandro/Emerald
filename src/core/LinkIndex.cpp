@@ -27,10 +27,12 @@ void LinkIndex::rebuild(const Vault &vault) {
     m_forward.clear();
     m_back.clear();
     m_display.clear();
+    m_real.clear();
 
     for (const Note &n : vault.notes()) {
         const QString lower = n.title.toLower();
         m_display.insert(lower, n.title);
+        m_real.insert(lower);
     }
     for (const Note &n : vault.notes())
         updateNote(n.title, vault.read(n.path));
@@ -39,6 +41,7 @@ void LinkIndex::rebuild(const Vault &vault) {
 void LinkIndex::updateNote(const QString &title, const QString &content) {
     const QString lowerSource = title.toLower();
     m_display.insert(lowerSource, title);
+    m_real.insert(lowerSource); // a note we have content for is a real file
     removeForward(lowerSource);
 
     QSet<QString> targets;
@@ -51,6 +54,18 @@ void LinkIndex::updateNote(const QString &title, const QString &content) {
     }
     if (!targets.isEmpty())
         m_forward.insert(lowerSource, targets);
+}
+
+LinkIndex::Graph LinkIndex::graph() const {
+    Graph g;
+    for (auto it = m_display.constBegin(); it != m_display.constEnd(); ++it)
+        g.nodes.append({it.value(), m_real.contains(it.key())});
+    for (auto it = m_forward.constBegin(); it != m_forward.constEnd(); ++it) {
+        const QString source = m_display.value(it.key(), it.key());
+        for (const QString &target : it.value())
+            g.edges.append({source, m_display.value(target, target)});
+    }
+    return g;
 }
 
 QStringList LinkIndex::backlinks(const QString &title) const {
