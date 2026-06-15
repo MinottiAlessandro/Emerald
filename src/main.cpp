@@ -1,9 +1,16 @@
 #include "ui/MainWindow.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QFile>
 
 int main(int argc, char *argv[]) {
+    // Composite the widget backing store on the GPU (Qt's RHI path). This makes
+    // window resizing smooth on Wayland at zero dependency cost. Must be set
+    // before QApplication is constructed; override with QT_WIDGETS_RHI=0.
+    if (!qEnvironmentVariableIsSet("QT_WIDGETS_RHI"))
+        qputenv("QT_WIDGETS_RHI", QByteArrayLiteral("1"));
+
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Emerald"));
     QApplication::setOrganizationName(QStringLiteral("Emerald"));

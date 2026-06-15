@@ -27,6 +27,9 @@ cmake --build build
 
 Open a vault with `Ctrl+O` (try `vault-demo/`), create notes with `Ctrl+N`.
 
+The widget backing store is composited on the GPU by default (Qt's RHI path)
+for smooth window resizing. Set `QT_WIDGETS_RHI=0` to fall back to CPU raster.
+
 ## Architecture
 
 ```

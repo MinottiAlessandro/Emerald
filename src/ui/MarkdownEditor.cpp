@@ -19,7 +19,12 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
 
-    QFont font(QStringLiteral("Inter"), 12);
+    // Prefer Inter if installed, but fall back to fonts that exist so the first
+    // text layout doesn't pay for a failed font lookup.
+    QFont font;
+    font.setFamilies({QStringLiteral("Inter"), QStringLiteral("Liberation Sans"),
+                      QStringLiteral("sans-serif")});
+    font.setPointSize(12);
     font.setStyleHint(QFont::SansSerif);
     setFont(font);
     document()->setDefaultFont(font);
