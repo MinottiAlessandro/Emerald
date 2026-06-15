@@ -46,5 +46,4 @@ private:
     QRegularExpression m_reItalicUnder;
     QRegularExpression m_reCode;
     QRegularExpression m_reStrike;
-    QRegularExpression m_reLink;
 };

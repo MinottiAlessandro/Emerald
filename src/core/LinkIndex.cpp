@@ -1,21 +1,17 @@
 #include "LinkIndex.h"
 
 #include "Vault.h"
+#include "WikiLink.h"
 #include <QRegularExpression>
 #include <algorithm>
 
 QStringList LinkIndex::parseTargets(const QString &content) {
-    static const QRegularExpression re(QStringLiteral("\\[\\[([^\\[\\]]+)\\]\\]"));
     QStringList targets;
-    auto it = re.globalMatch(content);
+    auto it = WikiLink::pattern().globalMatch(content);
     while (it.hasNext()) {
-        QString inner = it.next().captured(1);
-        // Drop alias ("Foo|bar") and heading ("Foo#sec") parts.
-        inner = inner.section(QLatin1Char('|'), 0, 0)
-                    .section(QLatin1Char('#'), 0, 0)
-                    .trimmed();
-        if (!inner.isEmpty())
-            targets << inner;
+        const QString target = WikiLink::cleanTarget(it.next().captured(1));
+        if (!target.isEmpty())
+            targets << target;
     }
     return targets;
 }

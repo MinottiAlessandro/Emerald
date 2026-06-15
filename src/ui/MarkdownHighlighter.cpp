@@ -1,5 +1,6 @@
 #include "MarkdownHighlighter.h"
 
+#include "core/WikiLink.h"
 #include <QTextDocument>
 
 namespace {
@@ -51,7 +52,6 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_reItalicStar = QRegularExpression(QStringLiteral("\\*([^*]+)\\*"));
     m_reItalicUnder =
         QRegularExpression(QStringLiteral("(?<!\\w)_([^_]+)_(?!\\w)"));
-    m_reLink = QRegularExpression(QStringLiteral("\\[\\[([^\\[\\]]+)\\]\\]"));
 }
 
 void MarkdownHighlighter::setActiveBlock(int blockNumber) {
@@ -136,5 +136,5 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     applyInline(m_reStrike, text, consumed, m_strike, reveal);
     applyInline(m_reItalicStar, text, consumed, m_italic, reveal);
     applyInline(m_reItalicUnder, text, consumed, m_italic, reveal);
-    applyInline(m_reLink, text, consumed, m_link, reveal);
+    applyInline(WikiLink::pattern(), text, consumed, m_link, reveal);
 }

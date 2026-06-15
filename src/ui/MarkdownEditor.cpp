@@ -1,6 +1,7 @@
 #include "MarkdownEditor.h"
 
 #include "MarkdownHighlighter.h"
+#include "core/WikiLink.h"
 
 #include <QMouseEvent>
 #include <QRegularExpression>
@@ -31,16 +32,11 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
     const int column = cursor.positionInBlock();
     const QString text = cursor.block().text();
 
-    static const QRegularExpression re(QStringLiteral("\\[\\[([^\\[\\]]+)\\]\\]"));
-    auto it = re.globalMatch(text);
+    auto it = WikiLink::pattern().globalMatch(text);
     while (it.hasNext()) {
         const auto m = it.next();
-        if (column >= m.capturedStart(0) && column <= m.capturedEnd(0)) {
-            return m.captured(1)
-                .section(QLatin1Char('|'), 0, 0)
-                .section(QLatin1Char('#'), 0, 0)
-                .trimmed();
-        }
+        if (column >= m.capturedStart(0) && column <= m.capturedEnd(0))
+            return WikiLink::cleanTarget(m.captured(1));
     }
     return {};
 }
