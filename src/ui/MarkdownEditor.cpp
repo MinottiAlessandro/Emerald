@@ -23,7 +23,14 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     font.setStyleHint(QFont::SansSerif);
     setFont(font);
     document()->setDefaultFont(font);
-    document()->setDocumentMargin(8);
+    document()->setDocumentMargin(16);
+
+    // Cap the editor to a comfortable reading measure; MainWindow centers it
+    // with stretch spacers. Pinning the width means resizing the side panels
+    // doesn't reflow or repaint the text (it used to, on every resize event —
+    // that was the lag).
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMaximumWidth(820);
 
     m_highlighter = new MarkdownHighlighter(document());
 
@@ -126,18 +133,6 @@ void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
                           !linkAt(event->pos()).isEmpty();
     viewport()->setCursor(overLink ? Qt::PointingHandCursor : Qt::IBeamCursor);
     QPlainTextEdit::mouseMoveEvent(event);
-}
-
-void MarkdownEditor::updateMargins() {
-    // Keep a comfortable reading measure: cap text width and center it.
-    const int measure = 760;
-    const int side = qMax(28, (width() - measure) / 2);
-    setViewportMargins(side, 20, side, 20);
-}
-
-void MarkdownEditor::resizeEvent(QResizeEvent *event) {
-    QPlainTextEdit::resizeEvent(event);
-    updateMargins();
 }
 
 void MarkdownEditor::keyPressEvent(QKeyEvent *event) {

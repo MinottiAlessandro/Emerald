@@ -8,6 +8,7 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QInputDialog>
 #include <QListWidget>
 #include <QMenuBar>
@@ -44,9 +45,22 @@ MainWindow::~MainWindow() { delete m_vault; }
 
 void MainWindow::buildUi() {
     m_editor = new MarkdownEditor(this);
-    setCentralWidget(m_editor);
     connect(m_editor, &MarkdownEditor::linkClicked, this,
             &MainWindow::onLinkClicked);
+
+    // Center the (width-capped) editor with stretch spacers. This keeps the
+    // editor's width constant while the window/side panels resize, so dragging
+    // a dock doesn't reflow or repaint the text.
+    auto *center = new QWidget(this);
+    auto *row = new QHBoxLayout(center);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(0);
+    // The editor (stretch 1) grows first until it hits its max width, then the
+    // zero-stretch spacers absorb the remainder, centering it.
+    row->addStretch(0);
+    row->addWidget(m_editor, 1);
+    row->addStretch(0);
+    setCentralWidget(center);
 
     m_noteList = new QListWidget(this);
     auto *sidebar = new QDockWidget(tr("Notes"), this);

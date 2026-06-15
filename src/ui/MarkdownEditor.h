@@ -24,12 +24,10 @@ signals:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 
 private:
     QString linkAt(const QPoint &pos) const;
-    void updateMargins();
 
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.
