@@ -58,6 +58,13 @@ void MarkdownEditor::setCompletions(const QStringList &titles) {
     m_completionModel->setStringList(titles);
 }
 
+void MarkdownEditor::jumpToMatch(const QString &text) {
+    if (text.isEmpty())
+        return;
+    moveCursor(QTextCursor::Start);
+    find(text); // selects the match and scrolls it into view, if found
+}
+
 QString MarkdownEditor::wikiContextPrefix(bool *inContext) const {
     *inContext = false;
     const QTextCursor cursor = textCursor();

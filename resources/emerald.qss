@@ -48,6 +48,19 @@ QDockWidget::title {
     letter-spacing: 1px;
 }
 
+/* Search box */
+QLineEdit#search {
+    background: #1a1b26;
+    color: #c0caf5;
+    border: 1px solid #2a2e42;
+    border-radius: 6px;
+    padding: 5px 8px;
+    selection-background-color: #2e3c64;
+}
+QLineEdit#search:focus {
+    border: 1px solid #3b4261;
+}
+
 /* [[ autocomplete popup */
 QListView#completer {
     background: #16161e;

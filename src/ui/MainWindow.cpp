@@ -10,12 +10,15 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenuBar>
 #include <QSettings>
+#include <QShortcut>
 #include <QStatusBar>
 #include <QStringList>
 #include <QTimer>
+#include <QVBoxLayout>
 
 namespace {
 constexpr int kPathRole = Qt::UserRole;
@@ -63,12 +66,37 @@ void MainWindow::buildUi() {
     setCentralWidget(center);
 
     m_noteList = new QListWidget(this);
+    m_searchBox = new QLineEdit(this);
+    m_searchBox->setObjectName(QStringLiteral("search"));
+    m_searchBox->setPlaceholderText(tr("Search notes…"));
+    m_searchBox->setClearButtonEnabled(true);
+
+    auto *side = new QWidget(this);
+    auto *col = new QVBoxLayout(side);
+    col->setContentsMargins(6, 6, 6, 6);
+    col->setSpacing(6);
+    col->addWidget(m_searchBox);
+    col->addWidget(m_noteList);
+
     auto *sidebar = new QDockWidget(tr("Notes"), this);
-    sidebar->setWidget(m_noteList);
+    sidebar->setWidget(side);
     sidebar->setFeatures(QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, sidebar);
-    connect(m_noteList, &QListWidget::itemClicked, this, [this](QListWidgetItem *i) {
-        openNoteByPath(i->data(kPathRole).toString());
+
+    connect(m_noteList, &QListWidget::itemClicked, this,
+            &MainWindow::onNoteItemClicked);
+    connect(m_searchBox, &QLineEdit::textChanged, this,
+            &MainWindow::onSearchChanged);
+    connect(m_searchBox, &QLineEdit::returnPressed, this, [this] {
+        if (m_noteList->count() > 0 &&
+            (m_noteList->item(0)->flags() & Qt::ItemIsEnabled))
+            onNoteItemClicked(m_noteList->item(0));
+    });
+    auto *focusSearch =
+        new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), this);
+    connect(focusSearch, &QShortcut::activated, this, [this] {
+        m_searchBox->setFocus();
+        m_searchBox->selectAll();
     });
 
     m_backlinks = new QListWidget(this);
@@ -109,6 +137,7 @@ void MainWindow::openVault(const QString &path) {
     m_vault = new Vault(path);
     m_vault->scan();
     m_index.rebuild(*m_vault);
+    m_searchIndex.rebuild(*m_vault);
 
     m_currentPath.clear();
     m_currentTitle.clear();
@@ -116,6 +145,9 @@ void MainWindow::openVault(const QString &path) {
     m_editor->clear();
     m_loading = false;
     m_backlinks->clear();
+    m_searchBox->blockSignals(true);
+    m_searchBox->clear();
+    m_searchBox->blockSignals(false);
 
     refreshNoteList();
     QSettings().setValue(QStringLiteral("lastVault"), path);
@@ -160,6 +192,7 @@ void MainWindow::saveCurrent() {
     const QString content = m_editor->toPlainText();
     m_vault->write(m_currentPath, content);
     m_index.updateNote(m_currentTitle, content);
+    m_searchIndex.updateNote(m_currentPath, m_currentTitle, content);
 }
 
 void MainWindow::newNote() {
@@ -175,7 +208,9 @@ void MainWindow::newNote() {
         return;
 
     const Note note = m_vault->createNote(name.trimmed());
-    m_index.updateNote(note.title, m_vault->read(note.path));
+    const QString content = m_vault->read(note.path);
+    m_index.updateNote(note.title, content);
+    m_searchIndex.updateNote(note.path, note.title, content);
     refreshNoteList();
     openNoteByPath(note.path);
 }
@@ -186,7 +221,9 @@ void MainWindow::onLinkClicked(const QString &target) {
     QString path = m_vault->pathForTitle(target);
     if (path.isEmpty()) {
         const Note note = m_vault->createNote(target);
-        m_index.updateNote(note.title, m_vault->read(note.path));
+        const QString content = m_vault->read(note.path);
+        m_index.updateNote(note.title, content);
+        m_searchIndex.updateNote(note.path, note.title, content);
         refreshNoteList();
         path = note.path;
     }
@@ -213,6 +250,38 @@ void MainWindow::selectInList(QListWidget *list, const QString &path) {
         }
     }
     list->clearSelection();
+}
+
+void MainWindow::onSearchChanged(const QString &text) {
+    if (!m_vault)
+        return;
+    if (text.trimmed().isEmpty()) {
+        refreshNoteList(); // empty query -> back to the full note list
+        return;
+    }
+    m_noteList->clear();
+    const QList<SearchIndex::Result> results = m_searchIndex.search(text);
+    for (const SearchIndex::Result &r : results) {
+        auto *item = new QListWidgetItem(r.title + QLatin1Char('\n') + r.snippet,
+                                         m_noteList);
+        item->setData(kPathRole, r.path);
+        item->setToolTip(r.snippet);
+    }
+    if (results.isEmpty()) {
+        auto *none = new QListWidgetItem(tr("No matches"), m_noteList);
+        none->setFlags(Qt::NoItemFlags);
+    }
+}
+
+void MainWindow::onNoteItemClicked(QListWidgetItem *item) {
+    const QString path = item->data(kPathRole).toString();
+    if (path.isEmpty())
+        return;
+    openNoteByPath(path);
+    // If we got here from a search, jump to the first match in the note.
+    const QStringList tokens = SearchIndex::tokenize(m_searchBox->text());
+    if (!tokens.isEmpty())
+        m_editor->jumpToMatch(tokens.first());
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {

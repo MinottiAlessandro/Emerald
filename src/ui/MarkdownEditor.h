@@ -18,6 +18,9 @@ public:
     // The note titles offered by [[ autocomplete. Call when the vault changes.
     void setCompletions(const QStringList &titles);
 
+    // Select and scroll to the first occurrence of `text` (case-insensitive).
+    void jumpToMatch(const QString &text);
+
 signals:
     void linkClicked(const QString &target);
 
