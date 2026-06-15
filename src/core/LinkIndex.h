@@ -1,8 +1,6 @@
 #pragma once
 
 #include <QHash>
-#include <QList>
-#include <QPair>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -28,24 +26,10 @@ public:
     // #heading suffixes, e.g. "[[Foo|bar]]" and "[[Foo#sec]]" -> "Foo".
     static QStringList parseTargets(const QString &content);
 
-    // A node and whether it is a real note in the vault (resolved) or only a
-    // link target that no file exists for yet (unresolved).
-    struct NodeInfo {
-        QString title;
-        bool resolved;
-    };
-    // The whole link graph, for the graph view.
-    struct Graph {
-        QList<NodeInfo> nodes;
-        QList<QPair<QString, QString>> edges; // (source title, target title)
-    };
-    Graph graph() const;
-
 private:
     void removeForward(const QString &lowerSource);
 
     QHash<QString, QSet<QString>> m_forward; // lowerSource -> {lowerTarget}
     QHash<QString, QSet<QString>> m_back;     // lowerTarget -> {lowerSource}
     QHash<QString, QString> m_display;        // lower -> display title
-    QSet<QString> m_real;                     // lower titles backed by a file
 };

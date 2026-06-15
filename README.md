@@ -12,9 +12,6 @@ files, inline live preview. Built to stay small and maintainable.
 - **Full link system.** `[[Note]]` links are clickable (Ctrl+click), auto-create
   the target if it doesn't exist, and feed a live **Backlinks** panel. Typing
   `[[` pops a fuzzy autocomplete of existing note titles.
-- **Graph view** (`Ctrl+G`). A force-directed graph of notes and their links,
-  rendered on an OpenGL (GPU) viewport. Double-click a node to open it; wheel to
-  zoom, drag to pan. Unresolved links show as hollow nodes.
 - **Debounced autosave.** Your notes are written to disk as you type.
 - **Dark theme**, embedded in the binary.
 

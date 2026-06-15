@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 add_executable(emerald
   src/main.cpp
@@ -27,10 +27,8 @@ add_executable(emerald
   src/ui/MarkdownEditor.cpp
   src/ui/MarkdownHighlighter.h
   src/ui/MarkdownHighlighter.cpp
-  src/ui/GraphView.h
-  src/ui/GraphView.cpp
   resources/resources.qrc
 )
 
 target_include_directories(emerald PRIVATE src)
-target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::OpenGLWidgets)
+target_link_libraries(emerald PRIVATE Qt6::Widgets)

@@ -1,6 +1,5 @@
 #include "MainWindow.h"
 
-#include "GraphView.h"
 #include "MarkdownEditor.h"
 #include "core/Vault.h"
 
@@ -68,20 +67,6 @@ void MainWindow::buildUi() {
         if (!path.isEmpty())
             openNoteByPath(path);
     });
-
-    m_graph = new GraphView(this);
-    m_graphDock = new QDockWidget(tr("Graph"), this);
-    m_graphDock->setWidget(m_graph);
-    m_graphDock->setFeatures(QDockWidget::DockWidgetMovable |
-                             QDockWidget::DockWidgetFloatable |
-                             QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::BottomDockWidgetArea, m_graphDock);
-    m_graphDock->hide();
-    connect(m_graph, &GraphView::noteActivated, this, &MainWindow::onLinkClicked);
-    connect(m_graphDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
-        if (visible)
-            refreshGraph();
-    });
 }
 
 void MainWindow::buildMenu() {
@@ -95,36 +80,6 @@ void MainWindow::buildMenu() {
                     &MainWindow::saveCurrent);
     file->addSeparator();
     file->addAction(tr("Quit"), QKeySequence::Quit, this, &QWidget::close);
-
-    QMenu *view = menuBar()->addMenu(tr("&View"));
-    view->addAction(tr("&Graph"), QKeySequence(Qt::CTRL | Qt::Key_G), this,
-                    &MainWindow::toggleGraph);
-}
-
-void MainWindow::toggleGraph() {
-    if (m_graphDock->isVisible()) {
-        m_graphDock->hide();
-        return;
-    }
-    if (!m_graphInit) {
-        m_graphInit = true;
-        m_graphDock->setFloating(true);
-        m_graphDock->resize(760, 560);
-        m_graphDock->move(geometry().center() - QPoint(380, 280));
-    }
-    m_graphDock->show();
-    m_graphDock->raise();
-}
-
-void MainWindow::refreshGraph() {
-    if (!m_vault || !m_graphDock->isVisible())
-        return;
-    const LinkIndex::Graph g = m_index.graph();
-    QList<QPair<QString, bool>> nodes;
-    nodes.reserve(g.nodes.size());
-    for (const LinkIndex::NodeInfo &n : g.nodes)
-        nodes.append({n.title, n.resolved});
-    m_graph->setGraph(nodes, g.edges, m_currentTitle);
 }
 
 void MainWindow::chooseVault() {
@@ -183,8 +138,6 @@ void MainWindow::openNoteByPath(const QString &path) {
     setWindowTitle(QStringLiteral("Emerald — %1").arg(m_currentTitle));
     selectInList(m_noteList, path);
     updateBacklinks();
-    if (m_graphDock->isVisible())
-        m_graph->setCurrent(m_currentTitle);
 }
 
 void MainWindow::saveCurrent() {
@@ -211,24 +164,19 @@ void MainWindow::newNote() {
     m_index.updateNote(note.title, m_vault->read(note.path));
     refreshNoteList();
     openNoteByPath(note.path);
-    refreshGraph();
 }
 
 void MainWindow::onLinkClicked(const QString &target) {
     if (!m_vault)
         return;
     QString path = m_vault->pathForTitle(target);
-    bool created = false;
     if (path.isEmpty()) {
         const Note note = m_vault->createNote(target);
         m_index.updateNote(note.title, m_vault->read(note.path));
         refreshNoteList();
         path = note.path;
-        created = true;
     }
     openNoteByPath(path);
-    if (created)
-        refreshGraph(); // a new node appeared
 }
 
 void MainWindow::updateBacklinks() {
