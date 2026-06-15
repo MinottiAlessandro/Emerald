@@ -1,0 +1,7 @@
+build/
+*.user
+.cache/
+compile_commands.json
+
+# graphify knowledge-graph output (generated)
+graphify-out/

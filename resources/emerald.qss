@@ -1,0 +1,92 @@
+/* Emerald — dark theme (Tokyo Night inspired) */
+
+QMainWindow,
+QWidget {
+    background: #1a1b26;
+    color: #a9b1d6;
+}
+
+QPlainTextEdit#editor {
+    background: #1a1b26;
+    color: #c0caf5;
+    border: none;
+    selection-background-color: #2e3c64;
+    selection-color: #c0caf5;
+}
+
+/* Sidebar + backlinks lists */
+QListWidget {
+    background: #16161e;
+    color: #9aa5ce;
+    border: none;
+    outline: 0;
+    padding: 6px;
+}
+QListWidget::item {
+    padding: 7px 10px;
+    border-radius: 6px;
+    margin: 1px 0;
+}
+QListWidget::item:hover {
+    background: #20222e;
+}
+QListWidget::item:selected {
+    background: #2a2e42;
+    color: #c0caf5;
+}
+
+QDockWidget {
+    color: #565f89;
+    titlebar-close-icon: none;
+    titlebar-normal-icon: none;
+}
+QDockWidget::title {
+    background: #16161e;
+    padding: 8px 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+QMenuBar {
+    background: #16161e;
+    color: #a9b1d6;
+}
+QMenuBar::item:selected {
+    background: #2a2e42;
+}
+QMenu {
+    background: #16161e;
+    color: #a9b1d6;
+    border: 1px solid #2a2e42;
+}
+QMenu::item:selected {
+    background: #2a2e42;
+}
+
+QStatusBar {
+    background: #16161e;
+    color: #565f89;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #2a2e42;
+    border-radius: 5px;
+    min-height: 36px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #3b4261;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
