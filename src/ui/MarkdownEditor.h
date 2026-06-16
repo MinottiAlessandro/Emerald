@@ -39,6 +39,9 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     // Draws real bullet glyphs over the (hidden) dash of list items.
     void paintEvent(QPaintEvent *event) override;
+    // Keeps the top-visible line pinned when a width change rewraps the text,
+    // so resizing the sidebar doesn't make the view jump (see over-scroll).
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     QString linkAt(const QPoint &pos) const;

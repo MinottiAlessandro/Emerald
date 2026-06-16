@@ -12,10 +12,13 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPlainTextDocumentLayout>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QScrollBar>
 #include <QStringListModel>
 #include <QTextBlock>
+#include <QTextLayout>
 #include <algorithm>
 
 namespace {
@@ -618,6 +621,36 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
     m_prettifying = true;
     cur.insertText(out.join(QLatin1Char('\n')));
     m_prettifying = false;
+}
+
+void MarkdownEditor::resizeEvent(QResizeEvent *event) {
+    // Remember which block tops the viewport before the base relayout. With
+    // setCenterOnScroll the document can scroll past its end, and a width
+    // change rewraps every line; left alone, the preserved scrollbar value
+    // would point at unrelated content and the view would lurch (most
+    // noticeably near the end of the file).
+    const int anchor = firstVisibleBlock().blockNumber();
+
+    QPlainTextEdit::resizeEvent(event);
+
+    auto *layout =
+        qobject_cast<QPlainTextDocumentLayout *>(document()->documentLayout());
+    if (!layout || anchor <= 0)
+        return;
+
+    // The vertical scrollbar counts wrapped lines, so pinning the anchor back
+    // to the top means summing the wrapped lines above it. QPlainTextEdit lays
+    // out blocks lazily; force each block's layout first or an untouched block
+    // reports zero lines and we undercount (which scrolls to the very top).
+    int line = 0;
+    for (QTextBlock b = document()->firstBlock();
+         b.isValid() && b.blockNumber() < anchor; b = b.next()) {
+        if (!b.isVisible())
+            continue;
+        layout->blockBoundingRect(b); // forces layout of this block
+        line += b.layout()->lineCount();
+    }
+    verticalScrollBar()->setValue(line);
 }
 
 void MarkdownEditor::paintEvent(QPaintEvent *event) {

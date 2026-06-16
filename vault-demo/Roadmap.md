@@ -31,7 +31,7 @@
 - [ ] I would like to be able to drag the files and folders in the side panel to move them in and out the folder structure
 - [ ] Give the code block a thin header of a complementary color. On the left there is the language the block contains (specified right after the first ``` and Text as default) and to the right the copy icon (that must copy the content if clicked)
 - [ ] The thin black line at the bottom is still there can you remove it?
-- [ ] If i resize the side panel when i'm at the end of the file Something strange happen to the content adaptation of the file: The view scrolls down a lot and to go back to the content of the file i have to do multiple scrolls up
+- [x] If i resize the side panel when i'm at the end of the file Something strange happen to the content adaptation of the file: The view scrolls down a lot and to go back to the content of the file i have to do multiple scrolls up
 - [ ] Can you check if there is a bug when I add a default Note or default creation note folder and then remove it?
 - [ ] If I delete a note and there is a default Note display that, otherwise open the last opened one, otherwise open the untitled note.
 - [ ] If i click on the resize bar it automatically collapse and if i click the collapsed bar it automatically reopen at the menimum width
