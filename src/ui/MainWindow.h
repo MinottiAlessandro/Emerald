@@ -41,6 +41,7 @@ private:
     void onLinkClicked(const QString &target);
     void selectInTree(const QString &path);
     void openSearch();
+    void openQuickOpen();
     void onTreeItemClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);

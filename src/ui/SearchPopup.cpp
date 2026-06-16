@@ -43,7 +43,10 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
         parent->installEventFilter(this);
 }
 
-void SearchPopup::showCentered() {
+void SearchPopup::showCentered(bool titlesOnly) {
+    m_titlesOnly = titlesOnly;
+    m_input->setPlaceholderText(titlesOnly ? tr("Go to note…")
+                                           : tr("Search notes…"));
     m_input->clear();
     m_results->clear();
     reposition();
@@ -68,10 +71,13 @@ void SearchPopup::refresh(const QString &text) {
         adjustSize();
         return;
     }
-    const QList<SearchIndex::Result> results = m_index->search(text, 30);
+    const QList<SearchIndex::Result> results =
+        m_titlesOnly ? m_index->searchTitles(text, 30)
+                     : m_index->search(text, 30);
     for (const SearchIndex::Result &r : results) {
-        auto *item = new QListWidgetItem(r.title + QLatin1Char('\n') + r.snippet,
-                                         m_results);
+        const QString label =
+            r.snippet.isEmpty() ? r.title : r.title + QLatin1Char('\n') + r.snippet;
+        auto *item = new QListWidgetItem(label, m_results);
         item->setData(kPathRole, r.path);
     }
     if (!results.isEmpty())

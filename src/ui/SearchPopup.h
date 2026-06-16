@@ -15,7 +15,8 @@ class SearchPopup : public QFrame {
 public:
     SearchPopup(const SearchIndex *index, QWidget *parent);
 
-    void showCentered();
+    // titlesOnly = a quick "go to note" picker that matches note titles only.
+    void showCentered(bool titlesOnly = false);
 
 signals:
     void openRequested(const QString &path, const QString &query);
@@ -32,4 +33,5 @@ private:
     const SearchIndex *m_index = nullptr;
     QLineEdit *m_input = nullptr;
     QListWidget *m_results = nullptr;
+    bool m_titlesOnly = false;
 };

@@ -148,3 +148,39 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
         results.erase(results.begin() + limit, results.end());
     return results;
 }
+
+QList<SearchIndex::Result> SearchIndex::searchTitles(const QString &query,
+                                                     int limit) const {
+    const QStringList tokens = tokenize(query);
+    if (tokens.isEmpty())
+        return {};
+
+    QList<Result> results;
+    for (auto it = m_docs.cbegin(); it != m_docs.cend(); ++it) {
+        const QString title = it->title.toLower();
+        bool all = true;
+        int score = 0;
+        for (const QString &token : tokens) {
+            const int at = title.indexOf(token);
+            if (at < 0) {
+                all = false;
+                break;
+            }
+            if (at == 0)
+                score += 50; // prefix match ranks higher
+        }
+        if (!all)
+            continue;
+        score -= title.length(); // shorter (closer) titles first
+        results.append({it->path, it->title, QString(), score});
+    }
+    std::sort(results.begin(), results.end(),
+              [](const Result &a, const Result &b) {
+                  if (a.score != b.score)
+                      return a.score > b.score;
+                  return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
+              });
+    if (results.size() > limit)
+        results.erase(results.begin() + limit, results.end());
+    return results;
+}

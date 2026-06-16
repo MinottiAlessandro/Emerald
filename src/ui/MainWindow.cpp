@@ -212,6 +212,12 @@ void MainWindow::buildActions() {
         addAction(act); // keep the shortcut live without a menubar
         m_gearMenu->addAction(act);
     }
+    // Quick "go to note" picker (titles only).
+    auto *goTo = new QAction(tr("Go to Note…"), this);
+    goTo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
+    connect(goTo, &QAction::triggered, this, &MainWindow::openQuickOpen);
+    addAction(goTo);
+    m_gearMenu->addAction(goTo);
     m_gearMenu->addSeparator();
     auto *quit = new QAction(tr("Quit"), this);
     quit->setShortcut(QKeySequence::Quit);
@@ -513,7 +519,12 @@ void MainWindow::selectInTree(const QString &path) {
 
 void MainWindow::openSearch() {
     if (m_vault)
-        m_searchPopup->showCentered();
+        m_searchPopup->showCentered(false);
+}
+
+void MainWindow::openQuickOpen() {
+    if (m_vault)
+        m_searchPopup->showCentered(true); // titles only
 }
 
 void MainWindow::onTreeItemClicked(QTreeWidgetItem *item, int) {

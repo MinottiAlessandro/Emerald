@@ -30,6 +30,11 @@ public:
 
     QList<Result> search(const QString &query, int limit = 50) const;
 
+    // Match only against note titles (for a quick "go to note" picker). A note
+    // matches when its title contains every query token; shorter titles and
+    // prefix matches rank higher.
+    QList<Result> searchTitles(const QString &query, int limit = 50) const;
+
     // Lowercased word tokens (split on non-letter/non-digit runs).
     static QStringList tokenize(const QString &text);
 
