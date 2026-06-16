@@ -169,3 +169,12 @@ bool Vault::createFolder(const QString &dir, const QString &name) {
     const QString folder = dir.isEmpty() ? m_root : dir;
     return QDir(folder).mkdir(name);
 }
+
+bool Vault::remove(const QString &path) {
+    const QFileInfo fi(path);
+    if (!fi.exists())
+        return false;
+    if (fi.isDir())
+        return QDir(path).removeRecursively();
+    return QFile::remove(path);
+}

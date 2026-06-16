@@ -24,16 +24,37 @@
 #include <QStatusBar>
 #include <QStringList>
 #include <QHash>
+#include <QIcon>
+#include <QMessageBox>
+#include <QPainter>
+#include <QPixmap>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <functional>
 
 namespace {
 constexpr int kPathRole = Qt::UserRole;     // leaf: the note's file path
 constexpr int kDirRole = Qt::UserRole + 1;  // folder: its absolute path
+
+// A small themed folder glyph drawn once and reused for every folder row.
+const QIcon &folderIcon() {
+    static const QIcon icon = [] {
+        QPixmap pm(16, 16);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor("#7aa2f7"));
+        p.drawRoundedRect(QRectF(2, 3.5, 6, 3), 1, 1);   // tab
+        p.drawRoundedRect(QRectF(2, 5, 12, 8.5), 1.5, 1.5); // body
+        return QIcon(pm);
+    }();
+    return icon;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -322,6 +343,7 @@ void MainWindow::refreshTree() {
         auto *node = new QTreeWidgetItem(parent);
         node->setText(0, slash < 0 ? rel : rel.mid(slash + 1));
         node->setData(0, kDirRole, rootDir.filePath(rel));
+        node->setIcon(0, folderIcon());
         node->setFlags(node->flags() & ~Qt::ItemIsSelectable);
         folders.insert(rel, node);
         return node;
@@ -495,27 +517,84 @@ void MainWindow::openSearch() {
 
 void MainWindow::onTreeItemClicked(QTreeWidgetItem *item, int) {
     const QString path = item->data(0, kPathRole).toString();
-    if (!path.isEmpty())
+    if (!path.isEmpty()) {
         openNoteByPath(path);
+        return;
+    }
+    // A single click on a folder row folds / unfolds it.
+    if (!item->data(0, kDirRole).toString().isEmpty())
+        item->setExpanded(!item->isExpanded());
 }
 
 void MainWindow::onTreeContextMenu(const QPoint &pos) {
     if (!m_vault)
         return;
     QTreeWidgetItem *item = m_noteTree->itemAt(pos);
-    // Target folder: the clicked folder, the folder of the clicked note, or the
-    // vault root when clicking empty space.
+    const QString notePath = item ? item->data(0, kPathRole).toString() : QString();
+    const QString folderPath = item ? item->data(0, kDirRole).toString() : QString();
+
+    // Where "New" creates: the clicked folder, the clicked note's folder, or
+    // the vault root for empty space.
     QString dir = m_vault->root();
-    if (item) {
-        const QString folder = item->data(0, kDirRole).toString();
-        dir = folder.isEmpty()
-                  ? QFileInfo(item->data(0, kPathRole).toString()).absolutePath()
-                  : folder;
-    }
+    if (!folderPath.isEmpty())
+        dir = folderPath;
+    else if (!notePath.isEmpty())
+        dir = QFileInfo(notePath).absolutePath();
+
     QMenu menu(this);
     menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
     menu.addAction(tr("New Folder"), this, [this, dir] { newFolderIn(dir); });
+    if (!notePath.isEmpty()) {
+        menu.addSeparator();
+        menu.addAction(tr("Delete Note"), this,
+                       [this, notePath] { deleteEntry(notePath, false); });
+    } else if (!folderPath.isEmpty()) {
+        menu.addSeparator();
+        menu.addAction(tr("Delete Folder"), this,
+                       [this, folderPath] { deleteEntry(folderPath, true); });
+    }
     menu.exec(m_noteTree->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::deleteEntry(const QString &path, bool isFolder) {
+    const QString name =
+        isFolder ? QFileInfo(path).fileName() : Vault::titleFromPath(path);
+    const QString question =
+        isFolder
+            ? tr("Delete the folder “%1” and everything inside it?").arg(name)
+            : tr("Delete the note “%1”?").arg(name);
+    if (QMessageBox::question(this, tr("Delete"), question) != QMessageBox::Yes)
+        return;
+    if (!m_vault->remove(path)) {
+        statusBar()->showMessage(tr("Couldn't delete “%1”").arg(name), 3000);
+        return;
+    }
+
+    // If the open note was removed (on its own or inside a deleted folder),
+    // clear the editor and prune it from history.
+    const bool currentGone =
+        !m_currentPath.isEmpty() && !QFileInfo::exists(m_currentPath);
+    m_vault->scan();
+    m_searchIndex.rebuild(*m_vault);
+    if (currentGone) {
+        m_currentPath.clear();
+        m_currentTitle.clear();
+        m_loading = true;
+        m_editor->clear();
+        m_loading = false;
+        m_titleEdit->blockSignals(true);
+        m_titleEdit->clear();
+        m_titleEdit->blockSignals(false);
+        setWindowTitle(QStringLiteral("Emerald"));
+        m_history.erase(
+            std::remove_if(m_history.begin(), m_history.end(),
+                           [](const QString &p) { return !QFileInfo::exists(p); }),
+            m_history.end());
+        m_histIndex = m_history.size() - 1;
+        updateNavActions();
+    }
+    refreshTree();
+    statusBar()->showMessage(tr("Deleted “%1”").arg(name), 3000);
 }
 
 void MainWindow::newNoteIn(const QString &dir) {

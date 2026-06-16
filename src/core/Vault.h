@@ -38,6 +38,10 @@ public:
     // on success (false if it exists or the name is invalid).
     bool createFolder(const QString &dir, const QString &name);
 
+    // Delete a note file or a folder (recursively, contents included). Returns
+    // true on success. Call scan() afterwards to refresh the listing.
+    bool remove(const QString &path);
+
     // Rename the note at oldPath to <newTitle>.md in the same folder, updating
     // the in-memory list. Returns the new path, or empty on failure (a name
     // collision or an invalid title).
