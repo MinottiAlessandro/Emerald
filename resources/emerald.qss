@@ -56,12 +56,13 @@ QTreeWidget {
     color: #9aa5ce;
     border: none;
     outline: 0;
-    padding: 4px;
+    padding: 6px;
+    font-size: 14px;
 }
 QTreeView::item {
-    padding: 5px 4px;
+    padding: 8px 8px;
     border-radius: 6px;
-    margin: 1px 0;
+    margin: 2px 4px;
 }
 QTreeView::item:hover {
     background: #20222e;
@@ -80,7 +81,7 @@ QWidget#sideHeader, QWidget#sideFooter {
 }
 QLabel#sideTitle {
     color: #c0caf5;
-    font-size: 16px;
+    font-size: 19px;
     font-weight: 600;
     padding: 2px 0;
 }
@@ -89,8 +90,8 @@ QToolButton#navButton, QToolButton#gearButton {
     color: #787c99;
     border: none;
     border-radius: 6px;
-    padding: 3px 8px;
-    font-size: 16px;
+    padding: 4px 9px;
+    font-size: 18px;
 }
 QToolButton#navButton:hover, QToolButton#gearButton:hover {
     background: #2a2e42;
@@ -193,9 +194,15 @@ QMenu::separator {
     margin: 4px 8px;
 }
 
+/* Match the editor background so the (mostly empty) status bar doesn't read as
+   a dark line across the bottom. */
 QStatusBar {
-    background: #16161e;
+    background: #1a1b26;
     color: #565f89;
+    border: none;
+}
+QStatusBar::item {
+    border: none;
 }
 
 QScrollBar:vertical {

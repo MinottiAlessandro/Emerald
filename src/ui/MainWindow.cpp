@@ -61,6 +61,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     buildActions();
     buildUi();
     loadSettings();
+    statusBar()->setSizeGripEnabled(false);
 
     m_saveTimer = new QTimer(this);
     m_saveTimer->setSingleShot(true);
