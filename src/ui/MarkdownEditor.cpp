@@ -77,6 +77,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     setObjectName(QStringLiteral("editor"));
     setFrameStyle(QFrame::NoFrame);
     setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // text always wraps
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
     // Allow scrolling past the end so the last line can rise to the top.

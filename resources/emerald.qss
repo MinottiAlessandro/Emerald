@@ -71,7 +71,11 @@ QTreeView::item:selected {
     background: #2a2e42;
     color: #c0caf5;
 }
-QTreeView::branch {
+/* Keep the branch/indent column free of its own highlight, so a hovered or
+   selected row shows a single highlight zone (no extra block on the left). */
+QTreeView::branch,
+QTreeView::branch:hover,
+QTreeView::branch:selected {
     background: transparent;
 }
 
@@ -211,12 +215,12 @@ QStatusBar::item {
 
 QScrollBar:vertical {
     background: transparent;
-    width: 10px;
+    width: 7px;
     margin: 0;
 }
 QScrollBar::handle:vertical {
     background: #2a2e42;
-    border-radius: 5px;
+    border-radius: 3px;
     min-height: 36px;
 }
 QScrollBar::handle:vertical:hover {
@@ -228,5 +232,11 @@ QScrollBar::sub-line:vertical {
 }
 QScrollBar::add-page:vertical,
 QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+/* Kill the horizontal scrollbar entirely (the editor wraps), so its track
+   can't show as a thin line across the bottom. */
+QScrollBar:horizontal {
+    height: 0;
     background: transparent;
 }
