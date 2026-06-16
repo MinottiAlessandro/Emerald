@@ -41,6 +41,59 @@ namespace {
 constexpr int kPathRole = Qt::UserRole;     // leaf: the note's file path
 constexpr int kDirRole = Qt::UserRole + 1;  // folder: its absolute path
 
+QString manualText() {
+    return QStringLiteral(
+        "Welcome to **Emerald** — a tiny, fast, Obsidian-style note app. This "
+        "note is generated; edit or delete it freely.\n"
+        "\n"
+        "## Writing\n"
+        "Markup melts away on every line except the one your cursor is on:\n"
+        "\n"
+        "- **bold**, *italic*, ***both***, ~~strikethrough~~ and ==highlight==\n"
+        "- `inline code` and fenced blocks:\n"
+        "\n"
+        "```cpp\n"
+        "int answer = 42;\n"
+        "```\n"
+        "\n"
+        "> Blockquotes — press Enter to keep quoting, Enter on an empty line to "
+        "stop.\n"
+        "\n"
+        "Horizontal rule:\n"
+        "\n"
+        "---\n"
+        "\n"
+        "## Lists & tasks\n"
+        "- bullets render as glyphs (Tab / Shift+Tab to indent)\n"
+        "  - nested item\n"
+        "1. numbered lists auto-increment on Enter\n"
+        "- [ ] a task — click the box to toggle\n"
+        "- [x] a done task\n"
+        "\n"
+        "## Tables\n"
+        "| Feature | Shortcut |\n"
+        "| --- | --- |\n"
+        "| Search | Ctrl+F |\n"
+        "| Go to note | Ctrl+P |\n"
+        "\n"
+        "## Links\n"
+        "Type `[[` to autocomplete a link. `[[Welcome]]` jumps to a note "
+        "(click it when rendered, Ctrl+click while editing). Use "
+        "`[[Welcome|alias]]` to show a different label. Renaming a note's title "
+        "rewrites links to it.\n"
+        "\n"
+        "## Getting around\n"
+        "- **Title** — the first line is the file name (no `.md`); edit it to "
+        "rename.\n"
+        "- **Sidebar** — notes live in a folder tree; right-click to create or "
+        "delete; single-click a folder to fold it.\n"
+        "- **Navigation** — the ← → arrows (Alt+Left / Alt+Right or the mouse "
+        "side buttons) walk your history.\n"
+        "- **Search** — Ctrl+F searches everything; Ctrl+P jumps by title.\n"
+        "- **Settings** — the gear holds font, editor width, new-note folder "
+        "and a Home note.\n");
+}
+
 // A small themed folder glyph drawn once and reused for every folder row.
 const QIcon &folderIcon() {
     static const QIcon icon = [] {
@@ -205,6 +258,8 @@ void MainWindow::buildActions() {
     m_gearMenu = new QMenu(this);
     auto *settings = m_gearMenu->addAction(tr("Settings…"));
     connect(settings, &QAction::triggered, this, &MainWindow::openSettings);
+    auto *manual = m_gearMenu->addAction(tr("Manual"));
+    connect(manual, &QAction::triggered, this, &MainWindow::openManual);
     m_gearMenu->addSeparator();
     for (const Spec &s : specs) {
         auto *act = new QAction(tr(s.text), this);
@@ -339,6 +394,25 @@ void MainWindow::openSettings() {
         m_editor->applyFont(originalFont); // revert the live preview
         m_centerColumn->setMaximumWidth(originalWidth);
     }
+}
+
+void MainWindow::openManual() {
+    if (!m_vault) {
+        chooseVault();
+        if (!m_vault)
+            return;
+    }
+    const QString title = QStringLiteral("Emerald Manual");
+    QString path = m_vault->pathForTitle(title);
+    if (path.isEmpty()) {
+        const Note note = m_vault->createNote(title);
+        m_vault->write(note.path, manualText());
+        path = note.path;
+        m_vault->scan();
+        m_searchIndex.rebuild(*m_vault);
+        refreshTree();
+    }
+    openNoteByPath(path);
 }
 
 void MainWindow::chooseVault() {

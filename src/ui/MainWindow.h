@@ -30,6 +30,7 @@ private:
     void buildUi();
     void openSettings();
     void loadSettings();
+    void openManual();
 
     void chooseVault();
     void openVault(const QString &path);
