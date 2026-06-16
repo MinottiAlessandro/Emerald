@@ -870,6 +870,20 @@ void MainWindow::deleteEntry(const QString &path, bool isFolder) {
         return;
     }
 
+    // Clear settings that pointed at the deleted note/folder so they don't go
+    // stale (Home note / new-note folder).
+    {
+        QSettings s;
+        const QString rel = QDir(m_vault->root()).relativeFilePath(path);
+        const QString home = s.value(QStringLiteral("homeNote")).toString();
+        const QString nf = s.value(QStringLiteral("newNoteFolder")).toString();
+        if (home == rel || (isFolder && home.startsWith(rel + QLatin1Char('/'))))
+            s.remove(QStringLiteral("homeNote"));
+        if (isFolder &&
+            (nf == rel || nf.startsWith(rel + QLatin1Char('/'))))
+            s.remove(QStringLiteral("newNoteFolder"));
+    }
+
     // If the open note was removed (on its own or inside a deleted folder),
     // clear the editor and prune it from history.
     const bool currentGone =
@@ -879,21 +893,38 @@ void MainWindow::deleteEntry(const QString &path, bool isFolder) {
     if (currentGone) {
         m_currentPath.clear();
         m_currentTitle.clear();
-        m_loading = true;
-        m_editor->clear();
-        m_loading = false;
-        m_titleEdit->blockSignals(true);
-        m_titleEdit->clear();
-        m_titleEdit->blockSignals(false);
-        setWindowTitle(QStringLiteral("Emerald"));
         m_history.erase(
             std::remove_if(m_history.begin(), m_history.end(),
                            [](const QString &p) { return !QFileInfo::exists(p); }),
             m_history.end());
         m_histIndex = m_history.size() - 1;
         updateNavActions();
+        refreshTree();
+
+        // Show the Home note, else the most recent still-open note, else blank.
+        QString fallback;
+        const QString home = QSettings().value(QStringLiteral("homeNote")).toString();
+        if (!home.isEmpty()) {
+            const QString p = QDir(m_vault->root()).filePath(home);
+            if (QFileInfo::exists(p))
+                fallback = p;
+        }
+        if (fallback.isEmpty() && !m_history.isEmpty())
+            fallback = m_history.last();
+        if (!fallback.isEmpty()) {
+            openNoteByPath(fallback);
+        } else {
+            m_loading = true;
+            m_editor->clear();
+            m_loading = false;
+            m_titleEdit->blockSignals(true);
+            m_titleEdit->clear();
+            m_titleEdit->blockSignals(false);
+            setWindowTitle(QStringLiteral("Emerald"));
+        }
+    } else {
+        refreshTree();
     }
-    refreshTree();
     statusBar()->showMessage(tr("Deleted “%1”").arg(name), 3000);
 }
 
