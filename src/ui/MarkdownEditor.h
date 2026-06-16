@@ -59,17 +59,14 @@ private:
     bool toggleTaskAt(const QPoint &pos);
 
     struct CodeBlock {
-        QRectF header;   // the top header bar (language + copy button)
+        QRectF header;   // the top header bar (shows the language tag)
         QRectF body;     // the code body below the header
-        QRectF copyBtn;  // copy-button rect, inside the header on the right
         QString language; // language tag, or "Text"
         QString code;     // the block's inner lines
         bool active = false; // the caret is inside this block (show raw markup)
     };
     // Visit each fenced code block's geometry/content.
     void forEachCodeBlock(const std::function<void(const CodeBlock &)> &fn) const;
-    // If pos hits a code block's copy button, copy its code and return true.
-    bool copyCodeBlockAt(const QPoint &pos);
 
     // Heading folding. A heading hides everything below it until the next
     // heading of the same or higher level.

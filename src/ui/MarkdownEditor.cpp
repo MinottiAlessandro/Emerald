@@ -4,8 +4,6 @@
 #include "core/WikiLink.h"
 
 #include <QAbstractItemView>
-#include <QApplication>
-#include <QClipboard>
 #include <QCompleter>
 #include <QFontMetricsF>
 #include <QKeyEvent>
@@ -280,8 +278,6 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
             return;
         }
     }
-    if (event->button() == Qt::LeftButton && copyCodeBlockAt(event->pos()))
-        return;
     if (event->button() == Qt::LeftButton && toggleTaskAt(event->pos()))
         return;
     if (event->button() == Qt::LeftButton &&
@@ -434,9 +430,6 @@ void MarkdownEditor::forEachCodeBlock(
         CodeBlock cb;
         cb.header = QRectF(left, headerTop, right - left, headerBottom - headerTop);
         cb.body = QRectF(left, headerBottom, right - left, bodyBottom - headerBottom);
-        const qreal s = 16;
-        cb.copyBtn = QRectF(cb.header.right() - s - 8,
-                            cb.header.center().y() - s / 2, s, s);
         cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang;
         cb.code = code.join(QLatin1Char('\n'));
         // The caret sitting anywhere from the opening to the closing fence means
@@ -469,17 +462,6 @@ void MarkdownEditor::forEachCodeBlock(
                        .translated(contentOffset())
                        .bottom(),
                    document()->lastBlock().blockNumber());
-}
-
-bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
-    bool copied = false;
-    forEachCodeBlock([&](const CodeBlock &cb) {
-        if (!copied && !cb.active && cb.copyBtn.contains(pos)) {
-            QApplication::clipboard()->setText(cb.code);
-            copied = true;
-        }
-    });
-    return copied;
 }
 
 int MarkdownEditor::headingLevel(const QString &text) const {
@@ -795,7 +777,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
     }
 
-    // Code-block header content: language label on the left, copy button right.
+    // Code-block header content: the language label on the left.
     forEachCodeBlock([&](const CodeBlock &cb) {
         if (cb.active || !cb.header.intersects(event->rect()))
             return; // while editing, the raw fence shows instead
@@ -804,17 +786,9 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         p.setFont(lf);
         p.setPen(QColor(0x7e, 0xe0, 0xb0));
         p.drawText(QRectF(cb.header.left() + 12, cb.header.top(),
-                          cb.header.width() - 44, cb.header.height()),
+                          cb.header.width() - 24, cb.header.height()),
                    Qt::AlignVCenter | Qt::AlignLeft, cb.language);
         p.setFont(font());
-
-        const QRectF btn = cb.copyBtn;
-        QPen pen(QColor(0x92, 0xb3, 0xa2));
-        pen.setWidthF(1.3);
-        p.setPen(pen);
-        p.setBrush(QColor(0x1d, 0x3a, 0x2a));
-        p.drawRoundedRect(QRectF(btn.left() + 5, btn.top() + 2, 8, 10), 2, 2);
-        p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
     });
 
     // Fold arrows in the left margin next to foldable headings.
