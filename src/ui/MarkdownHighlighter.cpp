@@ -292,15 +292,26 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         setFormat(q.capturedStart(2), q.capturedLength(2), m_quote);
     }
 
-    // Task list: "- [ ] ..." / "- [x] ..."; strike completed items.
+    // Task list: "- [ ] ..." / "- [x] ...". Off the active line the editor
+    // paints a real checkbox over the (hidden) "- [ ] " markup; completed
+    // items are struck through.
     const auto task = m_reTask.match(text);
     if (task.hasMatch()) {
         const bool done = task.captured(2).trimmed().compare(
                               QStringLiteral("x"), Qt::CaseInsensitive) == 0;
-        const int markerLen = task.capturedLength(1) + task.capturedLength(2) +
-                              task.capturedLength(3);
-        setFormat(0, markerLen, m_listMarker);
-        for (int i = 0; i < markerLen && i < consumed.size(); ++i)
+        const int bracketOpen = task.capturedEnd(1) - 1; // the '[' position
+        const int markerEnd = task.capturedEnd(3);       // start of the label
+        if (reveal) {
+            setFormat(0, markerEnd, m_listMarker);
+        } else {
+            // Keep the dash + its spaces as invisible width for the painted
+            // box; collapse "[ ] " to nothing so the label sits right after it.
+            QTextCharFormat box;
+            box.setForeground(QColor(0, 0, 0, 0)); // transparent, full width
+            setFormat(0, bracketOpen, box);
+            setFormat(bracketOpen, markerEnd - bracketOpen, conceal());
+        }
+        for (int i = 0; i < markerEnd && i < consumed.size(); ++i)
             consumed[i] = true;
         if (done)
             setFormat(task.capturedStart(4), task.capturedLength(4), m_taskDone);

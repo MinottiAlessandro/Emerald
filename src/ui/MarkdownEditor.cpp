@@ -14,6 +14,15 @@
 #include <QStringListModel>
 #include <QTextBlock>
 
+namespace {
+// A task line: capture(1) = indent, capture(2) = the [ ] / [x] status char.
+const QRegularExpression &taskRe() {
+    static const QRegularExpression re(
+        QStringLiteral("^(\\s*)[-*+]\\s+\\[([ xX])\\]\\s"));
+    return re;
+}
+}
+
 MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     setObjectName(QStringLiteral("editor"));
     setFrameStyle(QFrame::NoFrame);
@@ -152,6 +161,32 @@ bool MarkdownEditor::followsLink(const QPoint &pos,
     return cursorForPosition(pos).blockNumber() != textCursor().blockNumber();
 }
 
+bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
+    const QTextBlock block = cursorForPosition(pos).block();
+    if (block.blockNumber() == textCursor().blockNumber())
+        return false; // the active line shows raw markup; edit it normally
+    const auto m = taskRe().match(block.text());
+    if (!m.hasMatch())
+        return false;
+
+    // The checkbox is painted over the dash; accept a click on that column.
+    QTextCursor at(block);
+    at.setPosition(block.position() + m.capturedLength(1)); // dash column
+    const QRectF cell = cursorRect(at);
+    const qreal cw = QFontMetricsF(font()).horizontalAdvance(QLatin1Char(' '));
+    const QRectF hit(cell.left() - cw * 0.5, cell.top(), cw * 2.4, cell.height());
+    if (!hit.contains(pos))
+        return false;
+
+    const int statusPos = m.capturedStart(2);
+    QTextCursor edit(block);
+    edit.setPosition(block.position() + statusPos);
+    edit.setPosition(block.position() + statusPos + 1, QTextCursor::KeepAnchor);
+    const bool done = block.text().at(statusPos).toLower() == QLatin1Char('x');
+    edit.insertText(done ? QStringLiteral(" ") : QStringLiteral("x"));
+    return true;
+}
+
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::BackButton) {
         emit navigateBack();
@@ -161,6 +196,8 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         emit navigateForward();
         return;
     }
+    if (event->button() == Qt::LeftButton && toggleTaskAt(event->pos()))
+        return;
     if (event->button() == Qt::LeftButton &&
         followsLink(event->pos(), event->modifiers())) {
         emit linkClicked(linkAt(event->pos()));
@@ -315,6 +352,40 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             break;
         if (geo.bottom() < event->rect().top() || block.blockNumber() == active)
             continue;
+        // Task checkbox, drawn over the hidden "- [ ] " markup.
+        if (const auto t = taskRe().match(block.text()); t.hasMatch()) {
+            QTextCursor curT(block);
+            curT.setPosition(block.position() + t.capturedLength(1)); // dash col
+            const QRectF cellT = cursorRect(curT);
+            const qreal s = fm.ascent() * 0.92;
+            const QRectF box(cellT.left(), cellT.center().y() - s / 2.0, s, s);
+            const bool checked = t.captured(2).compare(QStringLiteral("x"),
+                                                       Qt::CaseInsensitive) == 0;
+            const QColor accent(0x7a, 0xa2, 0xf7);
+            if (checked) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(accent);
+                p.drawRoundedRect(box, 3, 3);
+                QPen tick(QColor(0x1a, 0x1b, 0x26));
+                tick.setWidthF(1.6);
+                tick.setCapStyle(Qt::RoundCap);
+                tick.setJoinStyle(Qt::RoundJoin);
+                p.setPen(tick);
+                const QPointF pts[3] = {{box.left() + s * 0.24, box.top() + s * 0.52},
+                                        {box.left() + s * 0.42, box.top() + s * 0.70},
+                                        {box.left() + s * 0.78, box.top() + s * 0.30}};
+                p.drawPolyline(pts, 3);
+            } else {
+                QPen pen(accent);
+                pen.setWidthF(1.5);
+                p.setPen(pen);
+                p.setBrush(Qt::NoBrush);
+                p.drawRoundedRect(box, 3, 3);
+            }
+            continue;
+        }
+
+        // Bullet glyph, drawn over the hidden dash.
         const auto m = re.match(block.text());
         if (!m.hasMatch())
             continue;

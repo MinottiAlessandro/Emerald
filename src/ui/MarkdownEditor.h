@@ -47,6 +47,9 @@ private:
     // On Tab/Shift+Tab inside a list item, indent/outdent it by one level.
     // Returns true if it handled the key.
     bool adjustListIndent(bool deeper);
+    // If pos hits the checkbox of a rendered task line, toggle [ ]<->[x] and
+    // return true. The active line is left alone (it shows raw markup).
+    bool toggleTaskAt(const QPoint &pos);
 
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.
