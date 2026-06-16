@@ -6,12 +6,14 @@ files, inline live preview. Built to stay small and maintainable.
 ## Features (v1)
 
 - **Vault = a folder of `.md` files.** No database, no lock-in, Obsidian-compatible.
-- **Inline live preview.** Headings, **bold**, *italic*, `code`, ~~strike~~ and
-  `[[wiki-links]]` render in place; the syntax markers collapse away on every
-  line except the one your cursor is on.
+- **Inline live preview.** Headings, **bold**, *italic*, ***both***, `code`,
+  ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists,
+  fenced ` ``` ` code blocks (with a language tag) and `[[wiki|links]]` render
+  in place; the syntax markers collapse away on every line except the one your
+  cursor is on.
 - **Full link system.** `[[Note]]` links are clickable (Ctrl+click) and
-  auto-create the target if it doesn't exist. Typing `[[` pops a fuzzy
-  autocomplete of existing note titles.
+  auto-create the target if it doesn't exist. `[[Note|alias]]` shows just the
+  alias. Typing `[[` pops a fuzzy autocomplete of existing note titles.
 - **Fast full-text search** (`Ctrl+Shift+F`). An in-memory inverted index;
   type in the sidebar box to find notes by content. Results are ranked, and
   opening one jumps to the first match.
