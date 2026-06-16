@@ -424,11 +424,13 @@ void MarkdownEditor::forEachCodeBlock(
     static const QRegularExpression fenceRe(
         QStringLiteral("^\\s*(?:```|~~~)\\s*(\\S*)"));
 
+    const int caret = textCursor().blockNumber();
     bool inCode = false;
     qreal headerTop = 0, headerBottom = 0;
+    int openNum = 0;
     QString lang;
     QStringList code;
-    auto emitRegion = [&](qreal bodyBottom) {
+    auto emitRegion = [&](qreal bodyBottom, int closeNum) {
         CodeBlock cb;
         cb.header = QRectF(left, headerTop, right - left, headerBottom - headerTop);
         cb.body = QRectF(left, headerBottom, right - left, bodyBottom - headerBottom);
@@ -437,6 +439,10 @@ void MarkdownEditor::forEachCodeBlock(
                             cb.header.center().y() - s / 2, s, s);
         cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang;
         cb.code = code.join(QLatin1Char('\n'));
+        // The caret sitting anywhere from the opening to the closing fence means
+        // the block is being edited; callers then show raw markup instead of the
+        // header bar (which would overlap the now-visible ``` fence).
+        cb.active = caret >= openNum && caret <= closeNum;
         fn(cb);
     };
 
@@ -447,26 +453,28 @@ void MarkdownEditor::forEachCodeBlock(
             inCode = true;
             headerTop = geo.top();
             headerBottom = geo.bottom();
+            openNum = b.blockNumber();
             const auto m = fenceRe.match(b.text());
             lang = m.hasMatch() ? m.captured(1) : QString();
             code.clear();
         } else if (isCode && inCode) { // inner code line
             code << b.text();
         } else if (!isCode && inCode) { // closing fence
-            emitRegion(geo.bottom());
+            emitRegion(geo.bottom(), b.blockNumber());
             inCode = false;
         }
     }
     if (inCode)
         emitRegion(blockBoundingGeometry(document()->lastBlock())
                        .translated(contentOffset())
-                       .bottom());
+                       .bottom(),
+                   document()->lastBlock().blockNumber());
 }
 
 bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
     bool copied = false;
     forEachCodeBlock([&](const CodeBlock &cb) {
-        if (!copied && cb.copyBtn.contains(pos)) {
+        if (!copied && !cb.active && cb.copyBtn.contains(pos)) {
             QApplication::clipboard()->setText(cb.code);
             copied = true;
         }
@@ -667,6 +675,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 return;
             bg.setBrush(QColor(0x1f, 0x23, 0x35));
             bg.drawRoundedRect(full, 6, 6);
+            if (cb.active) // editing: show the raw ``` fence, no header bar
+                return;
             const qreal r = 6;
             const QRectF h = cb.header;
             QPainterPath path;
@@ -787,8 +797,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
 
     // Code-block header content: language label on the left, copy button right.
     forEachCodeBlock([&](const CodeBlock &cb) {
-        if (!cb.header.intersects(event->rect()))
-            return;
+        if (cb.active || !cb.header.intersects(event->rect()))
+            return; // while editing, the raw fence shows instead
         QFont lf = font();
         lf.setPointSizeF(font().pointSizeF() * 0.85);
         p.setFont(lf);

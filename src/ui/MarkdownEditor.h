@@ -64,6 +64,7 @@ private:
         QRectF copyBtn;  // copy-button rect, inside the header on the right
         QString language; // language tag, or "Text"
         QString code;     // the block's inner lines
+        bool active = false; // the caret is inside this block (show raw markup)
     };
     // Visit each fenced code block's geometry/content.
     void forEachCodeBlock(const std::function<void(const CodeBlock &)> &fn) const;

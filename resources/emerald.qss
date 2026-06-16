@@ -220,15 +220,15 @@ QMenu::separator {
     margin: 4px 8px;
 }
 
-/* Match the editor background so the (mostly empty) status bar doesn't read as
-   a dark line across the bottom. */
-QStatusBar {
-    background: #1a1b26;
-    color: #565f89;
-    border: none;
-}
-QStatusBar::item {
-    border: none;
+/* Transient toast notice that floats over the bottom of the editor and
+   auto-hides — replaces the old persistent status bar. */
+QLabel#toast {
+    background: #2a2e42;
+    color: #c0caf5;
+    border: 1px solid #3b4261;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 13px;
 }
 
 QScrollBar:vertical {

@@ -12,6 +12,7 @@ class SearchPopup;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QLineEdit;
+class QLabel;
 class QTimer;
 class QAction;
 class QMenu;
@@ -51,9 +52,11 @@ private:
     void selectInTree(const QString &path);
     void openSearch();
     void openQuickOpen();
+    void notify(const QString &text, int ms = 3000); // transient toast message
     void openFindInFile();
     void findInFile(bool forward);
     void positionFindBar();
+    void positionToast(); // re-center the toast over the editor's bottom edge
     void onTreeItemClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);
@@ -74,6 +77,8 @@ private:
     QWidget *m_splitHandle = nullptr;  // its drag handle (click to toggle)
     QPoint m_handlePressPos;
     QLineEdit *m_titleEdit = nullptr;
+    QLabel *m_toast = nullptr;         // auto-hiding notice (replaces status bar)
+    QTimer *m_toastTimer = nullptr;
     QFrame *m_findBar = nullptr;       // in-note find overlay
     QLineEdit *m_findInput = nullptr;
     QTreeWidget *m_noteTree = nullptr;

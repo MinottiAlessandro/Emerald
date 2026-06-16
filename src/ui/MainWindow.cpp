@@ -28,7 +28,6 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
-#include <QStatusBar>
 #include <QStringList>
 #include <QHash>
 #include <QIcon>
@@ -129,7 +128,12 @@ protected:
                                 .absolutePath()
                           : d;
         }
-        event->acceptProposedAction();
+        // Report the drop as a *copy* so the view's InternalMove machinery
+        // doesn't also remove the dragged row after we return — we move the
+        // file on disk and rebuild the tree ourselves; its post-drag removal
+        // would otherwise delete the just-rebuilt item until the next refresh.
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
         if (onMove && !srcPath.isEmpty())
             onMove(srcPath, destDir); // MainWindow moves on disk + rebuilds
         // Don't call the base: the tree is rebuilt from the vault instead.
@@ -175,7 +179,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     buildActions();
     buildUi();
     loadSettings();
-    statusBar()->setSizeGripEnabled(false);
 
     m_saveTimer = new QTimer(this);
     m_saveTimer->setSingleShot(true);
@@ -196,7 +199,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     if (!last.isEmpty() && QDir(last).exists())
         openVault(last);
     else
-        statusBar()->showMessage(tr("Open a vault to begin  (Ctrl+O)"));
+        // Deferred so the editor is laid out first; the toast positions itself
+        // relative to the editor's size, which isn't known until then.
+        QTimer::singleShot(0, this, [this] {
+            notify(tr("Open a vault to begin  (Ctrl+O)"), 6000);
+        });
 }
 
 MainWindow::~MainWindow() { delete m_vault; }
@@ -348,6 +355,36 @@ void MainWindow::buildUi() {
         m_editor->setTextCursor(c);
         findInFile(true);
     });
+
+    // A transient toast for feedback (rename/delete/disk-change/errors). It
+    // floats over the bottom of the editor and auto-hides, so there's no
+    // permanent bar across the bottom of the window.
+    m_toast = new QLabel(m_editor);
+    m_toast->setObjectName(QStringLiteral("toast"));
+    m_toast->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_toast->hide();
+    m_toastTimer = new QTimer(this);
+    m_toastTimer->setSingleShot(true);
+    connect(m_toastTimer, &QTimer::timeout, m_toast, &QWidget::hide);
+}
+
+void MainWindow::notify(const QString &text, int ms) {
+    if (!m_toast)
+        return;
+    m_toast->setText(text);
+    positionToast();
+    m_toast->show();
+    m_toast->raise();
+    m_toastTimer->start(ms);
+}
+
+void MainWindow::positionToast() {
+    if (!m_toast)
+        return;
+    m_toast->adjustSize();
+    const int x = (m_editor->width() - m_toast->width()) / 2;
+    const int y = m_editor->height() - m_toast->height() - 18;
+    m_toast->move(qMax(8, x), qMax(8, y));
 }
 
 void MainWindow::buildActions() {
@@ -569,8 +606,6 @@ void MainWindow::openVault(const QString &path) {
     refreshTree();
     QSettings().setValue(QStringLiteral("lastVault"), path);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
-    statusBar()->showMessage(
-        tr("%1 notes").arg(m_vault->notes().size()), 4000);
     openInitialNote();
 }
 
@@ -659,6 +694,13 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     if (record)
         pushHistory(path);
     updateNavActions();
+
+    // Land the caret in the body (first line) and focus the editor, so a newly
+    // created or just-selected note is ready to type into without a mouse click.
+    QTextCursor c = m_editor->textCursor();
+    c.movePosition(QTextCursor::Start);
+    m_editor->setTextCursor(c);
+    m_editor->setFocus();
 }
 
 void MainWindow::renameCurrent(const QString &rawTitle) {
@@ -675,7 +717,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     };
     if (!Vault::isValidTitle(newTitle)) {
         revertField();
-        statusBar()->showMessage(tr("Invalid note name"), 3000);
+        notify(tr("Invalid note name"), 3000);
         return;
     }
 
@@ -685,7 +727,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     const QString newPath = m_vault->renameNote(oldPath, newTitle);
     if (newPath.isEmpty()) {
         revertField();
-        statusBar()->showMessage(
+        notify(
             tr("A note named “%1” already exists").arg(newTitle), 3000);
         return;
     }
@@ -700,7 +742,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     m_searchIndex.rebuild(*m_vault); // paths and link text changed vault-wide
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
-    statusBar()->showMessage(tr("Renamed to “%1”").arg(newTitle), 3000);
+    notify(tr("Renamed to “%1”").arg(newTitle), 3000);
 }
 
 void MainWindow::saveCurrent() {
@@ -740,7 +782,7 @@ void MainWindow::onFileChanged(const QString &path) {
         });
 
     if (!QFileInfo::exists(path)) {
-        statusBar()->showMessage(tr("This note was removed on disk"), 4000);
+        notify(tr("This note was removed on disk"), 4000);
         return;
     }
 
@@ -749,7 +791,7 @@ void MainWindow::onFileChanged(const QString &path) {
         return; // our own write, or no real change
 
     if (m_editor->toPlainText() != m_lastSavedContent) {
-        statusBar()->showMessage(
+        notify(
             tr("Changed on disk — saving will keep your version"), 5000);
         return;
     }
@@ -764,7 +806,7 @@ void MainWindow::onFileChanged(const QString &path) {
     QTextCursor c = m_editor->textCursor();
     c.setPosition(qMin(caret, int(disk.size())));
     m_editor->setTextCursor(c);
-    statusBar()->showMessage(tr("Reloaded — changed on disk"), 3000);
+    notify(tr("Reloaded — changed on disk"), 3000);
 }
 
 void MainWindow::newNote() {
@@ -894,9 +936,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             findInFile(!(ke->modifiers() & Qt::ShiftModifier));
             return true;
         }
-    } else if (watched == m_editor && event->type() == QEvent::Resize &&
-               m_findBar && m_findBar->isVisible()) {
-        positionFindBar();
+    } else if (watched == m_editor && event->type() == QEvent::Resize) {
+        if (m_findBar && m_findBar->isVisible())
+            positionFindBar();
+        if (m_toast && m_toast->isVisible())
+            positionToast();
     } else if (watched == m_splitHandle) {
         // A click (press + release without a drag) toggles the sidebar; a real
         // drag is left to the splitter.
@@ -970,7 +1014,7 @@ void MainWindow::deleteEntry(const QString &path, bool isFolder) {
     if (QMessageBox::question(this, tr("Delete"), question) != QMessageBox::Yes)
         return;
     if (!m_vault->remove(path)) {
-        statusBar()->showMessage(tr("Couldn't delete “%1”").arg(name), 3000);
+        notify(tr("Couldn't delete “%1”").arg(name), 3000);
         return;
     }
 
@@ -1029,7 +1073,7 @@ void MainWindow::deleteEntry(const QString &path, bool isFolder) {
     } else {
         refreshTree();
     }
-    statusBar()->showMessage(tr("Deleted “%1”").arg(name), 3000);
+    notify(tr("Deleted “%1”").arg(name), 3000);
 }
 
 void MainWindow::newNoteIn(const QString &dir) {
@@ -1053,7 +1097,7 @@ void MainWindow::moveItem(const QString &srcPath, const QString &destDirIn) {
     const QString destDir = destDirIn.isEmpty() ? m_vault->root() : destDirIn;
     const QString newPath = m_vault->movePath(srcPath, destDir);
     if (newPath.isEmpty()) {
-        statusBar()->showMessage(tr("Couldn't move it there"), 3000);
+        notify(tr("Couldn't move it there"), 3000);
         return;
     }
     // Follow the open note / history if they lived in what just moved.
@@ -1088,7 +1132,7 @@ void MainWindow::newFolderIn(const QString &dir) {
     if (!ok || name.isEmpty())
         return;
     if (!m_vault->createFolder(dir, name)) {
-        statusBar()->showMessage(tr("Couldn't create that folder"), 3000);
+        notify(tr("Couldn't create that folder"), 3000);
         return;
     }
     m_vault->scan();
