@@ -71,6 +71,11 @@ private:
     void toggleFoldAt(const QTextBlock &heading);
     void reapplyFolds(); // recompute block visibility from the folded set
 
+    // Re-align the pipe table containing the given block (pad cells to equal
+    // column widths) so the monospace render reads as a real grid. Run when the
+    // caret leaves the table.
+    void prettifyTableAt(int blockNumber);
+
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.
     QString wikiContextPrefix(bool *inContext) const;
@@ -83,4 +88,7 @@ private:
 
     QList<QTextBlock> m_foldedHeadings; // headings whose section is collapsed
     bool m_applyingFolds = false;       // guard against re-entrant relayout
+
+    int m_lastCursorBlock = 0;   // to detect leaving a table
+    bool m_prettifying = false;  // guard against re-entrant table reformatting
 };

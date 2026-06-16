@@ -24,6 +24,53 @@ const QRegularExpression &taskRe() {
         QStringLiteral("^(\\s*)[-*+]\\s+\\[([ xX])\\]\\s"));
     return re;
 }
+
+// --- pipe-table helpers (for the auto-prettifier) -----------------------
+bool isTableRow(const QString &text) {
+    const QString t = text.trimmed();
+    return t.size() > 1 && t.startsWith(QLatin1Char('|')) &&
+           t.endsWith(QLatin1Char('|'));
+}
+bool isSeparatorRow(const QString &text) {
+    static const QRegularExpression re(
+        QStringLiteral("^\\s*\\|?[\\s:|-]*-[\\s:|-]*\\|?\\s*$"));
+    return re.match(text).hasMatch();
+}
+QStringList splitRow(const QString &text) {
+    QString t = text.trimmed();
+    if (t.startsWith(QLatin1Char('|')))
+        t.remove(0, 1);
+    if (t.endsWith(QLatin1Char('|')))
+        t.chop(1);
+    QStringList cells = t.split(QLatin1Char('|'));
+    for (QString &c : cells)
+        c = c.trimmed();
+    return cells;
+}
+int sepAlign(const QString &cell) { // 0 left, 1 right, 2 centre
+    const QString t = cell.trimmed();
+    const bool l = t.startsWith(QLatin1Char(':'));
+    const bool r = t.endsWith(QLatin1Char(':'));
+    return (l && r) ? 2 : r ? 1 : 0;
+}
+QString padCell(const QString &s, int width, int align) {
+    const int pad = qMax(0, width - int(s.length()));
+    if (align == 1)
+        return QString(pad, QLatin1Char(' ')) + s;
+    if (align == 2)
+        return QString(pad / 2, QLatin1Char(' ')) + s +
+               QString(pad - pad / 2, QLatin1Char(' '));
+    return s + QString(pad, QLatin1Char(' '));
+}
+QString dashCell(int width, int align) {
+    width = qMax(3, width);
+    if (align == 2)
+        return QLatin1Char(':') + QString(width - 2, QLatin1Char('-')) +
+               QLatin1Char(':');
+    if (align == 1)
+        return QString(width - 1, QLatin1Char('-')) + QLatin1Char(':');
+    return QString(width, QLatin1Char('-'));
+}
 }
 
 MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
@@ -55,6 +102,24 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
         m_highlighter->setActiveBlock(textCursor().blockNumber());
         viewport()->update(); // repaint bullets as the active line moves
+
+        const int cur = textCursor().blockNumber();
+        if (!m_prettifying && cur != m_lastCursorBlock) {
+            const QTextBlock prev = document()->findBlockByNumber(m_lastCursorBlock);
+            // If the caret just left a table, align it.
+            if (prev.isValid() && isTableRow(prev.text())) {
+                int first = m_lastCursorBlock, last = m_lastCursorBlock;
+                while (document()->findBlockByNumber(first - 1).isValid() &&
+                       isTableRow(document()->findBlockByNumber(first - 1).text()))
+                    --first;
+                while (document()->findBlockByNumber(last + 1).isValid() &&
+                       isTableRow(document()->findBlockByNumber(last + 1).text()))
+                    ++last;
+                if (cur < first || cur > last)
+                    prettifyTableAt(m_lastCursorBlock);
+            }
+        }
+        m_lastCursorBlock = textCursor().blockNumber();
     });
     // Keep folded sections hidden as the document is edited.
     connect(document(), &QTextDocument::contentsChanged, this, [this] {
@@ -482,6 +547,65 @@ void MarkdownEditor::reapplyFolds() {
     document()->markContentsDirty(0, document()->characterCount());
     m_applyingFolds = false;
     viewport()->update();
+}
+
+void MarkdownEditor::prettifyTableAt(int blockNumber) {
+    QTextBlock first = document()->findBlockByNumber(blockNumber);
+    if (!first.isValid() || !isTableRow(first.text()))
+        return;
+    while (first.previous().isValid() && isTableRow(first.previous().text()))
+        first = first.previous();
+    QTextBlock last = first;
+    while (last.next().isValid() && isTableRow(last.next().text()))
+        last = last.next();
+
+    QList<QStringList> rows;
+    QList<bool> sep;
+    for (QTextBlock b = first;; b = b.next()) {
+        rows << splitRow(b.text());
+        sep << isSeparatorRow(b.text());
+        if (b == last)
+            break;
+    }
+
+    int cols = 0;
+    for (const QStringList &r : rows)
+        cols = qMax(cols, int(r.size()));
+
+    QList<int> width(cols, 3);
+    for (int r = 0; r < rows.size(); ++r)
+        if (!sep[r])
+            for (int c = 0; c < rows[r].size(); ++c)
+                width[c] = qMax(width[c], int(rows[r][c].length()));
+
+    QList<int> align(cols, 0);
+    for (int r = 0; r < rows.size(); ++r)
+        if (sep[r])
+            for (int c = 0; c < cols && c < rows[r].size(); ++c)
+                align[c] = sepAlign(rows[r][c]);
+
+    QStringList out;
+    for (int r = 0; r < rows.size(); ++r) {
+        QString line = QStringLiteral("|");
+        for (int c = 0; c < cols; ++c) {
+            const QString cell =
+                sep[r] ? dashCell(width[c], align[c])
+                       : padCell(c < rows[r].size() ? rows[r][c] : QString(),
+                                 width[c], align[c]);
+            line += QLatin1Char(' ') + cell + QStringLiteral(" |");
+        }
+        out << line;
+    }
+
+    QTextCursor cur(first);
+    cur.movePosition(QTextCursor::StartOfBlock);
+    cur.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+    if (cur.selectedText().replace(QChar(0x2029), QLatin1Char('\n')) ==
+        out.join(QLatin1Char('\n')))
+        return; // already aligned
+    m_prettifying = true;
+    cur.insertText(out.join(QLatin1Char('\n')));
+    m_prettifying = false;
 }
 
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
