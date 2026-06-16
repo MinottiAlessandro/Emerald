@@ -94,6 +94,32 @@ QString manualText() {
         "and a Home note.\n");
 }
 
+// A tree that draws a faint vertical guide for each nesting level, so notes
+// inside a folder read clearly as sub-items.
+class NoteTree : public QTreeWidget {
+public:
+    using QTreeWidget::QTreeWidget;
+
+protected:
+    void drawBranches(QPainter *painter, const QRect &rect,
+                      const QModelIndex &index) const override {
+        QTreeWidget::drawBranches(painter, rect, index);
+        int depth = 0;
+        for (QModelIndex a = index.parent(); a.isValid(); a = a.parent())
+            ++depth;
+        if (depth == 0)
+            return;
+        const int ind = indentation();
+        painter->save();
+        painter->setPen(QColor(0x2a, 0x2e, 0x42));
+        for (int level = 1; level <= depth; ++level) {
+            const int x = rect.right() - ind * (depth - level) - ind / 2;
+            painter->drawLine(x, rect.top(), x, rect.bottom());
+        }
+        painter->restore();
+    }
+};
+
 // A small themed folder glyph drawn once and reused for every folder row.
 const QIcon &folderIcon() {
     static const QIcon icon = [] {
@@ -174,9 +200,9 @@ void MainWindow::buildUi() {
     row->addWidget(m_centerColumn, 1);
     row->addStretch(0);
 
-    m_noteTree = new QTreeWidget(this);
+    m_noteTree = new NoteTree(this);
     m_noteTree->setHeaderHidden(true);
-    m_noteTree->setIndentation(12);
+    m_noteTree->setIndentation(16);
     m_noteTree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_noteTree, &QTreeWidget::itemClicked, this,
             &MainWindow::onTreeItemClicked);
