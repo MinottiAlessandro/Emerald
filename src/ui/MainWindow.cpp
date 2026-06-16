@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "MarkdownEditor.h"
+#include "SearchPopup.h"
 #include "core/Vault.h"
 
 #include <QAction>
@@ -11,7 +12,6 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QInputDialog>
-#include <QLineEdit>
 #include <QListWidget>
 #include <QMenuBar>
 #include <QSettings>
@@ -72,16 +72,11 @@ void MainWindow::buildUi() {
     setCentralWidget(center);
 
     m_noteList = new QListWidget(this);
-    m_searchBox = new QLineEdit(this);
-    m_searchBox->setObjectName(QStringLiteral("search"));
-    m_searchBox->setPlaceholderText(tr("Search notes…"));
-    m_searchBox->setClearButtonEnabled(true);
 
     auto *side = new QWidget(this);
     auto *col = new QVBoxLayout(side);
     col->setContentsMargins(6, 6, 6, 6);
     col->setSpacing(6);
-    col->addWidget(m_searchBox);
     col->addWidget(m_noteList);
 
     auto *sidebar = new QDockWidget(tr("Notes"), this);
@@ -91,19 +86,15 @@ void MainWindow::buildUi() {
 
     connect(m_noteList, &QListWidget::itemClicked, this,
             &MainWindow::onNoteItemClicked);
-    connect(m_searchBox, &QLineEdit::textChanged, this,
-            &MainWindow::onSearchChanged);
-    connect(m_searchBox, &QLineEdit::returnPressed, this, [this] {
-        if (m_noteList->count() > 0 &&
-            (m_noteList->item(0)->flags() & Qt::ItemIsEnabled))
-            onNoteItemClicked(m_noteList->item(0));
-    });
-    auto *focusSearch =
-        new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), this);
-    connect(focusSearch, &QShortcut::activated, this, [this] {
-        m_searchBox->setFocus();
-        m_searchBox->selectAll();
-    });
+
+    m_searchPopup = new SearchPopup(&m_searchIndex, this);
+    connect(m_searchPopup, &SearchPopup::openRequested, this,
+            [this](const QString &path, const QString &query) {
+                openNoteByPath(path);
+                const QStringList tokens = SearchIndex::tokenize(query);
+                if (!tokens.isEmpty())
+                    m_editor->jumpToMatch(tokens.first());
+            });
 }
 
 void MainWindow::buildMenu() {
@@ -112,6 +103,8 @@ void MainWindow::buildMenu() {
                     &MainWindow::chooseVault);
     file->addAction(tr("&New Note"), QKeySequence::New, this,
                     &MainWindow::newNote);
+    file->addAction(tr("&Search…"), QKeySequence::Find, this,
+                    &MainWindow::openSearch);
     file->addSeparator();
     file->addAction(tr("Save"), QKeySequence::Save, this,
                     &MainWindow::saveCurrent);
@@ -155,9 +148,6 @@ void MainWindow::openVault(const QString &path) {
     m_loading = true;
     m_editor->clear();
     m_loading = false;
-    m_searchBox->blockSignals(true);
-    m_searchBox->clear();
-    m_searchBox->blockSignals(false);
 
     refreshNoteList();
     QSettings().setValue(QStringLiteral("lastVault"), path);
@@ -280,36 +270,15 @@ void MainWindow::selectInList(QListWidget *list, const QString &path) {
     list->clearSelection();
 }
 
-void MainWindow::onSearchChanged(const QString &text) {
-    if (!m_vault)
-        return;
-    if (text.trimmed().isEmpty()) {
-        refreshNoteList(); // empty query -> back to the full note list
-        return;
-    }
-    m_noteList->clear();
-    const QList<SearchIndex::Result> results = m_searchIndex.search(text);
-    for (const SearchIndex::Result &r : results) {
-        auto *item = new QListWidgetItem(r.title + QLatin1Char('\n') + r.snippet,
-                                         m_noteList);
-        item->setData(kPathRole, r.path);
-        item->setToolTip(r.snippet);
-    }
-    if (results.isEmpty()) {
-        auto *none = new QListWidgetItem(tr("No matches"), m_noteList);
-        none->setFlags(Qt::NoItemFlags);
-    }
+void MainWindow::openSearch() {
+    if (m_vault)
+        m_searchPopup->showCentered();
 }
 
 void MainWindow::onNoteItemClicked(QListWidgetItem *item) {
     const QString path = item->data(kPathRole).toString();
-    if (path.isEmpty())
-        return;
-    openNoteByPath(path);
-    // If we got here from a search, jump to the first match in the note.
-    const QStringList tokens = SearchIndex::tokenize(m_searchBox->text());
-    if (!tokens.isEmpty())
-        m_editor->jumpToMatch(tokens.first());
+    if (!path.isEmpty())
+        openNoteByPath(path);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {

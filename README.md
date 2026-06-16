@@ -17,9 +17,9 @@ files, inline live preview. Built to stay small and maintainable.
   alias. Typing `[[` pops a fuzzy autocomplete of existing note titles.
 - **Smart lists.** Enter continues a bullet, numbered or `- [ ]` task list
   (numbers increment, indentation is kept); Enter on an empty item ends it.
-- **Fast full-text search** (`Ctrl+Shift+F`). An in-memory inverted index;
-  type in the sidebar box to find notes by content. Results are ranked, and
-  opening one jumps to the first match.
+- **Fast full-text search** (`Ctrl+F`). A Telescope-style popup over the
+  window, backed by an in-memory inverted index; type to filter, ↑/↓ to move,
+  Enter to open. Results are ranked and opening one jumps to the first match.
 - **Back / forward navigation** (`Alt+←` / `Alt+→`, the mouse side buttons, or
   the toolbar arrows) walks the notes you've visited, like a browser.
 - **Debounced autosave.** Your notes are written to disk as you type.

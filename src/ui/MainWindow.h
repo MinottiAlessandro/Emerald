@@ -7,9 +7,9 @@
 
 class Vault;
 class MarkdownEditor;
+class SearchPopup;
 class QListWidget;
 class QListWidgetItem;
-class QLineEdit;
 class QTimer;
 class QAction;
 
@@ -34,7 +34,7 @@ private:
     void newNote();
     void onLinkClicked(const QString &target);
     void selectInList(QListWidget *list, const QString &path);
-    void onSearchChanged(const QString &text);
+    void openSearch();
     void onNoteItemClicked(QListWidgetItem *item);
     void navigateBack();
     void navigateForward();
@@ -46,7 +46,7 @@ private:
 
     MarkdownEditor *m_editor = nullptr;
     QListWidget *m_noteList = nullptr;
-    QLineEdit *m_searchBox = nullptr;
+    SearchPopup *m_searchPopup = nullptr;
     QTimer *m_saveTimer = nullptr;
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;

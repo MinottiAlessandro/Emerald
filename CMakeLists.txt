@@ -27,6 +27,8 @@ add_executable(emerald
   src/ui/MarkdownEditor.cpp
   src/ui/MarkdownHighlighter.h
   src/ui/MarkdownHighlighter.cpp
+  src/ui/SearchPopup.h
+  src/ui/SearchPopup.cpp
   resources/resources.qrc
 )
 
