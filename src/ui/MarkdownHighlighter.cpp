@@ -104,6 +104,13 @@ void MarkdownHighlighter::setActiveBlock(int blockNumber) {
     }
 }
 
+void MarkdownHighlighter::setBaseSize(double pt) {
+    if (pt > 0 && !qFuzzyCompare(pt, m_baseSize)) {
+        m_baseSize = pt;
+        rehighlight();
+    }
+}
+
 QTextCharFormat MarkdownHighlighter::conceal() const {
     QTextCharFormat f;
     f.setForeground(QColor(0, 0, 0, 0)); // transparent

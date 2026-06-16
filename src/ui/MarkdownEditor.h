@@ -18,6 +18,9 @@ public:
     // The note titles offered by [[ autocomplete. Call when the vault changes.
     void setCompletions(const QStringList &titles);
 
+    // Set the editor body font (family + size) and keep heading scaling in sync.
+    void applyFont(const QFont &font);
+
     // Select and scroll to the first occurrence of `text` (case-insensitive).
     void jumpToMatch(const QString &text);
 

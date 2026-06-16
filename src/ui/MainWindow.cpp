@@ -6,20 +6,25 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontComboBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QLabel>
 #include <QListWidget>
-#include <QMenuBar>
+#include <QMenu>
 #include <QSettings>
-#include <QShortcut>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QStringList>
 #include <QTimer>
-#include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
@@ -27,8 +32,9 @@ constexpr int kPathRole = Qt::UserRole;
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+    buildActions();
     buildUi();
-    buildMenu();
+    loadSettings();
 
     m_saveTimer = new QTimer(this);
     m_saveTimer->setSingleShot(true);
@@ -72,20 +78,56 @@ void MainWindow::buildUi() {
     setCentralWidget(center);
 
     m_noteList = new QListWidget(this);
+    connect(m_noteList, &QListWidget::itemClicked, this,
+            &MainWindow::onNoteItemClicked);
+
+    // Sidebar header: a big "Notes" title with the back/forward arrows on the
+    // right (replaces the old top toolbar).
+    auto *header = new QWidget(this);
+    header->setObjectName(QStringLiteral("sideHeader"));
+    auto *hrow = new QHBoxLayout(header);
+    hrow->setContentsMargins(10, 4, 4, 4);
+    hrow->setSpacing(2);
+    auto *title = new QLabel(tr("Notes"), header);
+    title->setObjectName(QStringLiteral("sideTitle"));
+    auto *backBtn = new QToolButton(header);
+    backBtn->setObjectName(QStringLiteral("navButton"));
+    backBtn->setDefaultAction(m_backAction);
+    auto *fwdBtn = new QToolButton(header);
+    fwdBtn->setObjectName(QStringLiteral("navButton"));
+    fwdBtn->setDefaultAction(m_forwardAction);
+    hrow->addWidget(title);
+    hrow->addStretch();
+    hrow->addWidget(backBtn);
+    hrow->addWidget(fwdBtn);
+
+    // Sidebar footer: a gear button holding settings + the file actions.
+    auto *footer = new QWidget(this);
+    footer->setObjectName(QStringLiteral("sideFooter"));
+    auto *frow = new QHBoxLayout(footer);
+    frow->setContentsMargins(8, 4, 8, 4);
+    auto *gear = new QToolButton(footer);
+    gear->setObjectName(QStringLiteral("gearButton"));
+    gear->setText(QStringLiteral("⚙"));
+    gear->setToolTip(tr("Menu & settings"));
+    gear->setPopupMode(QToolButton::InstantPopup);
+    gear->setMenu(m_gearMenu);
+    frow->addWidget(gear);
+    frow->addStretch();
 
     auto *side = new QWidget(this);
     auto *col = new QVBoxLayout(side);
-    col->setContentsMargins(6, 6, 6, 6);
-    col->setSpacing(6);
-    col->addWidget(m_noteList);
+    col->setContentsMargins(0, 0, 0, 0);
+    col->setSpacing(0);
+    col->addWidget(header);
+    col->addWidget(m_noteList, 1);
+    col->addWidget(footer);
 
-    auto *sidebar = new QDockWidget(tr("Notes"), this);
+    auto *sidebar = new QDockWidget(this);
     sidebar->setWidget(side);
+    sidebar->setTitleBarWidget(new QWidget(sidebar)); // hide the default title
     sidebar->setFeatures(QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, sidebar);
-
-    connect(m_noteList, &QListWidget::itemClicked, this,
-            &MainWindow::onNoteItemClicked);
 
     m_searchPopup = new SearchPopup(&m_searchIndex, this);
     connect(m_searchPopup, &SearchPopup::openRequested, this,
@@ -97,33 +139,107 @@ void MainWindow::buildUi() {
             });
 }
 
-void MainWindow::buildMenu() {
-    QMenu *file = menuBar()->addMenu(tr("&File"));
-    file->addAction(tr("&Open Vault…"), QKeySequence::Open, this,
-                    &MainWindow::chooseVault);
-    file->addAction(tr("&New Note"), QKeySequence::New, this,
-                    &MainWindow::newNote);
-    file->addAction(tr("&Search…"), QKeySequence::Find, this,
-                    &MainWindow::openSearch);
-    file->addSeparator();
-    file->addAction(tr("Save"), QKeySequence::Save, this,
-                    &MainWindow::saveCurrent);
-    file->addSeparator();
-    file->addAction(tr("Quit"), QKeySequence::Quit, this, &QWidget::close);
+void MainWindow::buildActions() {
+    struct Spec {
+        const char *text;
+        QKeySequence::StandardKey key;
+        void (MainWindow::*slot)();
+    };
+    const Spec specs[] = {
+        {QT_TR_NOOP("Open Vault…"), QKeySequence::Open, &MainWindow::chooseVault},
+        {QT_TR_NOOP("New Note"), QKeySequence::New, &MainWindow::newNote},
+        {QT_TR_NOOP("Search…"), QKeySequence::Find, &MainWindow::openSearch},
+        {QT_TR_NOOP("Save"), QKeySequence::Save, &MainWindow::saveCurrent},
+    };
 
-    auto *nav = addToolBar(tr("Navigation"));
-    nav->setMovable(false);
-    nav->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    m_backAction = nav->addAction(QStringLiteral("←"));
+    m_gearMenu = new QMenu(this);
+    auto *settings = m_gearMenu->addAction(tr("Settings…"));
+    connect(settings, &QAction::triggered, this, &MainWindow::openSettings);
+    m_gearMenu->addSeparator();
+    for (const Spec &s : specs) {
+        auto *act = new QAction(tr(s.text), this);
+        act->setShortcut(s.key);
+        connect(act, &QAction::triggered, this, s.slot);
+        addAction(act); // keep the shortcut live without a menubar
+        m_gearMenu->addAction(act);
+    }
+    m_gearMenu->addSeparator();
+    auto *quit = new QAction(tr("Quit"), this);
+    quit->setShortcut(QKeySequence::Quit);
+    connect(quit, &QAction::triggered, this, &QWidget::close);
+    addAction(quit);
+    m_gearMenu->addAction(quit);
+
+    // Navigation actions drive both the header arrow buttons and the shortcuts.
+    m_backAction = new QAction(QStringLiteral("←"), this);
     m_backAction->setToolTip(tr("Back  (Alt+Left)"));
     m_backAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
     connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
-    m_forwardAction = nav->addAction(QStringLiteral("→"));
+    addAction(m_backAction);
+    m_forwardAction = new QAction(QStringLiteral("→"), this);
     m_forwardAction->setToolTip(tr("Forward  (Alt+Right)"));
     m_forwardAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Right));
     connect(m_forwardAction, &QAction::triggered, this,
             &MainWindow::navigateForward);
+    addAction(m_forwardAction);
     updateNavActions();
+}
+
+void MainWindow::loadSettings() {
+    QSettings s;
+    // With no custom font saved, keep the editor's built-in fallback chain
+    // (Inter -> Liberation Sans -> sans-serif) untouched.
+    if (!s.contains(QStringLiteral("editorFontFamily")) &&
+        !s.contains(QStringLiteral("editorFontSize")))
+        return;
+    QFont f = m_editor->font();
+    if (s.contains(QStringLiteral("editorFontFamily")))
+        f.setFamily(s.value(QStringLiteral("editorFontFamily")).toString());
+    if (s.contains(QStringLiteral("editorFontSize")))
+        f.setPointSize(s.value(QStringLiteral("editorFontSize")).toInt());
+    m_editor->applyFont(f);
+}
+
+void MainWindow::openSettings() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Settings"));
+    auto *form = new QFormLayout(&dlg);
+
+    auto *fontBox = new QFontComboBox(&dlg);
+    fontBox->setCurrentFont(m_editor->font());
+    auto *sizeBox = new QSpinBox(&dlg);
+    sizeBox->setRange(8, 32);
+    sizeBox->setValue(m_editor->font().pointSize());
+
+    form->addRow(tr("Editor font"), fontBox);
+    form->addRow(tr("Font size"), sizeBox);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    // Live preview as the user changes the controls.
+    auto preview = [this, fontBox, sizeBox] {
+        QFont f = fontBox->currentFont();
+        f.setPointSize(sizeBox->value());
+        m_editor->applyFont(f);
+    };
+    connect(fontBox, &QFontComboBox::currentFontChanged, &dlg, preview);
+    connect(sizeBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
+
+    const QFont original = m_editor->font();
+    if (dlg.exec() == QDialog::Accepted) {
+        QFont f = fontBox->currentFont();
+        f.setPointSize(sizeBox->value());
+        m_editor->applyFont(f);
+        QSettings s;
+        s.setValue(QStringLiteral("editorFontFamily"), f.family());
+        s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
+    } else {
+        m_editor->applyFont(original); // revert the live preview
+    }
 }
 
 void MainWindow::chooseVault() {

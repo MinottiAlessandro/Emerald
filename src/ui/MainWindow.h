@@ -12,6 +12,7 @@ class QListWidget;
 class QListWidgetItem;
 class QTimer;
 class QAction;
+class QMenu;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -23,8 +24,10 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    void buildActions();
     void buildUi();
-    void buildMenu();
+    void openSettings();
+    void loadSettings();
 
     void chooseVault();
     void openVault(const QString &path);
@@ -48,6 +51,7 @@ private:
     QListWidget *m_noteList = nullptr;
     SearchPopup *m_searchPopup = nullptr;
     QTimer *m_saveTimer = nullptr;
+    QMenu *m_gearMenu = nullptr;
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
 

@@ -21,6 +21,10 @@ public:
     // block are shown; markers elsewhere are concealed.
     void setActiveBlock(int blockNumber);
 
+    // The base point size headings scale from; call when the editor font size
+    // changes so heading sizes track it.
+    void setBaseSize(double pt);
+
 protected:
     void highlightBlock(const QString &text) override;
 

@@ -58,6 +58,13 @@ void MarkdownEditor::setCompletions(const QStringList &titles) {
     m_completionModel->setStringList(titles);
 }
 
+void MarkdownEditor::applyFont(const QFont &font) {
+    setFont(font);
+    document()->setDefaultFont(font);
+    if (m_highlighter)
+        m_highlighter->setBaseSize(font.pointSizeF());
+}
+
 void MarkdownEditor::jumpToMatch(const QString &text) {
     if (text.isEmpty())
         return;

@@ -35,6 +35,35 @@ QListWidget::item:selected {
     color: #c0caf5;
 }
 
+/* Sidebar header (title + nav arrows) and footer (gear) */
+QWidget#sideHeader, QWidget#sideFooter {
+    background: #16161e;
+}
+QLabel#sideTitle {
+    color: #c0caf5;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 2px 0;
+}
+QToolButton#navButton, QToolButton#gearButton {
+    background: transparent;
+    color: #787c99;
+    border: none;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 16px;
+}
+QToolButton#navButton:hover, QToolButton#gearButton:hover {
+    background: #2a2e42;
+    color: #c0caf5;
+}
+QToolButton#navButton:disabled {
+    color: #3b4261;
+}
+QToolButton#gearButton::menu-indicator {
+    image: none;
+}
+
 /* The drag-to-resize divider between the sidebar and the editor: a plain
    full-height line (no gripper dots) that lights up on hover. */
 QMainWindow::separator {

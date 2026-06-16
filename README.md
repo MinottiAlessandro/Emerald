@@ -22,7 +22,12 @@ files, inline live preview. Built to stay small and maintainable.
   window, backed by an in-memory inverted index; type to filter, ↑/↓ to move,
   Enter to open. Results are ranked and opening one jumps to the first match.
 - **Back / forward navigation** (`Alt+←` / `Alt+→`, the mouse side buttons, or
-  the toolbar arrows) walks the notes you've visited, like a browser.
+  the arrows in the sidebar header) walks the notes you've visited, like a
+  browser.
+- **No menubar.** A gear at the bottom of the sidebar holds settings and the
+  file actions; everything also has a keyboard shortcut.
+- **Adjustable font.** Pick the editor font family and size in Settings
+  (persisted); heading sizes scale with it.
 - **Debounced autosave.** Your notes are written to disk as you type.
 - **Dark theme**, embedded in the binary.
 
