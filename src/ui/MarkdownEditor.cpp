@@ -128,6 +128,18 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
     return {};
 }
 
+bool MarkdownEditor::followsLink(const QPoint &pos,
+                                 Qt::KeyboardModifiers mods) const {
+    if (linkAt(pos).isEmpty())
+        return false;
+    if (mods & Qt::ControlModifier)
+        return true;
+    // A plain click follows the link only when it is rendered, i.e. on a line
+    // other than the one the cursor (active line) is on, where the markup is
+    // still visible for editing.
+    return cursorForPosition(pos).blockNumber() != textCursor().blockNumber();
+}
+
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::BackButton) {
         emit navigateBack();
@@ -138,21 +150,56 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         return;
     }
     if (event->button() == Qt::LeftButton &&
-        (event->modifiers() & Qt::ControlModifier)) {
-        const QString target = linkAt(event->pos());
-        if (!target.isEmpty()) {
-            emit linkClicked(target);
-            return;
-        }
+        followsLink(event->pos(), event->modifiers())) {
+        emit linkClicked(linkAt(event->pos()));
+        return;
     }
     QPlainTextEdit::mousePressEvent(event);
 }
 
 void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
-    const bool overLink = (event->modifiers() & Qt::ControlModifier) &&
-                          !linkAt(event->pos()).isEmpty();
+    const bool overLink = followsLink(event->pos(), event->modifiers());
     viewport()->setCursor(overLink ? Qt::PointingHandCursor : Qt::IBeamCursor);
     QPlainTextEdit::mouseMoveEvent(event);
+}
+
+bool MarkdownEditor::continueList() {
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        return false;
+
+    static const QRegularExpression re(QStringLiteral(
+        "^(\\s*)(?:([-*+])|(\\d+)([.)]))\\s+(\\[[ xX]\\]\\s+)?(.*)$"));
+    const auto m = re.match(cur.block().text());
+    if (!m.hasMatch())
+        return false;
+
+    const QString indent = m.captured(1);
+    const QString bullet = m.captured(2); // - * +
+    const QString check = m.captured(5);  // "[ ] " when it's a task item
+    const QString content = m.captured(6);
+
+    // Enter on an empty item ends the list: wipe the marker, stay on the line.
+    if (content.isEmpty()) {
+        cur.movePosition(QTextCursor::StartOfBlock);
+        cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        cur.removeSelectedText();
+        setTextCursor(cur);
+        return true;
+    }
+
+    QString prefix = indent;
+    if (!bullet.isEmpty())
+        prefix += bullet + QLatin1Char(' ');
+    else
+        prefix += QString::number(m.captured(3).toInt() + 1) + m.captured(4) +
+                  QLatin1Char(' ');
+    if (!check.isEmpty())
+        prefix += QStringLiteral("[ ] "); // a continued task starts unchecked
+
+    cur.insertText(QStringLiteral("\n") + prefix);
+    setTextCursor(cur);
+    return true;
 }
 
 void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
@@ -169,6 +216,11 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         default:
             break;
         }
+    }
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+        continueList()) {
+        return;
     }
     QPlainTextEdit::keyPressEvent(event);
     updateCompletionPopup();

@@ -11,9 +11,12 @@ files, inline live preview. Built to stay small and maintainable.
   fenced ` ``` ` code blocks (with a language tag) and `[[wiki|links]]` render
   in place; the syntax markers collapse away on every line except the one your
   cursor is on.
-- **Full link system.** `[[Note]]` links are clickable (Ctrl+click) and
+- **Full link system.** `[[Note]]` links are clickable — a plain click once
+  the link is rendered, or Ctrl+click on the line you're editing — and
   auto-create the target if it doesn't exist. `[[Note|alias]]` shows just the
   alias. Typing `[[` pops a fuzzy autocomplete of existing note titles.
+- **Smart lists.** Enter continues a bullet, numbered or `- [ ]` task list
+  (numbers increment, indentation is kept); Enter on an empty item ends it.
 - **Fast full-text search** (`Ctrl+Shift+F`). An in-memory inverted index;
   type in the sidebar box to find notes by content. Results are ranked, and
   opening one jumps to the first match.

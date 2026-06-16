@@ -33,6 +33,12 @@ protected:
 
 private:
     QString linkAt(const QPoint &pos) const;
+    // Should a click at `pos` follow a link? True on Ctrl+click, or a plain
+    // click on a rendered link that lives off the active (cursor) line.
+    bool followsLink(const QPoint &pos, Qt::KeyboardModifiers mods) const;
+    // On Enter inside a list item, continue the list (or clear an empty item).
+    // Returns true if it handled the key.
+    bool continueList();
 
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.
