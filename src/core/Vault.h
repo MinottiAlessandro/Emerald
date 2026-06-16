@@ -2,6 +2,7 @@
 
 #include "Note.h"
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 // A vault is a folder of Markdown notes. Vault owns no GUI state — it just
@@ -12,9 +13,11 @@ public:
 
     QString root() const { return m_root; }
 
-    // (Re)scan the folder for *.md files, sorted by title.
+    // (Re)scan the folder for *.md files and sub-folders, sorted by title/path.
     void scan();
     const QVector<Note> &notes() const { return m_notes; }
+    // Sub-folder paths relative to the root (so empty folders are shown too).
+    const QStringList &folders() const { return m_folders; }
 
     QString read(const QString &path) const;
     bool write(const QString &path, const QString &content) const;
@@ -26,6 +29,14 @@ public:
     // Create a new note file named <title>.md and append it to the vault.
     // Returns the created note (or the existing one if it already exists).
     Note createNote(const QString &title);
+
+    // Create <title>.md inside an absolute folder within the vault (used by the
+    // folder tree's context menu). Returns the note, or the existing one.
+    Note createNoteIn(const QString &dir, const QString &title);
+
+    // Make a sub-folder `name` inside the absolute folder `dir`. Returns true
+    // on success (false if it exists or the name is invalid).
+    bool createFolder(const QString &dir, const QString &name);
 
     // Rename the note at oldPath to <newTitle>.md in the same folder, updating
     // the in-memory list. Returns the new path, or empty on failure (a name
@@ -47,4 +58,5 @@ public:
 private:
     QString m_root;
     QVector<Note> m_notes;
+    QStringList m_folders;
 };

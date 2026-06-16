@@ -18,18 +18,22 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMenu>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QStringList>
+#include <QHash>
 #include <QTimer>
 #include <QToolButton>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
+#include <functional>
 
 namespace {
-constexpr int kPathRole = Qt::UserRole;
+constexpr int kPathRole = Qt::UserRole;     // leaf: the note's file path
+constexpr int kDirRole = Qt::UserRole + 1;  // folder: its absolute path
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -95,9 +99,14 @@ void MainWindow::buildUi() {
     row->addStretch(0);
     setCentralWidget(center);
 
-    m_noteList = new QListWidget(this);
-    connect(m_noteList, &QListWidget::itemClicked, this,
-            &MainWindow::onNoteItemClicked);
+    m_noteTree = new QTreeWidget(this);
+    m_noteTree->setHeaderHidden(true);
+    m_noteTree->setIndentation(12);
+    m_noteTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_noteTree, &QTreeWidget::itemClicked, this,
+            &MainWindow::onTreeItemClicked);
+    connect(m_noteTree, &QTreeWidget::customContextMenuRequested, this,
+            &MainWindow::onTreeContextMenu);
 
     // Sidebar header: a big "Notes" title with the back/forward arrows on the
     // right (replaces the old top toolbar).
@@ -138,7 +147,7 @@ void MainWindow::buildUi() {
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(0);
     col->addWidget(header);
-    col->addWidget(m_noteList, 1);
+    col->addWidget(m_noteTree, 1);
     col->addWidget(footer);
 
     auto *sidebar = new QDockWidget(this);
@@ -286,25 +295,53 @@ void MainWindow::openVault(const QString &path) {
     m_titleEdit->clear();
     m_titleEdit->blockSignals(false);
 
-    refreshNoteList();
+    refreshTree();
     QSettings().setValue(QStringLiteral("lastVault"), path);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
     statusBar()->showMessage(
         tr("%1 notes").arg(m_vault->notes().size()), 4000);
 }
 
-void MainWindow::refreshNoteList() {
-    m_noteList->clear();
+void MainWindow::refreshTree() {
+    m_noteTree->clear();
     if (!m_vault)
         return;
+    const QDir rootDir(m_vault->root());
+    QHash<QString, QTreeWidgetItem *> folders;
+
+    // Find or build the (possibly nested) folder node for a relative dir path.
+    std::function<QTreeWidgetItem *(const QString &)> ensure =
+        [&](const QString &rel) -> QTreeWidgetItem * {
+        if (rel.isEmpty() || rel == QStringLiteral("."))
+            return m_noteTree->invisibleRootItem();
+        if (auto it = folders.constFind(rel); it != folders.constEnd())
+            return it.value();
+        const int slash = rel.lastIndexOf(QLatin1Char('/'));
+        QTreeWidgetItem *parent =
+            ensure(slash < 0 ? QString() : rel.left(slash));
+        auto *node = new QTreeWidgetItem(parent);
+        node->setText(0, slash < 0 ? rel : rel.mid(slash + 1));
+        node->setData(0, kDirRole, rootDir.filePath(rel));
+        node->setFlags(node->flags() & ~Qt::ItemIsSelectable);
+        folders.insert(rel, node);
+        return node;
+    };
+
+    for (const QString &rel : m_vault->folders())
+        ensure(rel);
+
     QStringList titles;
     for (const Note &n : m_vault->notes()) {
-        auto *item = new QListWidgetItem(n.title, m_noteList);
-        item->setData(kPathRole, n.path);
+        const QString dirRel =
+            rootDir.relativeFilePath(QFileInfo(n.path).absolutePath());
+        auto *leaf = new QTreeWidgetItem(ensure(dirRel));
+        leaf->setText(0, n.title);
+        leaf->setData(0, kPathRole, n.path);
         titles << n.title;
     }
+    m_noteTree->expandAll();
     m_editor->setCompletions(titles);
-    selectInList(m_noteList, m_currentPath);
+    selectInTree(m_currentPath);
 }
 
 void MainWindow::openNoteByPath(const QString &path, bool record) {
@@ -322,7 +359,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     m_titleEdit->setText(m_currentTitle);
     m_titleEdit->blockSignals(false);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(m_currentTitle));
-    selectInList(m_noteList, path);
+    selectInTree(path);
     if (record)
         pushHistory(path);
     updateNavActions();
@@ -364,7 +401,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
         if (p == oldPath)
             p = newPath;
     m_searchIndex.rebuild(*m_vault); // paths and link text changed vault-wide
-    refreshNoteList();
+    refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
     statusBar()->showMessage(tr("Renamed to “%1”").arg(newTitle), 3000);
 }
@@ -392,7 +429,7 @@ void MainWindow::newNote() {
     const Note note = m_vault->createNote(name.trimmed());
     const QString content = m_vault->read(note.path);
     m_searchIndex.updateNote(note.path, note.title, content);
-    refreshNoteList();
+    refreshTree();
     openNoteByPath(note.path);
 }
 
@@ -404,7 +441,7 @@ void MainWindow::onLinkClicked(const QString &target) {
         const Note note = m_vault->createNote(target);
         const QString content = m_vault->read(note.path);
         m_searchIndex.updateNote(note.path, note.title, content);
-        refreshNoteList();
+        refreshTree();
         path = note.path;
     }
     openNoteByPath(path);
@@ -441,14 +478,14 @@ void MainWindow::updateNavActions() {
                                     m_histIndex < m_history.size() - 1);
 }
 
-void MainWindow::selectInList(QListWidget *list, const QString &path) {
-    for (int i = 0; i < list->count(); ++i) {
-        if (list->item(i)->data(kPathRole).toString() == path) {
-            list->setCurrentRow(i);
+void MainWindow::selectInTree(const QString &path) {
+    for (QTreeWidgetItemIterator it(m_noteTree); *it; ++it) {
+        if ((*it)->data(0, kPathRole).toString() == path) {
+            m_noteTree->setCurrentItem(*it);
             return;
         }
     }
-    list->clearSelection();
+    m_noteTree->clearSelection();
 }
 
 void MainWindow::openSearch() {
@@ -456,10 +493,60 @@ void MainWindow::openSearch() {
         m_searchPopup->showCentered();
 }
 
-void MainWindow::onNoteItemClicked(QListWidgetItem *item) {
-    const QString path = item->data(kPathRole).toString();
+void MainWindow::onTreeItemClicked(QTreeWidgetItem *item, int) {
+    const QString path = item->data(0, kPathRole).toString();
     if (!path.isEmpty())
         openNoteByPath(path);
+}
+
+void MainWindow::onTreeContextMenu(const QPoint &pos) {
+    if (!m_vault)
+        return;
+    QTreeWidgetItem *item = m_noteTree->itemAt(pos);
+    // Target folder: the clicked folder, the folder of the clicked note, or the
+    // vault root when clicking empty space.
+    QString dir = m_vault->root();
+    if (item) {
+        const QString folder = item->data(0, kDirRole).toString();
+        dir = folder.isEmpty()
+                  ? QFileInfo(item->data(0, kPathRole).toString()).absolutePath()
+                  : folder;
+    }
+    QMenu menu(this);
+    menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
+    menu.addAction(tr("New Folder"), this, [this, dir] { newFolderIn(dir); });
+    menu.exec(m_noteTree->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::newNoteIn(const QString &dir) {
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, tr("New Note"), tr("Title:"),
+                              QLineEdit::Normal, QString(), &ok)
+            .trimmed();
+    if (!ok || !Vault::isValidTitle(name))
+        return;
+    const Note note = m_vault->createNoteIn(dir, name);
+    m_vault->scan();
+    m_searchIndex.rebuild(*m_vault);
+    refreshTree();
+    openNoteByPath(note.path);
+}
+
+void MainWindow::newFolderIn(const QString &dir) {
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, tr("New Folder"), tr("Folder name:"),
+                              QLineEdit::Normal, QString(), &ok)
+            .trimmed();
+    if (!ok || name.isEmpty())
+        return;
+    if (!m_vault->createFolder(dir, name)) {
+        statusBar()->showMessage(tr("Couldn't create that folder"), 3000);
+        return;
+    }
+    m_vault->scan();
+    refreshTree();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {

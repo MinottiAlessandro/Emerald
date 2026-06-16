@@ -50,6 +50,30 @@ QListWidget::item:selected {
     color: #c0caf5;
 }
 
+/* Sidebar note tree (folders + notes) */
+QTreeWidget {
+    background: #16161e;
+    color: #9aa5ce;
+    border: none;
+    outline: 0;
+    padding: 4px;
+}
+QTreeView::item {
+    padding: 5px 4px;
+    border-radius: 6px;
+    margin: 1px 0;
+}
+QTreeView::item:hover {
+    background: #20222e;
+}
+QTreeView::item:selected {
+    background: #2a2e42;
+    color: #c0caf5;
+}
+QTreeView::branch {
+    background: transparent;
+}
+
 /* Sidebar header (title + nav arrows) and footer (gear) */
 QWidget#sideHeader, QWidget#sideFooter {
     background: #16161e;

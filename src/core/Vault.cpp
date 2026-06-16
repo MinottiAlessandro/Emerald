@@ -26,6 +26,14 @@ void Vault::scan() {
     std::sort(m_notes.begin(), m_notes.end(), [](const Note &a, const Note &b) {
         return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
     });
+
+    m_folders.clear();
+    const QDir rootDir(m_root);
+    QDirIterator dirs(m_root, QDir::Dirs | QDir::NoDotAndDotDot,
+                      QDirIterator::Subdirectories);
+    while (dirs.hasNext())
+        m_folders.push_back(rootDir.relativeFilePath(dirs.next()));
+    m_folders.sort(Qt::CaseInsensitive);
 }
 
 QString Vault::read(const QString &path) const {
@@ -145,4 +153,19 @@ Note Vault::createNote(const QString &title) {
         return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
     });
     return note;
+}
+
+Note Vault::createNoteIn(const QString &dir, const QString &title) {
+    const QString folder = dir.isEmpty() ? m_root : dir;
+    const QString path = QDir(folder).filePath(title + QStringLiteral(".md"));
+    if (!QFileInfo::exists(path))
+        write(path, QString());
+    return Note{path, title};
+}
+
+bool Vault::createFolder(const QString &dir, const QString &name) {
+    if (!isValidTitle(name))
+        return false;
+    const QString folder = dir.isEmpty() ? m_root : dir;
+    return QDir(folder).mkdir(name);
 }

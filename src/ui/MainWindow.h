@@ -8,12 +8,13 @@
 class Vault;
 class MarkdownEditor;
 class SearchPopup;
-class QListWidget;
-class QListWidgetItem;
+class QTreeWidget;
+class QTreeWidgetItem;
 class QLineEdit;
 class QTimer;
 class QAction;
 class QMenu;
+class QPoint;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -32,15 +33,18 @@ private:
 
     void chooseVault();
     void openVault(const QString &path);
-    void refreshNoteList();
+    void refreshTree();
     void openNoteByPath(const QString &path, bool record = true);
     void saveCurrent();
     void newNote();
     void renameCurrent(const QString &rawTitle);
     void onLinkClicked(const QString &target);
-    void selectInList(QListWidget *list, const QString &path);
+    void selectInTree(const QString &path);
     void openSearch();
-    void onNoteItemClicked(QListWidgetItem *item);
+    void onTreeItemClicked(QTreeWidgetItem *item, int column);
+    void onTreeContextMenu(const QPoint &pos);
+    void newNoteIn(const QString &dir);
+    void newFolderIn(const QString &dir);
     void navigateBack();
     void navigateForward();
     void pushHistory(const QString &path);
@@ -51,7 +55,7 @@ private:
 
     MarkdownEditor *m_editor = nullptr;
     QLineEdit *m_titleEdit = nullptr;
-    QListWidget *m_noteList = nullptr;
+    QTreeWidget *m_noteTree = nullptr;
     SearchPopup *m_searchPopup = nullptr;
     QTimer *m_saveTimer = nullptr;
     QMenu *m_gearMenu = nullptr;

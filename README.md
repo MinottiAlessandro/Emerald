@@ -6,6 +6,8 @@ files, inline live preview. Built to stay small and maintainable.
 ## Features (v1)
 
 - **Vault = a folder of `.md` files.** No database, no lock-in, Obsidian-compatible.
+- **Folder tree.** The sidebar shows notes nested in their folders; right-click
+  to create a note or sub-folder anywhere in the tree.
 - **Inline live preview.** Headings, **bold**, *italic*, ***both***, `code`,
   ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists,
   fenced ` ``` ` code blocks (with a language tag), `|` tables and
@@ -58,9 +60,10 @@ core/   no GUI, unit-testable
   WikiLink         the shared [[wiki-link]] pattern + target cleaning
   Note             { path, title }
 ui/     Qt
-  MainWindow       sidebar (search + notes) | editor, autosave, history nav
-  MarkdownEditor   QPlainTextEdit + Ctrl-click links, [[ autocomplete
+  MainWindow       folder tree + title + editor; autosave, history, rename
+  MarkdownEditor   QPlainTextEdit + clickable links, [[ autocomplete, lists
   MarkdownHighlighter   inline live preview (conceal markers off the active line)
+  SearchPopup      centered Telescope-style search overlay
 ```
 
 The `core/` layer depends only on `QtCore`, so the link logic can be tested
@@ -68,5 +71,6 @@ without a display.
 
 ## Roadmap
 
-- Full-text search & tags
-- Inline images / tables in preview
+- LaTeX math (`$$`) and Mermaid diagrams (need a heavier renderer)
+- Tags
+- Graphic bullet glyphs / inline images
