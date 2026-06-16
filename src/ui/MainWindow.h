@@ -56,6 +56,7 @@ private:
     void newNoteIn(const QString &dir);
     void newFolderIn(const QString &dir);
     void deleteEntry(const QString &path, bool isFolder);
+    void moveItem(const QString &srcPath, const QString &destDir);
     void navigateBack();
     void navigateForward();
     void pushHistory(const QString &path);

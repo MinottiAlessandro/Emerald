@@ -178,3 +178,19 @@ bool Vault::remove(const QString &path) {
         return QDir(path).removeRecursively();
     return QFile::remove(path);
 }
+
+QString Vault::movePath(const QString &srcPath, const QString &destDir) {
+    const QFileInfo fi(srcPath);
+    if (!fi.exists())
+        return {};
+    const QString dest = QDir(destDir).filePath(fi.fileName());
+    if (dest == srcPath)
+        return srcPath; // already there
+    if (QFileInfo::exists(dest))
+        return {}; // a name collision in the target folder
+    // Don't move a folder into itself or one of its descendants.
+    if (fi.isDir() && (destDir == srcPath ||
+                       destDir.startsWith(srcPath + QLatin1Char('/'))))
+        return {};
+    return QFile::rename(srcPath, dest) ? dest : QString();
+}

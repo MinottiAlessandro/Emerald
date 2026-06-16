@@ -4,9 +4,11 @@
 #include "SearchPopup.h"
 #include "core/Vault.h"
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDropEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -103,8 +105,34 @@ QString manualText() {
 class NoteTree : public QTreeWidget {
 public:
     using QTreeWidget::QTreeWidget;
+    // Called with (source note/folder path, destination folder path; empty
+    // dest = vault root) when an item is dropped.
+    std::function<void(const QString &, const QString &)> onMove;
 
 protected:
+    void dropEvent(QDropEvent *event) override {
+        QTreeWidgetItem *src = currentItem();
+        if (!src) {
+            event->ignore();
+            return;
+        }
+        const QString dirRole = src->data(0, kDirRole).toString();
+        const QString srcPath =
+            dirRole.isEmpty() ? src->data(0, kPathRole).toString() : dirRole;
+        QString destDir; // empty => root
+        if (QTreeWidgetItem *target = itemAt(event->position().toPoint())) {
+            const QString d = target->data(0, kDirRole).toString();
+            destDir = d.isEmpty()
+                          ? QFileInfo(target->data(0, kPathRole).toString())
+                                .absolutePath()
+                          : d;
+        }
+        event->acceptProposedAction();
+        if (onMove && !srcPath.isEmpty())
+            onMove(srcPath, destDir); // MainWindow moves on disk + rebuilds
+        // Don't call the base: the tree is rebuilt from the vault instead.
+    }
+
     void drawBranches(QPainter *painter, const QRect &rect,
                       const QModelIndex &index) const override {
         QTreeWidget::drawBranches(painter, rect, index);
@@ -204,10 +232,18 @@ void MainWindow::buildUi() {
     row->addWidget(m_centerColumn, 1);
     row->addStretch(0);
 
-    m_noteTree = new NoteTree(this);
+    auto *tree = new NoteTree(this);
+    m_noteTree = tree;
     m_noteTree->setHeaderHidden(true);
     m_noteTree->setIndentation(16);
     m_noteTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_noteTree->setDragEnabled(true);
+    m_noteTree->setAcceptDrops(true);
+    m_noteTree->setDropIndicatorShown(true);
+    m_noteTree->setDragDropMode(QAbstractItemView::InternalMove);
+    tree->onMove = [this](const QString &src, const QString &dest) {
+        moveItem(src, dest);
+    };
     connect(m_noteTree, &QTreeWidget::itemClicked, this,
             &MainWindow::onTreeItemClicked);
     connect(m_noteTree, &QTreeWidget::customContextMenuRequested, this,
@@ -941,6 +977,37 @@ void MainWindow::newNoteIn(const QString &dir) {
     m_searchIndex.rebuild(*m_vault);
     refreshTree();
     openNoteByPath(note.path);
+}
+
+void MainWindow::moveItem(const QString &srcPath, const QString &destDirIn) {
+    if (!m_vault)
+        return;
+    const QString destDir = destDirIn.isEmpty() ? m_vault->root() : destDirIn;
+    const QString newPath = m_vault->movePath(srcPath, destDir);
+    if (newPath.isEmpty()) {
+        statusBar()->showMessage(tr("Couldn't move it there"), 3000);
+        return;
+    }
+    // Follow the open note / history if they lived in what just moved.
+    auto remap = [&](QString &p) {
+        if (p == srcPath)
+            p = newPath;
+        else if (p.startsWith(srcPath + QLatin1Char('/')))
+            p = newPath + p.mid(srcPath.length());
+    };
+    remap(m_currentPath);
+    for (QString &p : m_history)
+        remap(p);
+
+    m_vault->scan();
+    m_searchIndex.rebuild(*m_vault);
+    refreshTree();
+    if (!m_currentPath.isEmpty()) {
+        setWindowTitle(
+            QStringLiteral("Emerald — %1").arg(Vault::titleFromPath(m_currentPath)));
+        selectInTree(m_currentPath);
+        QSettings().setValue(QStringLiteral("lastNote"), m_currentPath);
+    }
 }
 
 void MainWindow::newFolderIn(const QString &dir) {

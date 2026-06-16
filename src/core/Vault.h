@@ -42,6 +42,10 @@ public:
     // true on success. Call scan() afterwards to refresh the listing.
     bool remove(const QString &path);
 
+    // Move a note or folder into destDir (within the vault). Returns the new
+    // path, or empty on failure (collision, or moving a folder into itself).
+    QString movePath(const QString &srcPath, const QString &destDir);
+
     // Rename the note at oldPath to <newTitle>.md in the same folder, updating
     // the in-memory list. Returns the new path, or empty on failure (a name
     // collision or an invalid title).
