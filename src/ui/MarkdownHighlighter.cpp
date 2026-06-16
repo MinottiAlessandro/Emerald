@@ -233,13 +233,19 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
     if (fenceHere) {                            // opening fence ```lang
-        setFormat(0, text.size(), m_codeBlock);
-        if (fence.capturedLength(2) > 0)       // language tag
-            setFormat(fence.capturedStart(2), fence.capturedLength(2), m_codeLang);
-        if (reveal)
+        if (reveal) {
+            setFormat(0, text.size(), m_codeBlock);
+            if (fence.capturedLength(2) > 0)   // language tag
+                setFormat(fence.capturedStart(2), fence.capturedLength(2),
+                          m_codeLang);
             setFormat(0, fence.capturedEnd(1), m_marker);
-        else
-            setFormat(fence.capturedStart(1), fence.capturedLength(1), conceal());
+        } else {
+            // Hide the header text but keep the line's normal height: the editor
+            // paints the header bar (language + copy button) over it.
+            QTextCharFormat hidden;
+            hidden.setForeground(QColor(0, 0, 0, 0));
+            setFormat(0, text.size(), hidden);
+        }
         setCurrentBlockState(StateCode);
         return;
     }

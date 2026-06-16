@@ -11,6 +11,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QStringListModel>
@@ -413,27 +414,38 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
 }
 
 void MarkdownEditor::forEachCodeBlock(
-    const std::function<void(const QRectF &, const QRectF &, const QString &)> &fn)
-    const {
+    const std::function<void(const CodeBlock &)> &fn) const {
     const qreal docMargin = document()->documentMargin();
     const qreal left = docMargin * 0.5;
     const qreal right = viewport()->width() - docMargin * 0.5;
+    static const QRegularExpression fenceRe(
+        QStringLiteral("^\\s*(?:```|~~~)\\s*(\\S*)"));
 
     bool inCode = false;
-    qreal top = 0;
+    qreal headerTop = 0, headerBottom = 0;
+    QString lang;
     QStringList code;
-    auto emitRegion = [&](qreal bottom) {
-        const QRectF box(left, top, right - left, bottom - top);
-        const QRectF copyBtn(box.right() - 24, box.top() + 5, 16, 16);
-        fn(box, copyBtn, code.join(QLatin1Char('\n')));
+    auto emitRegion = [&](qreal bodyBottom) {
+        CodeBlock cb;
+        cb.header = QRectF(left, headerTop, right - left, headerBottom - headerTop);
+        cb.body = QRectF(left, headerBottom, right - left, bodyBottom - headerBottom);
+        const qreal s = 16;
+        cb.copyBtn = QRectF(cb.header.right() - s - 8,
+                            cb.header.center().y() - s / 2, s, s);
+        cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang;
+        cb.code = code.join(QLatin1Char('\n'));
+        fn(cb);
     };
 
     for (QTextBlock b = document()->firstBlock(); b.isValid(); b = b.next()) {
         const bool isCode = b.userState() == 1; // MarkdownHighlighter::StateCode
         const QRectF geo = blockBoundingGeometry(b).translated(contentOffset());
-        if (isCode && !inCode) { // opening fence
+        if (isCode && !inCode) { // opening fence = the header row
             inCode = true;
-            top = geo.top();
+            headerTop = geo.top();
+            headerBottom = geo.bottom();
+            const auto m = fenceRe.match(b.text());
+            lang = m.hasMatch() ? m.captured(1) : QString();
             code.clear();
         } else if (isCode && inCode) { // inner code line
             code << b.text();
@@ -450,13 +462,12 @@ void MarkdownEditor::forEachCodeBlock(
 
 bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
     bool copied = false;
-    forEachCodeBlock(
-        [&](const QRectF &, const QRectF &copyBtn, const QString &code) {
-            if (!copied && copyBtn.contains(pos)) {
-                QApplication::clipboard()->setText(code);
-                copied = true;
-            }
-        });
+    forEachCodeBlock([&](const CodeBlock &cb) {
+        if (!copied && cb.copyBtn.contains(pos)) {
+            QApplication::clipboard()->setText(cb.code);
+            copied = true;
+        }
+    });
     return copied;
 }
 
@@ -610,15 +621,30 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
 }
 
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
-    // Code-block backgrounds go behind the text.
+    // Code-block backgrounds go behind the text: a rounded body with a thin
+    // header bar (rounded top corners) in a lighter complementary colour.
     {
         QPainter bg(viewport());
         bg.setRenderHint(QPainter::Antialiasing);
         bg.setPen(Qt::NoPen);
-        bg.setBrush(QColor(0x1f, 0x23, 0x35));
-        forEachCodeBlock([&](const QRectF &box, const QRectF &, const QString &) {
-            if (box.intersects(event->rect()))
-                bg.drawRoundedRect(box, 6, 6);
+        forEachCodeBlock([&](const CodeBlock &cb) {
+            const QRectF full(cb.header.left(), cb.header.top(), cb.header.width(),
+                              cb.body.bottom() - cb.header.top());
+            if (!full.intersects(event->rect()))
+                return;
+            bg.setBrush(QColor(0x1f, 0x23, 0x35));
+            bg.drawRoundedRect(full, 6, 6);
+            const qreal r = 6;
+            const QRectF h = cb.header;
+            QPainterPath path;
+            path.moveTo(h.left(), h.bottom());
+            path.lineTo(h.left(), h.top() + r);
+            path.quadTo(h.left(), h.top(), h.left() + r, h.top());
+            path.lineTo(h.right() - r, h.top());
+            path.quadTo(h.right(), h.top(), h.right(), h.top() + r);
+            path.lineTo(h.right(), h.bottom());
+            path.closeSubpath();
+            bg.fillPath(path, QColor(0x2a, 0x2e, 0x42));
         });
     }
 
@@ -726,14 +752,24 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
     }
 
-    // Copy button at the top-right of each code block (two stacked sheets).
-    forEachCodeBlock([&](const QRectF &, const QRectF &btn, const QString &) {
-        if (!btn.intersects(event->rect()))
+    // Code-block header content: language label on the left, copy button right.
+    forEachCodeBlock([&](const CodeBlock &cb) {
+        if (!cb.header.intersects(event->rect()))
             return;
-        QPen pen(QColor(0x56, 0x5f, 0x89));
+        QFont lf = font();
+        lf.setPointSizeF(font().pointSizeF() * 0.85);
+        p.setFont(lf);
+        p.setPen(QColor(0x7d, 0xcf, 0xff));
+        p.drawText(QRectF(cb.header.left() + 12, cb.header.top(),
+                          cb.header.width() - 44, cb.header.height()),
+                   Qt::AlignVCenter | Qt::AlignLeft, cb.language);
+        p.setFont(font());
+
+        const QRectF btn = cb.copyBtn;
+        QPen pen(QColor(0x9a, 0xa5, 0xce));
         pen.setWidthF(1.3);
         p.setPen(pen);
-        p.setBrush(QColor(0x1f, 0x23, 0x35));
+        p.setBrush(QColor(0x2a, 0x2e, 0x42));
         p.drawRoundedRect(QRectF(btn.left() + 5, btn.top() + 2, 8, 10), 2, 2);
         p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
     });
