@@ -17,6 +17,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -269,6 +270,10 @@ void MainWindow::buildUi() {
     m_splitter->setHandleWidth(2);
     m_splitter->setSizes({260, 900});
     setCentralWidget(m_splitter);
+    // Clicking (not dragging) the handle collapses / reopens the sidebar.
+    m_splitHandle = m_splitter->handle(1);
+    if (m_splitHandle)
+        m_splitHandle->installEventFilter(this);
 
     m_searchPopup = new SearchPopup(&m_searchIndex, this);
     connect(m_searchPopup, &SearchPopup::openRequested, this,
@@ -788,6 +793,24 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     } else if (watched == m_editor && event->type() == QEvent::Resize &&
                m_findBar && m_findBar->isVisible()) {
         positionFindBar();
+    } else if (watched == m_splitHandle) {
+        // A click (press + release without a drag) toggles the sidebar; a real
+        // drag is left to the splitter.
+        if (event->type() == QEvent::MouseButtonPress) {
+            m_handlePressPos = static_cast<QMouseEvent *>(event)->globalPosition()
+                                   .toPoint();
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            const QPoint up = static_cast<QMouseEvent *>(event)->globalPosition()
+                                  .toPoint();
+            if ((up - m_handlePressPos).manhattanLength() < 4) {
+                const QList<int> sizes = m_splitter->sizes();
+                const int total = sizes.value(0) + sizes.value(1);
+                if (sizes.value(0) > 0)
+                    m_splitter->setSizes({0, total}); // collapse
+                else
+                    m_splitter->setSizes({220, total - 220}); // reopen at min
+            }
+        }
     }
     return QMainWindow::eventFilter(watched, event);
 }

@@ -2,6 +2,7 @@
 
 #include "core/SearchIndex.h"
 #include <QMainWindow>
+#include <QPoint>
 #include <QString>
 #include <QStringList>
 
@@ -66,6 +67,8 @@ private:
     MarkdownEditor *m_editor = nullptr;
     QWidget *m_centerColumn = nullptr; // width-capped title + body column
     QSplitter *m_splitter = nullptr;   // collapsible sidebar | editor
+    QWidget *m_splitHandle = nullptr;  // its drag handle (click to toggle)
+    QPoint m_handlePressPos;
     QLineEdit *m_titleEdit = nullptr;
     QFrame *m_findBar = nullptr;       // in-note find overlay
     QLineEdit *m_findInput = nullptr;
