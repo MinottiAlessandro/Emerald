@@ -153,6 +153,24 @@ QLineEdit#searchInput {
 QLineEdit#searchInput:focus {
     border: 1px solid #7aa2f7;
 }
+/* In-note find bar (top-right of the editor) */
+QFrame#findBar {
+    background: #16161e;
+    border: 1px solid #3b4261;
+    border-radius: 8px;
+}
+QLineEdit#findInput {
+    background: #1a1b26;
+    color: #c0caf5;
+    border: 1px solid #2a2e42;
+    border-radius: 6px;
+    padding: 5px 8px;
+    selection-background-color: #2e3c64;
+}
+QLineEdit#findInput:focus {
+    border: 1px solid #7aa2f7;
+}
+
 QListWidget#searchResults {
     background: transparent;
     min-height: 90px;

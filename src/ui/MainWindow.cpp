@@ -14,7 +14,9 @@
 #include <QFileInfo>
 #include <QFontComboBox>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -29,6 +31,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
+#include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -275,6 +278,27 @@ void MainWindow::buildUi() {
                 if (!tokens.isEmpty())
                     m_editor->jumpToMatch(tokens.first());
             });
+
+    // In-note find bar, floating at the top-right of the editor.
+    m_findBar = new QFrame(m_editor);
+    m_findBar->setObjectName(QStringLiteral("findBar"));
+    auto *fh = new QHBoxLayout(m_findBar);
+    fh->setContentsMargins(8, 4, 8, 4);
+    fh->setSpacing(4);
+    m_findInput = new QLineEdit(m_findBar);
+    m_findInput->setObjectName(QStringLiteral("findInput"));
+    m_findInput->setPlaceholderText(tr("Find in note…  (Enter / Shift+Enter)"));
+    fh->addWidget(m_findInput);
+    m_findBar->hide();
+    m_findInput->installEventFilter(this);
+    m_editor->installEventFilter(this); // reposition the bar on editor resize
+    connect(m_findInput, &QLineEdit::textChanged, this, [this] {
+        // Incremental: search from the start of the current selection.
+        QTextCursor c = m_editor->textCursor();
+        c.setPosition(c.selectionStart());
+        m_editor->setTextCursor(c);
+        findInFile(true);
+    });
 }
 
 void MainWindow::buildActions() {
@@ -286,7 +310,6 @@ void MainWindow::buildActions() {
     const Spec specs[] = {
         {QT_TR_NOOP("Open Vault…"), QKeySequence::Open, &MainWindow::chooseVault},
         {QT_TR_NOOP("New Note"), QKeySequence::New, &MainWindow::newNote},
-        {QT_TR_NOOP("Search…"), QKeySequence::Find, &MainWindow::openSearch},
         {QT_TR_NOOP("Save"), QKeySequence::Save, &MainWindow::saveCurrent},
     };
 
@@ -303,6 +326,17 @@ void MainWindow::buildActions() {
         addAction(act); // keep the shortcut live without a menubar
         m_gearMenu->addAction(act);
     }
+    // Find in the current note (Ctrl+F) and global vault search (Ctrl+Shift+F).
+    auto *findHere = new QAction(tr("Find in Note…"), this);
+    findHere->setShortcut(QKeySequence::Find); // Ctrl+F
+    connect(findHere, &QAction::triggered, this, &MainWindow::openFindInFile);
+    addAction(findHere);
+    m_gearMenu->addAction(findHere);
+    auto *search = new QAction(tr("Search Vault…"), this);
+    search->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+    connect(search, &QAction::triggered, this, &MainWindow::openSearch);
+    addAction(search);
+    m_gearMenu->addAction(search);
     // Quick "go to note" picker (titles only).
     auto *goTo = new QAction(tr("Go to Note…"), this);
     goTo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
@@ -705,6 +739,57 @@ void MainWindow::openSearch() {
 void MainWindow::openQuickOpen() {
     if (m_vault)
         m_searchPopup->showCentered(true); // titles only
+}
+
+void MainWindow::openFindInFile() {
+    positionFindBar();
+    m_findBar->show();
+    m_findBar->raise();
+    m_findInput->setFocus();
+    m_findInput->selectAll();
+}
+
+void MainWindow::findInFile(bool forward) {
+    const QString text = m_findInput->text();
+    if (text.isEmpty())
+        return;
+    QTextDocument::FindFlags flags;
+    if (!forward)
+        flags |= QTextDocument::FindBackward;
+    if (!m_editor->find(text, flags)) { // wrap around
+        QTextCursor c = m_editor->textCursor();
+        c.movePosition(forward ? QTextCursor::Start : QTextCursor::End);
+        m_editor->setTextCursor(c);
+        m_editor->find(text, flags);
+    }
+}
+
+void MainWindow::positionFindBar() {
+    if (!m_findBar)
+        return;
+    m_findBar->adjustSize();
+    const int w = qMin(320, m_editor->width() - 24);
+    m_findBar->setFixedWidth(w);
+    m_findBar->move(m_editor->width() - w - 14, 8);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_findInput && event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() == Qt::Key_Escape) {
+            m_findBar->hide();
+            m_editor->setFocus();
+            return true;
+        }
+        if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) {
+            findInFile(!(ke->modifiers() & Qt::ShiftModifier));
+            return true;
+        }
+    } else if (watched == m_editor && event->type() == QEvent::Resize &&
+               m_findBar && m_findBar->isVisible()) {
+        positionFindBar();
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::onTreeItemClicked(QTreeWidgetItem *item, int) {

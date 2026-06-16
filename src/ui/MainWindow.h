@@ -16,6 +16,7 @@ class QAction;
 class QMenu;
 class QPoint;
 class QSplitter;
+class QFrame;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -25,6 +26,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void buildActions();
@@ -45,6 +47,9 @@ private:
     void selectInTree(const QString &path);
     void openSearch();
     void openQuickOpen();
+    void openFindInFile();
+    void findInFile(bool forward);
+    void positionFindBar();
     void onTreeItemClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);
@@ -62,6 +67,8 @@ private:
     QWidget *m_centerColumn = nullptr; // width-capped title + body column
     QSplitter *m_splitter = nullptr;   // collapsible sidebar | editor
     QLineEdit *m_titleEdit = nullptr;
+    QFrame *m_findBar = nullptr;       // in-note find overlay
+    QLineEdit *m_findInput = nullptr;
     QTreeWidget *m_noteTree = nullptr;
     SearchPopup *m_searchPopup = nullptr;
     QTimer *m_saveTimer = nullptr;
