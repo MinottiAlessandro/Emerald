@@ -8,9 +8,9 @@ files, inline live preview. Built to stay small and maintainable.
 - **Vault = a folder of `.md` files.** No database, no lock-in, Obsidian-compatible.
 - **Inline live preview.** Headings, **bold**, *italic*, ***both***, `code`,
   ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists,
-  fenced ` ``` ` code blocks (with a language tag) and `[[wiki|links]]` render
-  in place; the syntax markers collapse away on every line except the one your
-  cursor is on.
+  fenced ` ``` ` code blocks (with a language tag), `|` tables and
+  `[[wiki|links]]` render in place; the syntax markers collapse away on every
+  line except the one your cursor is on.
 - **Full link system.** `[[Note]]` links are clickable — a plain click once
   the link is rendered, or Ctrl+click on the line you're editing — and
   auto-create the target if it doesn't exist. `[[Note|alias]]` shows just the

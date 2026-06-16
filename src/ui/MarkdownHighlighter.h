@@ -59,6 +59,9 @@ private:
     QTextCharFormat m_rule;
     QTextCharFormat m_listMarker;
     QTextCharFormat m_taskDone;
+    QTextCharFormat m_table;       // monospace cell text
+    QTextCharFormat m_tableHeader; // monospace + bold header cells
+    QTextCharFormat m_tablePipe;   // dimmed column separators
     QTextCharFormat m_marker; // dimmed markers, shown on the active line
 
     QRegularExpression m_reHeading;
@@ -76,4 +79,5 @@ private:
     QRegularExpression m_reCode;
     QRegularExpression m_reStrike;
     QRegularExpression m_reHighlight;
+    QRegularExpression m_reTableSep;
 };

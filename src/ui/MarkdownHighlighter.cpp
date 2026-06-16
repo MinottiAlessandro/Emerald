@@ -70,6 +70,16 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_taskDone.setForeground(QColor("#565f89"));
     m_taskDone.setFontStrikeOut(true);
 
+    m_table.setForeground(QColor("#a9b1d6"));
+    m_table.setFontFamilies({QStringLiteral("monospace")});
+
+    m_tableHeader = m_table;
+    m_tableHeader.setForeground(QColor("#c0caf5"));
+    m_tableHeader.setFontWeight(QFont::Bold);
+
+    m_tablePipe = m_table;
+    m_tablePipe.setForeground(QColor("#565f89"));
+
     m_marker.setForeground(QColor("#565f89"));
 
     m_reHeading    = QRegularExpression(QStringLiteral("^(#{1,6})\\s+(.+)$"));
@@ -91,6 +101,8 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_reItalicStar = QRegularExpression(QStringLiteral("\\*([^*]+)\\*"));
     m_reItalicUnder =
         QRegularExpression(QStringLiteral("(?<!\\w)_([^_]+)_(?!\\w)"));
+    m_reTableSep =
+        QRegularExpression(QStringLiteral("^\\s*\\|?[\\s:|-]*-[\\s:|-]*\\|?\\s*$"));
 }
 
 void MarkdownHighlighter::setActiveBlock(int blockNumber) {
@@ -250,6 +262,25 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // Horizontal rule: the whole line is the divider.
     if (m_reRule.match(text).hasMatch()) {
         setFormat(0, text.size(), m_rule);
+        return;
+    }
+
+    // Table row: |-delimited. Monospace cells, dim pipes, bold header row, dim
+    // separator. (A lightweight render — no real cell grid in a plain editor.)
+    const QString trimmed = text.trimmed();
+    if (trimmed.size() > 1 && trimmed.startsWith(QLatin1Char('|')) &&
+        trimmed.endsWith(QLatin1Char('|'))) {
+        if (m_reTableSep.match(text).hasMatch()) {
+            setFormat(0, text.size(), m_tablePipe);
+            return;
+        }
+        const QTextBlock next = currentBlock().next();
+        const bool header =
+            next.isValid() && m_reTableSep.match(next.text()).hasMatch();
+        setFormat(0, text.size(), header ? m_tableHeader : m_table);
+        for (int i = 0; i < text.size(); ++i)
+            if (text[i] == QLatin1Char('|'))
+                setFormat(i, 1, m_tablePipe);
         return;
     }
 
