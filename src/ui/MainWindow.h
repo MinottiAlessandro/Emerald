@@ -61,8 +61,10 @@ private:
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);
     void newFolderIn(const QString &dir);
-    void deleteEntry(const QString &path, bool isFolder);
-    void moveItem(const QString &srcPath, const QString &destDir);
+    void deleteEntries(const QStringList &paths);
+    void clearStaleSettingsFor(const QString &path, bool isFolder);
+    void reconcileAfterDeletion(); // refresh tree + open a fallback if needed
+    void moveItems(const QStringList &srcPaths, const QString &destDir);
     void navigateBack();
     void navigateForward();
     void pushHistory(const QString &path);

@@ -18,6 +18,7 @@
 #include <QFontComboBox>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -47,6 +48,24 @@
 namespace {
 constexpr int kPathRole = Qt::UserRole;     // leaf: the note's file path
 constexpr int kDirRole = Qt::UserRole + 1;  // folder: its absolute path
+
+// Keep only paths that aren't nested inside another path in the list — moving
+// or deleting a folder already carries its contents, so handling a child too
+// would just hit a stale path.
+QStringList topLevelPaths(const QStringList &paths) {
+    QStringList roots;
+    for (const QString &p : paths) {
+        bool nested = false;
+        for (const QString &q : paths)
+            if (p != q && p.startsWith(q + QLatin1Char('/'))) {
+                nested = true;
+                break;
+            }
+        if (!nested)
+            roots << p;
+    }
+    return roots;
+}
 
 QString manualText() {
     return QStringLiteral(
@@ -106,20 +125,26 @@ QString manualText() {
 class NoteTree : public QTreeWidget {
 public:
     using QTreeWidget::QTreeWidget;
-    // Called with (source note/folder path, destination folder path; empty
-    // dest = vault root) when an item is dropped.
-    std::function<void(const QString &, const QString &)> onMove;
+    // Called with (source note/folder paths, destination folder path; empty
+    // dest = vault root) when a selection is dropped.
+    std::function<void(const QStringList &, const QString &)> onMove;
 
 protected:
     void dropEvent(QDropEvent *event) override {
-        QTreeWidgetItem *src = currentItem();
-        if (!src) {
+        // The whole current selection moves together.
+        QStringList srcPaths;
+        for (QTreeWidgetItem *it : selectedItems()) {
+            const QString dirRole = it->data(0, kDirRole).toString();
+            const QString p =
+                dirRole.isEmpty() ? it->data(0, kPathRole).toString() : dirRole;
+            if (!p.isEmpty())
+                srcPaths << p;
+        }
+        if (srcPaths.isEmpty()) {
             event->ignore();
             return;
         }
-        const QString dirRole = src->data(0, kDirRole).toString();
-        const QString srcPath =
-            dirRole.isEmpty() ? src->data(0, kPathRole).toString() : dirRole;
+        const QStringList roots = topLevelPaths(srcPaths);
         QString destDir; // empty => root
         if (QTreeWidgetItem *target = itemAt(event->position().toPoint())) {
             const QString d = target->data(0, kDirRole).toString();
@@ -130,20 +155,20 @@ protected:
         }
         // Accept the drop, but run the actual move *after* the view's own
         // drag-and-drop machinery has finished. In InternalMove mode
-        // QAbstractItemView removes the dragged row once startDrag()'s nested
-        // exec() returns; if we move the file and rebuild the tree synchronously
+        // QAbstractItemView removes the dragged rows once startDrag()'s nested
+        // exec() returns; if we move the files and rebuild the tree synchronously
         // here (still inside that exec), that post-drag removal deletes the
-        // freshly rebuilt row instead — so the note vanishes until the next
+        // freshly rebuilt rows instead — so the notes vanish until the next
         // refresh. Deferring to the event loop makes the rebuild-from-disk the
         // last thing to run, so it always wins. CopyAction is a belt-and-braces
         // hint that we handled the move and the view shouldn't also remove it.
         event->setDropAction(Qt::CopyAction);
         event->accept();
-        if (onMove && !srcPath.isEmpty()) {
-            const QString s = srcPath, d = destDir;
-            QTimer::singleShot(0, this, [this, s, d] {
+        if (onMove) {
+            const QString d = destDir;
+            QTimer::singleShot(0, this, [this, roots, d] {
                 if (onMove)
-                    onMove(s, d); // MainWindow moves on disk + rebuilds
+                    onMove(roots, d); // MainWindow moves on disk + rebuilds
             });
         }
         // Don't call the base: the tree is rebuilt from the vault instead.
@@ -266,8 +291,10 @@ void MainWindow::buildUi() {
     m_noteTree->setAcceptDrops(true);
     m_noteTree->setDropIndicatorShown(true);
     m_noteTree->setDragDropMode(QAbstractItemView::InternalMove);
-    tree->onMove = [this](const QString &src, const QString &dest) {
-        moveItem(src, dest);
+    // Shift-click for a range, Ctrl-click to toggle individual rows.
+    m_noteTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    tree->onMove = [this](const QStringList &srcs, const QString &dest) {
+        moveItems(srcs, dest);
     };
     connect(m_noteTree, &QTreeWidget::itemClicked, this,
             &MainWindow::onTreeItemClicked);
@@ -974,6 +1001,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
 }
 
 void MainWindow::onTreeItemClicked(QTreeWidgetItem *item, int) {
+    // Ctrl/Shift clicks are selection gestures (multi-select) — let them just
+    // extend the selection without opening a note or folding a folder.
+    if (QGuiApplication::keyboardModifiers() &
+        (Qt::ControlModifier | Qt::ShiftModifier))
+        return;
     const QString path = item->data(0, kPathRole).toString();
     if (!path.isEmpty()) {
         openNoteByPath(path);
@@ -999,91 +1031,143 @@ void MainWindow::onTreeContextMenu(const QPoint &pos) {
     else if (!notePath.isEmpty())
         dir = QFileInfo(notePath).absolutePath();
 
+    // Gather the selected paths; a bulk delete applies when the right-clicked
+    // row is part of a multi-row selection.
+    QStringList selPaths;
+    for (QTreeWidgetItem *it : m_noteTree->selectedItems()) {
+        const QString d = it->data(0, kDirRole).toString();
+        const QString p = d.isEmpty() ? it->data(0, kPathRole).toString() : d;
+        if (!p.isEmpty())
+            selPaths << p;
+    }
+    const bool bulk = item && item->isSelected() && selPaths.size() > 1;
+
     QMenu menu(this);
     menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
     menu.addAction(tr("New Folder"), this, [this, dir] { newFolderIn(dir); });
-    if (!notePath.isEmpty()) {
+    if (bulk) {
+        menu.addSeparator();
+        menu.addAction(tr("Delete %1 Items").arg(selPaths.size()), this,
+                       [this, selPaths] { deleteEntries(selPaths); });
+    } else if (!notePath.isEmpty()) {
         menu.addSeparator();
         menu.addAction(tr("Delete Note"), this,
-                       [this, notePath] { deleteEntry(notePath, false); });
+                       [this, notePath] { deleteEntries({notePath}); });
     } else if (!folderPath.isEmpty()) {
         menu.addSeparator();
         menu.addAction(tr("Delete Folder"), this,
-                       [this, folderPath] { deleteEntry(folderPath, true); });
+                       [this, folderPath] { deleteEntries({folderPath}); });
     }
     menu.exec(m_noteTree->viewport()->mapToGlobal(pos));
 }
 
-void MainWindow::deleteEntry(const QString &path, bool isFolder) {
-    const QString name =
-        isFolder ? QFileInfo(path).fileName() : Vault::titleFromPath(path);
-    const QString question =
-        isFolder
-            ? tr("Delete the folder “%1” and everything inside it?").arg(name)
-            : tr("Delete the note “%1”?").arg(name);
-    if (QMessageBox::question(this, tr("Delete"), question) != QMessageBox::Yes)
-        return;
-    if (!m_vault->remove(path)) {
-        notify(tr("Couldn't delete “%1”").arg(name), 3000);
-        return;
-    }
+// Clear settings that pointed at a deleted note/folder so they don't go stale
+// (Home note / new-note folder).
+void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
+    QSettings s;
+    const QString rel = QDir(m_vault->root()).relativeFilePath(path);
+    const QString home = s.value(QStringLiteral("homeNote")).toString();
+    const QString nf = s.value(QStringLiteral("newNoteFolder")).toString();
+    if (home == rel || (isFolder && home.startsWith(rel + QLatin1Char('/'))))
+        s.remove(QStringLiteral("homeNote"));
+    if (isFolder && (nf == rel || nf.startsWith(rel + QLatin1Char('/'))))
+        s.remove(QStringLiteral("newNoteFolder"));
+}
 
-    // Clear settings that pointed at the deleted note/folder so they don't go
-    // stale (Home note / new-note folder).
-    {
-        QSettings s;
-        const QString rel = QDir(m_vault->root()).relativeFilePath(path);
-        const QString home = s.value(QStringLiteral("homeNote")).toString();
-        const QString nf = s.value(QStringLiteral("newNoteFolder")).toString();
-        if (home == rel || (isFolder && home.startsWith(rel + QLatin1Char('/'))))
-            s.remove(QStringLiteral("homeNote"));
-        if (isFolder &&
-            (nf == rel || nf.startsWith(rel + QLatin1Char('/'))))
-            s.remove(QStringLiteral("newNoteFolder"));
-    }
-
-    // If the open note was removed (on its own or inside a deleted folder),
-    // clear the editor and prune it from history.
+// After a deletion: rescan, and if the open note was removed (on its own or
+// inside a deleted folder), prune history and open a sensible fallback.
+void MainWindow::reconcileAfterDeletion() {
     const bool currentGone =
         !m_currentPath.isEmpty() && !QFileInfo::exists(m_currentPath);
     m_vault->scan();
     m_searchIndex.rebuild(*m_vault);
-    if (currentGone) {
-        m_currentPath.clear();
-        m_currentTitle.clear();
-        m_history.erase(
-            std::remove_if(m_history.begin(), m_history.end(),
-                           [](const QString &p) { return !QFileInfo::exists(p); }),
-            m_history.end());
-        m_histIndex = m_history.size() - 1;
-        updateNavActions();
+    if (!currentGone) {
         refreshTree();
-
-        // Show the Home note, else the most recent still-open note, else blank.
-        QString fallback;
-        const QString home = QSettings().value(QStringLiteral("homeNote")).toString();
-        if (!home.isEmpty()) {
-            const QString p = QDir(m_vault->root()).filePath(home);
-            if (QFileInfo::exists(p))
-                fallback = p;
-        }
-        if (fallback.isEmpty() && !m_history.isEmpty())
-            fallback = m_history.last();
-        if (!fallback.isEmpty()) {
-            openNoteByPath(fallback);
-        } else {
-            m_loading = true;
-            m_editor->clear();
-            m_loading = false;
-            m_titleEdit->blockSignals(true);
-            m_titleEdit->clear();
-            m_titleEdit->blockSignals(false);
-            setWindowTitle(QStringLiteral("Emerald"));
-        }
-    } else {
-        refreshTree();
+        return;
     }
-    notify(tr("Deleted “%1”").arg(name), 3000);
+    m_currentPath.clear();
+    m_currentTitle.clear();
+    m_history.erase(
+        std::remove_if(m_history.begin(), m_history.end(),
+                       [](const QString &p) { return !QFileInfo::exists(p); }),
+        m_history.end());
+    m_histIndex = m_history.size() - 1;
+    updateNavActions();
+    refreshTree();
+
+    // Show the Home note, else the most recent still-open note, else blank.
+    QString fallback;
+    const QString home = QSettings().value(QStringLiteral("homeNote")).toString();
+    if (!home.isEmpty()) {
+        const QString p = QDir(m_vault->root()).filePath(home);
+        if (QFileInfo::exists(p))
+            fallback = p;
+    }
+    if (fallback.isEmpty() && !m_history.isEmpty())
+        fallback = m_history.last();
+    if (!fallback.isEmpty()) {
+        openNoteByPath(fallback);
+    } else {
+        m_loading = true;
+        m_editor->clear();
+        m_loading = false;
+        m_titleEdit->blockSignals(true);
+        m_titleEdit->clear();
+        m_titleEdit->blockSignals(false);
+        setWindowTitle(QStringLiteral("Emerald"));
+    }
+}
+
+void MainWindow::deleteEntries(const QStringList &pathsIn) {
+    // A selected folder takes its contents with it, so ignore nested children.
+    const QStringList paths = topLevelPaths(pathsIn);
+    if (paths.isEmpty())
+        return;
+
+    QString question;
+    if (paths.size() == 1) {
+        const QString p = paths.first();
+        const bool isFolder = QFileInfo(p).isDir();
+        const QString name =
+            isFolder ? QFileInfo(p).fileName() : Vault::titleFromPath(p);
+        question =
+            isFolder
+                ? tr("Delete the folder “%1” and everything inside it?").arg(name)
+                : tr("Delete the note “%1”?").arg(name);
+    } else {
+        question = tr("Delete the %1 selected items?").arg(paths.size());
+    }
+    if (QMessageBox::question(this, tr("Delete"), question) != QMessageBox::Yes)
+        return;
+
+    int removed = 0;
+    QString lastName;
+    QStringList failed;
+    for (const QString &path : paths) {
+        const bool isFolder = QFileInfo(path).isDir();
+        const QString name =
+            isFolder ? QFileInfo(path).fileName() : Vault::titleFromPath(path);
+        if (!m_vault->remove(path)) {
+            failed << name;
+            continue;
+        }
+        clearStaleSettingsFor(path, isFolder);
+        lastName = name;
+        ++removed;
+    }
+    if (removed == 0) {
+        notify(tr("Couldn't delete it"), 3000);
+        return;
+    }
+
+    reconcileAfterDeletion();
+    if (!failed.isEmpty())
+        notify(tr("Couldn't delete %1").arg(failed.join(QStringLiteral(", "))),
+               4000);
+    else
+        notify(removed == 1 ? tr("Deleted “%1”").arg(lastName)
+                            : tr("Deleted %1 items").arg(removed),
+               3000);
 }
 
 void MainWindow::newNoteIn(const QString &dir) {
@@ -1101,25 +1185,31 @@ void MainWindow::newNoteIn(const QString &dir) {
     openNoteByPath(note.path);
 }
 
-void MainWindow::moveItem(const QString &srcPath, const QString &destDirIn) {
-    if (!m_vault)
+void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn) {
+    if (!m_vault || srcPaths.isEmpty())
         return;
     const QString destDir = destDirIn.isEmpty() ? m_vault->root() : destDirIn;
-    const QString newPath = m_vault->movePath(srcPath, destDir);
-    if (newPath.isEmpty()) {
+    int moved = 0;
+    for (const QString &srcPath : srcPaths) {
+        const QString newPath = m_vault->movePath(srcPath, destDir);
+        if (newPath.isEmpty())
+            continue;
+        // Follow the open note / history if they lived in what just moved.
+        auto remap = [&](QString &p) {
+            if (p == srcPath)
+                p = newPath;
+            else if (p.startsWith(srcPath + QLatin1Char('/')))
+                p = newPath + p.mid(srcPath.length());
+        };
+        remap(m_currentPath);
+        for (QString &p : m_history)
+            remap(p);
+        ++moved;
+    }
+    if (moved == 0) {
         notify(tr("Couldn't move it there"), 3000);
         return;
     }
-    // Follow the open note / history if they lived in what just moved.
-    auto remap = [&](QString &p) {
-        if (p == srcPath)
-            p = newPath;
-        else if (p.startsWith(srcPath + QLatin1Char('/')))
-            p = newPath + p.mid(srcPath.length());
-    };
-    remap(m_currentPath);
-    for (QString &p : m_history)
-        remap(p);
     watchCurrent(); // the open note may have moved with it
 
     m_vault->scan();
