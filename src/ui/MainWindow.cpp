@@ -317,14 +317,18 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(quit);
 
     // Navigation actions drive both the header arrow buttons and the shortcuts.
+    // Two bindings each: Alt+Arrow (browser-style) and Ctrl+[ / Ctrl+] (editor
+    // style, like VS Code / Vim jumplists).
     m_backAction = new QAction(QStringLiteral("←"), this);
-    m_backAction->setToolTip(tr("Back  (Alt+Left)"));
-    m_backAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
+    m_backAction->setToolTip(tr("Back  (Alt+Left or Ctrl+[)"));
+    m_backAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Left),
+                                QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)});
     connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
     addAction(m_backAction);
     m_forwardAction = new QAction(QStringLiteral("→"), this);
-    m_forwardAction->setToolTip(tr("Forward  (Alt+Right)"));
-    m_forwardAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Right));
+    m_forwardAction->setToolTip(tr("Forward  (Alt+Right or Ctrl+])"));
+    m_forwardAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Right),
+                                   QKeySequence(Qt::CTRL | Qt::Key_BracketRight)});
     connect(m_forwardAction, &QAction::triggered, this,
             &MainWindow::navigateForward);
     addAction(m_forwardAction);
