@@ -10,6 +10,7 @@ class MarkdownEditor;
 class SearchPopup;
 class QListWidget;
 class QListWidgetItem;
+class QLineEdit;
 class QTimer;
 class QAction;
 class QMenu;
@@ -35,6 +36,7 @@ private:
     void openNoteByPath(const QString &path, bool record = true);
     void saveCurrent();
     void newNote();
+    void renameCurrent(const QString &rawTitle);
     void onLinkClicked(const QString &target);
     void selectInList(QListWidget *list, const QString &path);
     void openSearch();
@@ -48,6 +50,7 @@ private:
     SearchIndex m_searchIndex;
 
     MarkdownEditor *m_editor = nullptr;
+    QLineEdit *m_titleEdit = nullptr;
     QListWidget *m_noteList = nullptr;
     SearchPopup *m_searchPopup = nullptr;
     QTimer *m_saveTimer = nullptr;

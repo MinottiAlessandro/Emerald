@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QSettings>
@@ -63,17 +64,34 @@ void MainWindow::buildUi() {
     connect(m_editor, &MarkdownEditor::navigateForward, this,
             &MainWindow::navigateForward);
 
-    // Center the (width-capped) editor with stretch spacers. This keeps the
-    // editor's width constant while the window/side panels resize, so dragging
-    // a dock doesn't reflow or repaint the text.
+    // The note's title is shown (and edited) as the first line above the body;
+    // it maps to the filename, so the ".md" is never shown. Committing an edit
+    // renames the file.
+    m_titleEdit = new QLineEdit(this);
+    m_titleEdit->setObjectName(QStringLiteral("noteTitle"));
+    m_titleEdit->setPlaceholderText(tr("Untitled"));
+    m_titleEdit->setFrame(false);
+    connect(m_titleEdit, &QLineEdit::editingFinished, this,
+            [this] { renameCurrent(m_titleEdit->text()); });
+
+    // Title + body stacked in a width-capped column, centered with stretch
+    // spacers. The fixed measure means resizing the side panels doesn't reflow
+    // or repaint the text.
+    auto *column = new QWidget(this);
+    auto *colLayout = new QVBoxLayout(column);
+    colLayout->setContentsMargins(0, 0, 0, 0);
+    colLayout->setSpacing(0);
+    colLayout->addWidget(m_titleEdit);
+    colLayout->addWidget(m_editor, 1);
+    column->setMaximumWidth(820);
+    column->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
     auto *center = new QWidget(this);
     auto *row = new QHBoxLayout(center);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(0);
-    // The editor (stretch 1) grows first until it hits its max width, then the
-    // zero-stretch spacers absorb the remainder, centering it.
     row->addStretch(0);
-    row->addWidget(m_editor, 1);
+    row->addWidget(column, 1);
     row->addStretch(0);
     setCentralWidget(center);
 
@@ -264,6 +282,9 @@ void MainWindow::openVault(const QString &path) {
     m_loading = true;
     m_editor->clear();
     m_loading = false;
+    m_titleEdit->blockSignals(true);
+    m_titleEdit->clear();
+    m_titleEdit->blockSignals(false);
 
     refreshNoteList();
     QSettings().setValue(QStringLiteral("lastVault"), path);
@@ -297,11 +318,55 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
 
     m_currentPath = path;
     m_currentTitle = Vault::titleFromPath(path);
+    m_titleEdit->blockSignals(true);
+    m_titleEdit->setText(m_currentTitle);
+    m_titleEdit->blockSignals(false);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(m_currentTitle));
     selectInList(m_noteList, path);
     if (record)
         pushHistory(path);
     updateNavActions();
+}
+
+void MainWindow::renameCurrent(const QString &rawTitle) {
+    if (!m_vault || m_currentPath.isEmpty())
+        return;
+    const QString newTitle = rawTitle.trimmed();
+    if (newTitle == m_currentTitle)
+        return;
+
+    auto revertField = [this] {
+        m_titleEdit->blockSignals(true);
+        m_titleEdit->setText(m_currentTitle);
+        m_titleEdit->blockSignals(false);
+    };
+    if (!Vault::isValidTitle(newTitle)) {
+        revertField();
+        statusBar()->showMessage(tr("Invalid note name"), 3000);
+        return;
+    }
+
+    saveCurrent(); // flush the body before the file moves
+    const QString oldTitle = m_currentTitle;
+    const QString oldPath = m_currentPath;
+    const QString newPath = m_vault->renameNote(oldPath, newTitle);
+    if (newPath.isEmpty()) {
+        revertField();
+        statusBar()->showMessage(
+            tr("A note named “%1” already exists").arg(newTitle), 3000);
+        return;
+    }
+
+    m_vault->updateLinksTo(oldTitle, newTitle);
+    m_currentPath = newPath;
+    m_currentTitle = newTitle;
+    for (QString &p : m_history)
+        if (p == oldPath)
+            p = newPath;
+    m_searchIndex.rebuild(*m_vault); // paths and link text changed vault-wide
+    refreshNoteList();
+    setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
+    statusBar()->showMessage(tr("Renamed to “%1”").arg(newTitle), 3000);
 }
 
 void MainWindow::saveCurrent() {

@@ -14,6 +14,21 @@ QPlainTextEdit#editor {
     selection-color: #c0caf5;
 }
 
+/* The note title shown as the first line above the body (maps to the file
+   name; the .md is never shown). */
+QLineEdit#noteTitle {
+    background: #1a1b26;
+    color: #c0caf5;
+    border: none;
+    padding: 14px 18px 2px 18px;
+    font-size: 26px;
+    font-weight: 700;
+    selection-background-color: #2e3c64;
+}
+QLineEdit#noteTitle::placeholder {
+    color: #3b4261;
+}
+
 /* Sidebar + backlinks lists */
 QListWidget {
     background: #16161e;

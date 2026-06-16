@@ -1,9 +1,11 @@
 #include "Vault.h"
 
+#include "WikiLink.h"
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QTextStream>
 #include <algorithm>
 
@@ -53,13 +55,89 @@ QString Vault::pathForTitle(const QString &title) const {
     return {};
 }
 
+bool Vault::isValidTitle(const QString &title) {
+    if (title.isEmpty() || title == QStringLiteral(".") ||
+        title == QStringLiteral(".."))
+        return false;
+    for (const QChar c : title)
+        if (QStringLiteral("/\\:*?\"<>|").contains(c))
+            return false;
+    return true;
+}
+
+QString Vault::replaceLinkTargets(const QString &content,
+                                  const QString &oldTitle,
+                                  const QString &newTitle) {
+    QString result;
+    int last = 0;
+    auto it = WikiLink::pattern().globalMatch(content);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        const QString inner = m.captured(1);
+        // The target is the inner text before any #heading or |alias.
+        int cut = inner.size();
+        const int hash = inner.indexOf(QLatin1Char('#'));
+        const int pipe = inner.indexOf(QLatin1Char('|'));
+        if (hash >= 0)
+            cut = qMin(cut, hash);
+        if (pipe >= 0)
+            cut = qMin(cut, pipe);
+        if (inner.left(cut).trimmed().compare(oldTitle, Qt::CaseInsensitive) != 0)
+            continue;
+        result += content.mid(last, m.capturedStart(1) - last);
+        result += newTitle + inner.mid(cut); // keep the |alias / #heading
+        last = m.capturedEnd(1);
+    }
+    result += content.mid(last);
+    return result;
+}
+
+QString Vault::renameNote(const QString &oldPath, const QString &newTitle) {
+    if (!isValidTitle(newTitle))
+        return {};
+    const QFileInfo fi(oldPath);
+    const QString newPath =
+        QDir(fi.absolutePath()).filePath(newTitle + QStringLiteral(".md"));
+    if (newPath == oldPath)
+        return oldPath; // unchanged
+    if (QFileInfo::exists(newPath))
+        return {}; // would clobber another note
+    if (!QFile::rename(oldPath, newPath))
+        return {};
+
+    for (Note &n : m_notes) {
+        if (n.path == oldPath) {
+            n.path = newPath;
+            n.title = newTitle;
+            break;
+        }
+    }
+    std::sort(m_notes.begin(), m_notes.end(), [](const Note &a, const Note &b) {
+        return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
+    });
+    return newPath;
+}
+
+int Vault::updateLinksTo(const QString &oldTitle, const QString &newTitle) {
+    int changed = 0;
+    for (const Note &n : m_notes) {
+        const QString content = read(n.path);
+        const QString updated = replaceLinkTargets(content, oldTitle, newTitle);
+        if (updated != content && write(n.path, updated))
+            ++changed;
+    }
+    return changed;
+}
+
 Note Vault::createNote(const QString &title) {
     const QString existing = pathForTitle(title);
     if (!existing.isEmpty())
         return Note{existing, titleFromPath(existing)};
 
     const QString path = QDir(m_root).filePath(title + QStringLiteral(".md"));
-    write(path, QStringLiteral("# %1\n\n").arg(title));
+    // The title is shown by the editor's title field, so the body starts empty
+    // rather than repeating it as an "# H1".
+    write(path, QString());
 
     Note note{path, title};
     m_notes.push_back(note);

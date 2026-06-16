@@ -18,6 +18,9 @@ files, inline live preview. Built to stay small and maintainable.
 - **Smart lists.** Enter continues a bullet, numbered or `- [ ]` task list
   (numbers increment, indentation is kept); Enter on an empty item ends it.
   Tab / Shift+Tab indent and outdent the current item.
+- **Title = filename.** The note's title is the first line above the body (the
+  `.md` is never shown); editing it renames the file and rewrites every
+  inbound `[[link]]` to match.
 - **Fast full-text search** (`Ctrl+F`). A Telescope-style popup over the
   window, backed by an in-memory inverted index; type to filter, ↑/↓ to move,
   Enter to open. Results are ranked and opening one jumps to the first match.

@@ -27,7 +27,22 @@ public:
     // Returns the created note (or the existing one if it already exists).
     Note createNote(const QString &title);
 
+    // Rename the note at oldPath to <newTitle>.md in the same folder, updating
+    // the in-memory list. Returns the new path, or empty on failure (a name
+    // collision or an invalid title).
+    QString renameNote(const QString &oldPath, const QString &newTitle);
+
+    // Rewrite every [[oldTitle]] link (preserving any |alias or #heading) to
+    // point at newTitle, across all notes. Returns the number of files changed.
+    int updateLinksTo(const QString &oldTitle, const QString &newTitle);
+
     static QString titleFromPath(const QString &path);
+    // A title usable as a filename (non-empty, no path/illegal characters).
+    static bool isValidTitle(const QString &title);
+    // The pure-string link rewrite used by updateLinksTo (exposed for testing).
+    static QString replaceLinkTargets(const QString &content,
+                                      const QString &oldTitle,
+                                      const QString &newTitle);
 
 private:
     QString m_root;
