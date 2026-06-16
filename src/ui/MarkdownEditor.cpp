@@ -20,6 +20,8 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     setLineWrapMode(QPlainTextEdit::WidgetWidth);
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
+    // Allow scrolling past the end so the last line can rise to the top.
+    setCenterOnScroll(true);
 
     // Prefer Inter if installed, but fall back to fonts that exist so the first
     // text layout doesn't pay for a failed font lookup.
@@ -175,41 +177,53 @@ void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
 
 bool MarkdownEditor::continueList() {
     QTextCursor cur = textCursor();
-    if (cur.hasSelection())
+    // Only continue when the caret is at the end of the line; pressing Enter
+    // mid-line just splits it as usual.
+    if (cur.hasSelection() || !cur.atBlockEnd())
         return false;
 
-    static const QRegularExpression re(QStringLiteral(
-        "^(\\s*)(?:([-*+])|(\\d+)([.)]))\\s+(\\[[ xX]\\]\\s+)?(.*)$"));
-    const auto m = re.match(cur.block().text());
-    if (!m.hasMatch())
-        return false;
-
-    const QString indent = m.captured(1);
-    const QString bullet = m.captured(2); // - * +
-    const QString check = m.captured(5);  // "[ ] " when it's a task item
-    const QString content = m.captured(6);
-
-    // Enter on an empty item ends the list: wipe the marker, stay on the line.
-    if (content.isEmpty()) {
+    const QString line = cur.block().text();
+    auto endConstruct = [&] { // drop the marker, stay on the now-empty line
         cur.movePosition(QTextCursor::StartOfBlock);
         cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
         cur.removeSelectedText();
         setTextCursor(cur);
+    };
+
+    static const QRegularExpression listRe(QStringLiteral(
+        "^(\\s*)(?:([-*+])|(\\d+)([.)]))\\s+(\\[[ xX]\\]\\s+)?(.*)$"));
+    if (const auto m = listRe.match(line); m.hasMatch()) {
+        if (m.captured(6).isEmpty()) { // empty item ends the list
+            endConstruct();
+            return true;
+        }
+        QString prefix = m.captured(1); // indent
+        if (!m.captured(2).isEmpty())
+            prefix += m.captured(2) + QLatin1Char(' '); // bullet
+        else
+            prefix += QString::number(m.captured(3).toInt() + 1) +
+                      m.captured(4) + QLatin1Char(' '); // next ordinal
+        if (!m.captured(5).isEmpty())
+            prefix += QStringLiteral("[ ] "); // continued task starts unchecked
+        cur.insertText(QStringLiteral("\n") + prefix);
+        setTextCursor(cur);
         return true;
     }
 
-    QString prefix = indent;
-    if (!bullet.isEmpty())
-        prefix += bullet + QLatin1Char(' ');
-    else
-        prefix += QString::number(m.captured(3).toInt() + 1) + m.captured(4) +
-                  QLatin1Char(' ');
-    if (!check.isEmpty())
-        prefix += QStringLiteral("[ ] "); // a continued task starts unchecked
-
-    cur.insertText(QStringLiteral("\n") + prefix);
-    setTextCursor(cur);
-    return true;
+    // Blockquotes behave like lists: Enter continues "> ", empty quote ends it.
+    static const QRegularExpression quoteRe(
+        QStringLiteral("^(\\s*)(>+)\\s?(.*)$"));
+    if (const auto q = quoteRe.match(line); q.hasMatch()) {
+        if (q.captured(3).isEmpty()) {
+            endConstruct();
+            return true;
+        }
+        cur.insertText(QStringLiteral("\n") + q.captured(1) + q.captured(2) +
+                       QLatin1Char(' '));
+        setTextCursor(cur);
+        return true;
+    }
+    return false;
 }
 
 bool MarkdownEditor::adjustListIndent(bool deeper) {

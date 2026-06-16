@@ -41,8 +41,8 @@ private:
     // Should a click at `pos` follow a link? True on Ctrl+click, or a plain
     // click on a rendered link that lives off the active (cursor) line.
     bool followsLink(const QPoint &pos, Qt::KeyboardModifiers mods) const;
-    // On Enter inside a list item, continue the list (or clear an empty item).
-    // Returns true if it handled the key.
+    // On Enter at the end of a list item or blockquote, continue it (or clear
+    // an empty one). Returns true if it handled the key.
     bool continueList();
     // On Tab/Shift+Tab inside a list item, indent/outdent it by one level.
     // Returns true if it handled the key.
