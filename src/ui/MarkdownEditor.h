@@ -39,6 +39,9 @@ private:
     // On Enter inside a list item, continue the list (or clear an empty item).
     // Returns true if it handled the key.
     bool continueList();
+    // On Tab/Shift+Tab inside a list item, indent/outdent it by one level.
+    // Returns true if it handled the key.
+    bool adjustListIndent(bool deeper);
 
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.

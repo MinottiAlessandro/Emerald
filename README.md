@@ -17,6 +17,7 @@ files, inline live preview. Built to stay small and maintainable.
   alias. Typing `[[` pops a fuzzy autocomplete of existing note titles.
 - **Smart lists.** Enter continues a bullet, numbered or `- [ ]` task list
   (numbers increment, indentation is kept); Enter on an empty item ends it.
+  Tab / Shift+Tab indent and outdent the current item.
 - **Fast full-text search** (`Ctrl+F`). A Telescope-style popup over the
   window, backed by an in-memory inverted index; type to filter, ↑/↓ to move,
   Enter to open. Results are ranked and opening one jumps to the first match.

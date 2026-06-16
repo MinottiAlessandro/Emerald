@@ -35,6 +35,16 @@ QListWidget::item:selected {
     color: #c0caf5;
 }
 
+/* The drag-to-resize divider between the sidebar and the editor: a plain
+   full-height line (no gripper dots) that lights up on hover. */
+QMainWindow::separator {
+    background: #2a2e42;
+    width: 2px;
+}
+QMainWindow::separator:hover {
+    background: #7aa2f7;
+}
+
 QDockWidget {
     color: #565f89;
     titlebar-close-icon: none;

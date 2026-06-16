@@ -202,6 +202,45 @@ bool MarkdownEditor::continueList() {
     return true;
 }
 
+bool MarkdownEditor::adjustListIndent(bool deeper) {
+    static const QRegularExpression re(
+        QStringLiteral("^(\\s*)(?:[-*+]|\\d+[.)])\\s+"));
+    const QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        return false;
+    const QTextBlock block = cur.block();
+    if (!re.match(block.text()).hasMatch())
+        return false;
+
+    const int caret = cur.positionInBlock();
+    QTextCursor edit(block);
+    edit.movePosition(QTextCursor::StartOfBlock);
+    int delta = 0;
+    if (deeper) {
+        edit.insertText(QStringLiteral("  ")); // one level = two spaces
+        delta = 2;
+    } else {
+        const QString line = block.text();
+        int n = 0;
+        while (n < 2 && n < line.size() && line[n] == QLatin1Char(' '))
+            ++n;
+        if (n == 0 && !line.isEmpty() && line[0] == QLatin1Char('\t'))
+            n = 1; // also accept a leading tab
+        if (n > 0) {
+            edit.movePosition(QTextCursor::NextCharacter,
+                              QTextCursor::KeepAnchor, n);
+            edit.removeSelectedText();
+            delta = -n;
+        }
+    }
+
+    QTextCursor out(block);
+    out.setPosition(block.position() +
+                    qBound(0, caret + delta, block.length() - 1));
+    setTextCursor(out);
+    return true;
+}
+
 void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     if (m_completer->popup()->isVisible()) {
         // These keys belong to the popup while it is open.
@@ -222,6 +261,10 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         continueList()) {
         return;
     }
+    if (event->key() == Qt::Key_Tab && adjustListIndent(true))
+        return;
+    if (event->key() == Qt::Key_Backtab && adjustListIndent(false))
+        return;
     QPlainTextEdit::keyPressEvent(event);
     updateCompletionPopup();
 }
