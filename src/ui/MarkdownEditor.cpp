@@ -5,8 +5,10 @@
 
 #include <QAbstractItemView>
 #include <QCompleter>
+#include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QStringListModel>
@@ -41,6 +43,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
 
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
         m_highlighter->setActiveBlock(textCursor().blockNumber());
+        viewport()->update(); // repaint bullets as the active line moves
     });
 
     m_completionModel = new QStringListModel(this);
@@ -274,4 +277,61 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         return;
     QPlainTextEdit::keyPressEvent(event);
     updateCompletionPopup();
+}
+
+void MarkdownEditor::paintEvent(QPaintEvent *event) {
+    QPlainTextEdit::paintEvent(event);
+
+    // Draw a bullet glyph over each list dash that the highlighter hid (every
+    // bullet line except the active one). The glyph varies by nesting level.
+    static const QRegularExpression re(
+        QStringLiteral("^(\\s*)[-*+]\\s+(?!\\[[ xX]\\]\\s)"));
+    const int active = textCursor().blockNumber();
+    const QFontMetricsF fm(font());
+    const qreal diameter = fm.ascent() * 0.30;
+
+    QPainter p(viewport());
+    p.setRenderHint(QPainter::Antialiasing);
+    const QColor color(0x78, 0x7c, 0x99);
+
+    for (QTextBlock block = firstVisibleBlock(); block.isValid();
+         block = block.next()) {
+        const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
+        if (geo.top() > event->rect().bottom())
+            break;
+        if (geo.bottom() < event->rect().top() || block.blockNumber() == active)
+            continue;
+        const auto m = re.match(block.text());
+        if (!m.hasMatch())
+            continue;
+
+        const int markerPos = m.capturedLength(1); // the dash column
+        QTextCursor cur(block);
+        cur.setPosition(block.position() + markerPos);
+        const QRectF cell = cursorRect(cur);
+        const qreal cw = fm.horizontalAdvance(block.text().at(markerPos));
+        const QPointF c(cell.left() + cw / 2.0, cell.center().y());
+        const qreal r = diameter / 2.0;
+
+        switch ((markerPos / 2) % 3) {
+        case 0: // filled disc
+            p.setPen(Qt::NoPen);
+            p.setBrush(color);
+            p.drawEllipse(c, r, r);
+            break;
+        case 1: { // hollow circle
+            QPen pen(color);
+            pen.setWidthF(1.2);
+            p.setPen(pen);
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(c, r, r);
+            break;
+        }
+        default: // filled square
+            p.setPen(Qt::NoPen);
+            p.setBrush(color);
+            p.drawRect(QRectF(c.x() - r, c.y() - r, diameter, diameter));
+            break;
+        }
+    }
 }

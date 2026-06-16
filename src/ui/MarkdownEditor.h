@@ -33,6 +33,8 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    // Draws real bullet glyphs over the (hidden) dash of list items.
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     QString linkAt(const QPoint &pos) const;

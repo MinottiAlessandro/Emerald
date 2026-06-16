@@ -19,7 +19,8 @@ files, inline live preview. Built to stay small and maintainable.
   alias. Typing `[[` pops a fuzzy autocomplete of existing note titles.
 - **Smart lists.** Enter continues a bullet, numbered or `- [ ]` task list
   (numbers increment, indentation is kept); Enter on an empty item ends it.
-  Tab / Shift+Tab indent and outdent the current item.
+  Tab / Shift+Tab indent and outdent the current item. Off the active line,
+  dashes render as real bullet glyphs (●/○/▪ by nesting level).
 - **Title = filename.** The note's title is the first line above the body (the
   `.md` is never shown); editing it renames the file and rewrites every
   inbound `[[link]]` to match.

@@ -310,7 +310,17 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         if (list.hasMatch()) {
             const int s = list.capturedStart(2);
             const int len = list.capturedLength(2);
-            setFormat(s, len, m_listMarker);
+            const QChar c = text.at(s);
+            const bool bullet = c == '-' || c == '*' || c == '+';
+            if (bullet && !reveal) {
+                // Hide the dash (but keep its width) so the editor can paint a
+                // real bullet glyph in its place.
+                QTextCharFormat hidden;
+                hidden.setForeground(QColor(0, 0, 0, 0));
+                setFormat(s, len, hidden);
+            } else {
+                setFormat(s, len, m_listMarker);
+            }
             for (int i = s; i < s + len && i < consumed.size(); ++i)
                 consumed[i] = true;
         }
