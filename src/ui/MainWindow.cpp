@@ -128,14 +128,24 @@ protected:
                                 .absolutePath()
                           : d;
         }
-        // Report the drop as a *copy* so the view's InternalMove machinery
-        // doesn't also remove the dragged row after we return — we move the
-        // file on disk and rebuild the tree ourselves; its post-drag removal
-        // would otherwise delete the just-rebuilt item until the next refresh.
+        // Accept the drop, but run the actual move *after* the view's own
+        // drag-and-drop machinery has finished. In InternalMove mode
+        // QAbstractItemView removes the dragged row once startDrag()'s nested
+        // exec() returns; if we move the file and rebuild the tree synchronously
+        // here (still inside that exec), that post-drag removal deletes the
+        // freshly rebuilt row instead — so the note vanishes until the next
+        // refresh. Deferring to the event loop makes the rebuild-from-disk the
+        // last thing to run, so it always wins. CopyAction is a belt-and-braces
+        // hint that we handled the move and the view shouldn't also remove it.
         event->setDropAction(Qt::CopyAction);
         event->accept();
-        if (onMove && !srcPath.isEmpty())
-            onMove(srcPath, destDir); // MainWindow moves on disk + rebuilds
+        if (onMove && !srcPath.isEmpty()) {
+            const QString s = srcPath, d = destDir;
+            QTimer::singleShot(0, this, [this, s, d] {
+                if (onMove)
+                    onMove(s, d); // MainWindow moves on disk + rebuilds
+            });
+        }
         // Don't call the base: the tree is rebuilt from the vault instead.
     }
 
