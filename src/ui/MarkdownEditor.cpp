@@ -4,6 +4,8 @@
 #include "core/WikiLink.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
+#include <QClipboard>
 #include <QCompleter>
 #include <QFontMetricsF>
 #include <QKeyEvent>
@@ -193,6 +195,8 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         emit navigateForward();
         return;
     }
+    if (event->button() == Qt::LeftButton && copyCodeBlockAt(event->pos()))
+        return;
     if (event->button() == Qt::LeftButton && toggleTaskAt(event->pos()))
         return;
     if (event->button() == Qt::LeftButton &&
@@ -327,7 +331,67 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     updateCompletionPopup();
 }
 
+void MarkdownEditor::forEachCodeBlock(
+    const std::function<void(const QRectF &, const QRectF &, const QString &)> &fn)
+    const {
+    const qreal docMargin = document()->documentMargin();
+    const qreal left = docMargin * 0.5;
+    const qreal right = viewport()->width() - docMargin * 0.5;
+
+    bool inCode = false;
+    qreal top = 0;
+    QStringList code;
+    auto emitRegion = [&](qreal bottom) {
+        const QRectF box(left, top, right - left, bottom - top);
+        const QRectF copyBtn(box.right() - 24, box.top() + 5, 16, 16);
+        fn(box, copyBtn, code.join(QLatin1Char('\n')));
+    };
+
+    for (QTextBlock b = document()->firstBlock(); b.isValid(); b = b.next()) {
+        const bool isCode = b.userState() == 1; // MarkdownHighlighter::StateCode
+        const QRectF geo = blockBoundingGeometry(b).translated(contentOffset());
+        if (isCode && !inCode) { // opening fence
+            inCode = true;
+            top = geo.top();
+            code.clear();
+        } else if (isCode && inCode) { // inner code line
+            code << b.text();
+        } else if (!isCode && inCode) { // closing fence
+            emitRegion(geo.bottom());
+            inCode = false;
+        }
+    }
+    if (inCode)
+        emitRegion(blockBoundingGeometry(document()->lastBlock())
+                       .translated(contentOffset())
+                       .bottom());
+}
+
+bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
+    bool copied = false;
+    forEachCodeBlock(
+        [&](const QRectF &, const QRectF &copyBtn, const QString &code) {
+            if (!copied && copyBtn.contains(pos)) {
+                QApplication::clipboard()->setText(code);
+                copied = true;
+            }
+        });
+    return copied;
+}
+
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
+    // Code-block backgrounds go behind the text.
+    {
+        QPainter bg(viewport());
+        bg.setRenderHint(QPainter::Antialiasing);
+        bg.setPen(Qt::NoPen);
+        bg.setBrush(QColor(0x1f, 0x23, 0x35));
+        forEachCodeBlock([&](const QRectF &box, const QRectF &, const QString &) {
+            if (box.intersects(event->rect()))
+                bg.drawRoundedRect(box, 6, 6);
+        });
+    }
+
     QPlainTextEdit::paintEvent(event);
 
     // Draw a bullet glyph over each list dash that the highlighter hid (every
@@ -431,4 +495,16 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             break;
         }
     }
+
+    // Copy button at the top-right of each code block (two stacked sheets).
+    forEachCodeBlock([&](const QRectF &, const QRectF &btn, const QString &) {
+        if (!btn.intersects(event->rect()))
+            return;
+        QPen pen(QColor(0x56, 0x5f, 0x89));
+        pen.setWidthF(1.3);
+        p.setPen(pen);
+        p.setBrush(QColor(0x1f, 0x23, 0x35));
+        p.drawRoundedRect(QRectF(btn.left() + 5, btn.top() + 2, 8, 10), 2, 2);
+        p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
+    });
 }

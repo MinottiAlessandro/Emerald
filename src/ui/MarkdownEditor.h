@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QPlainTextEdit>
+#include <QRectF>
 #include <QStringList>
+#include <functional>
 
 class MarkdownHighlighter;
 class QCompleter;
@@ -50,6 +52,14 @@ private:
     // If pos hits the checkbox of a rendered task line, toggle [ ]<->[x] and
     // return true. The active line is left alone (it shows raw markup).
     bool toggleTaskAt(const QPoint &pos);
+
+    // Visit each fenced code block: its full-width rounded background box, the
+    // copy-button rect at its top-right, and the block's code (inner lines).
+    void forEachCodeBlock(
+        const std::function<void(const QRectF &box, const QRectF &copyBtn,
+                                 const QString &code)> &fn) const;
+    // If pos hits a code block's copy button, copy its code and return true.
+    bool copyCodeBlockAt(const QPoint &pos);
 
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.

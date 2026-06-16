@@ -212,13 +212,20 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     const bool reveal = currentBlock().blockNumber() == m_activeBlock;
 
     // --- Fenced code blocks: a multi-line construct tracked via block state.
-    const bool fenceHere = m_reFence.match(text).hasMatch();
+    // The editor paints the block's rounded background + copy button; here we
+    // just colour the text and hide the ``` fences off the active line (so the
+    // fence lines collapse to almost nothing).
+    const auto fence = m_reFence.match(text);
+    const bool fenceHere = fence.hasMatch();
     if (previousBlockState() == StateCode) {
         // Inside a code block: render verbatim, no inline parsing.
         setFormat(0, text.size(), m_codeBlock);
         if (fenceHere) {                       // closing fence
             if (reveal)
                 setFormat(0, text.size(), m_marker);
+            else
+                setFormat(fence.capturedStart(1), fence.capturedLength(1),
+                          conceal());
             setCurrentBlockState(StateNormal);
         } else {
             setCurrentBlockState(StateCode);
@@ -226,12 +233,13 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
     if (fenceHere) {                            // opening fence ```lang
-        const auto m = m_reFence.match(text);
         setFormat(0, text.size(), m_codeBlock);
-        if (m.capturedLength(2) > 0)           // language tag
-            setFormat(m.capturedStart(2), m.capturedLength(2), m_codeLang);
+        if (fence.capturedLength(2) > 0)       // language tag
+            setFormat(fence.capturedStart(2), fence.capturedLength(2), m_codeLang);
         if (reveal)
-            setFormat(0, m.capturedEnd(1), m_marker);
+            setFormat(0, fence.capturedEnd(1), m_marker);
+        else
+            setFormat(fence.capturedStart(1), fence.capturedLength(1), conceal());
         setCurrentBlockState(StateCode);
         return;
     }
