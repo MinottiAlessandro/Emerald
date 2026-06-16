@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/">
     <file>emerald.qss</file>
+    <file alias="EmeraldClean.png">../icons/EmeraldClean.png</file>
   </qresource>
 </RCC>

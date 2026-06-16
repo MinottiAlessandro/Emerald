@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QFile>
+#include <QIcon>
 
 int main(int argc, char *argv[]) {
     // Composite the widget backing store on the GPU (Qt's RHI path). This makes
@@ -14,6 +15,7 @@ int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Emerald"));
     QApplication::setOrganizationName(QStringLiteral("Emerald"));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/EmeraldClean.png")));
 
     QFile qss(QStringLiteral(":/emerald.qss"));
     if (qss.open(QIODevice::ReadOnly))
