@@ -352,6 +352,21 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             break;
         if (geo.bottom() < event->rect().top() || block.blockNumber() == active)
             continue;
+
+        // Horizontal rule: a full-width line across the (hidden) dashes.
+        static const QRegularExpression ruleRe(
+            QStringLiteral("^\\s*([-*_])\\s*(?:\\1\\s*){2,}$"));
+        if (ruleRe.match(block.text()).hasMatch()) {
+            const qreal margin = document()->documentMargin();
+            const qreal y = geo.center().y();
+            QPen pen(QColor(0x3b, 0x42, 0x61));
+            pen.setWidthF(1.4);
+            p.setPen(pen);
+            p.drawLine(QPointF(margin, y),
+                       QPointF(viewport()->width() - margin, y));
+            continue;
+        }
+
         // Task checkbox, drawn over the hidden "- [ ] " markup.
         if (const auto t = taskRe().match(block.text()); t.hasMatch()) {
             QTextCursor curT(block);

@@ -259,9 +259,17 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
 
-    // Horizontal rule: the whole line is the divider.
+    // Horizontal rule: the whole line is the divider. On the active line show
+    // the raw dashes; elsewhere hide them (keeping the line height) so the
+    // editor can paint a full-width rule across the block.
     if (m_reRule.match(text).hasMatch()) {
-        setFormat(0, text.size(), m_rule);
+        if (reveal) {
+            setFormat(0, text.size(), m_rule);
+        } else {
+            QTextCharFormat hidden;
+            hidden.setForeground(QColor(0, 0, 0, 0));
+            setFormat(0, text.size(), hidden);
+        }
         return;
     }
 
