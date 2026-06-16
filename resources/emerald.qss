@@ -104,13 +104,17 @@ QToolButton#gearButton::menu-indicator {
     image: none;
 }
 
-/* The drag-to-resize divider between the sidebar and the editor: a plain
-   full-height line (no gripper dots) that lights up on hover. */
-QMainWindow::separator {
-    background: #2a2e42;
-    width: 2px;
+QWidget#sidebar {
+    background: #16161e;
 }
-QMainWindow::separator:hover {
+
+/* The drag-to-resize divider between the sidebar and the editor: a plain
+   full-height line (no gripper dots) that lights up on hover. Drag it to the
+   left edge to collapse the sidebar, and back out to reopen it. */
+QSplitter#mainSplitter::handle {
+    background: #2a2e42;
+}
+QSplitter#mainSplitter::handle:hover {
     background: #7aa2f7;
 }
 

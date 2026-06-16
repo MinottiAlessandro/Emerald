@@ -15,6 +15,7 @@ class QTimer;
 class QAction;
 class QMenu;
 class QPoint;
+class QSplitter;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -59,6 +60,7 @@ private:
 
     MarkdownEditor *m_editor = nullptr;
     QWidget *m_centerColumn = nullptr; // width-capped title + body column
+    QSplitter *m_splitter = nullptr;   // collapsible sidebar | editor
     QLineEdit *m_titleEdit = nullptr;
     QTreeWidget *m_noteTree = nullptr;
     SearchPopup *m_searchPopup = nullptr;

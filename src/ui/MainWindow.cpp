@@ -10,7 +10,6 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
-#include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontComboBox>
@@ -22,6 +21,7 @@
 #include <QMenu>
 #include <QSettings>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QStringList>
 #include <QHash>
@@ -173,7 +173,6 @@ void MainWindow::buildUi() {
     row->addStretch(0);
     row->addWidget(m_centerColumn, 1);
     row->addStretch(0);
-    setCentralWidget(center);
 
     m_noteTree = new QTreeWidget(this);
     m_noteTree->setHeaderHidden(true);
@@ -219,6 +218,8 @@ void MainWindow::buildUi() {
     frow->addStretch();
 
     auto *side = new QWidget(this);
+    side->setObjectName(QStringLiteral("sidebar"));
+    side->setMinimumWidth(0); // allow the splitter to collapse it fully
     auto *col = new QVBoxLayout(side);
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(0);
@@ -226,11 +227,19 @@ void MainWindow::buildUi() {
     col->addWidget(m_noteTree, 1);
     col->addWidget(footer);
 
-    auto *sidebar = new QDockWidget(this);
-    sidebar->setWidget(side);
-    sidebar->setTitleBarWidget(new QWidget(sidebar)); // hide the default title
-    sidebar->setFeatures(QDockWidget::DockWidgetMovable);
-    addDockWidget(Qt::LeftDockWidgetArea, sidebar);
+    // A splitter so the sidebar can be dragged narrower and collapse fully;
+    // dragging the handle back from the left edge reopens it.
+    m_splitter = new QSplitter(Qt::Horizontal, this);
+    m_splitter->setObjectName(QStringLiteral("mainSplitter"));
+    m_splitter->addWidget(side);
+    m_splitter->addWidget(center);
+    m_splitter->setCollapsible(0, true);
+    m_splitter->setCollapsible(1, false);
+    m_splitter->setStretchFactor(0, 0);
+    m_splitter->setStretchFactor(1, 1);
+    m_splitter->setHandleWidth(2);
+    m_splitter->setSizes({260, 900});
+    setCentralWidget(m_splitter);
 
     m_searchPopup = new SearchPopup(&m_searchIndex, this);
     connect(m_searchPopup, &SearchPopup::openRequested, this,
@@ -300,6 +309,9 @@ void MainWindow::loadSettings() {
     QSettings s;
     m_centerColumn->setMaximumWidth(
         s.value(QStringLiteral("editorWidth"), 820).toInt());
+    const QByteArray split = s.value(QStringLiteral("splitterState")).toByteArray();
+    if (!split.isEmpty())
+        m_splitter->restoreState(split);
     // With no custom font saved, keep the editor's built-in fallback chain
     // (Inter -> Liberation Sans -> sans-serif) untouched.
     if (!s.contains(QStringLiteral("editorFontFamily")) &&
@@ -780,5 +792,6 @@ void MainWindow::newFolderIn(const QString &dir) {
 
 void MainWindow::closeEvent(QCloseEvent *event) {
     saveCurrent();
+    QSettings().setValue(QStringLiteral("splitterState"), m_splitter->saveState());
     event->accept();
 }
