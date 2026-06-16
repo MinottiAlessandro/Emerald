@@ -129,6 +129,14 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
 }
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::BackButton) {
+        emit navigateBack();
+        return;
+    }
+    if (event->button() == Qt::ForwardButton) {
+        emit navigateForward();
+        return;
+    }
     if (event->button() == Qt::LeftButton &&
         (event->modifiers() & Qt::ControlModifier)) {
         const QString target = linkAt(event->pos());

@@ -9,12 +9,14 @@ files, inline live preview. Built to stay small and maintainable.
 - **Inline live preview.** Headings, **bold**, *italic*, `code`, ~~strike~~ and
   `[[wiki-links]]` render in place; the syntax markers collapse away on every
   line except the one your cursor is on.
-- **Full link system.** `[[Note]]` links are clickable (Ctrl+click), auto-create
-  the target if it doesn't exist, and feed a live **Backlinks** panel. Typing
-  `[[` pops a fuzzy autocomplete of existing note titles.
+- **Full link system.** `[[Note]]` links are clickable (Ctrl+click) and
+  auto-create the target if it doesn't exist. Typing `[[` pops a fuzzy
+  autocomplete of existing note titles.
 - **Fast full-text search** (`Ctrl+Shift+F`). An in-memory inverted index;
   type in the sidebar box to find notes by content. Results are ranked, and
   opening one jumps to the first match.
+- **Back / forward navigation** (`Alt+←` / `Alt+→`, the mouse side buttons, or
+  the toolbar arrows) walks the notes you've visited, like a browser.
 - **Debounced autosave.** Your notes are written to disk as you type.
 - **Dark theme**, embedded in the binary.
 
@@ -38,11 +40,12 @@ for smooth window resizing. Set `QT_WIDGETS_RHI=0` to fall back to CPU raster.
 ```
 core/   no GUI, unit-testable
   Vault            scan a folder, read/write .md files, resolve link targets
-  LinkIndex        parse [[links]] -> forward links + backlinks
+  SearchIndex      inverted index for fast full-text search
+  WikiLink         the shared [[wiki-link]] pattern + target cleaning
   Note             { path, title }
 ui/     Qt
-  MainWindow       sidebar | editor | backlinks dock, autosave, navigation
-  MarkdownEditor   QPlainTextEdit + Ctrl-click link nav, centered measure
+  MainWindow       sidebar (search + notes) | editor, autosave, history nav
+  MarkdownEditor   QPlainTextEdit + Ctrl-click links, [[ autocomplete
   MarkdownHighlighter   inline live preview (conceal markers off the active line)
 ```
 

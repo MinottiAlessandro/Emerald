@@ -17,8 +17,6 @@ add_executable(emerald
   src/core/Note.h
   src/core/Vault.h
   src/core/Vault.cpp
-  src/core/LinkIndex.h
-  src/core/LinkIndex.cpp
   src/core/SearchIndex.h
   src/core/SearchIndex.cpp
   src/core/WikiLink.h

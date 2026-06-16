@@ -23,6 +23,8 @@ public:
 
 signals:
     void linkClicked(const QString &target);
+    void navigateBack();
+    void navigateForward();
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;

@@ -3,6 +3,7 @@
 #include "MarkdownEditor.h"
 #include "core/Vault.h"
 
+#include <QAction>
 #include <QCloseEvent>
 #include <QDir>
 #include <QDockWidget>
@@ -18,6 +19,7 @@
 #include <QStatusBar>
 #include <QStringList>
 #include <QTimer>
+#include <QToolBar>
 #include <QVBoxLayout>
 
 namespace {
@@ -50,6 +52,10 @@ void MainWindow::buildUi() {
     m_editor = new MarkdownEditor(this);
     connect(m_editor, &MarkdownEditor::linkClicked, this,
             &MainWindow::onLinkClicked);
+    connect(m_editor, &MarkdownEditor::navigateBack, this,
+            &MainWindow::navigateBack);
+    connect(m_editor, &MarkdownEditor::navigateForward, this,
+            &MainWindow::navigateForward);
 
     // Center the (width-capped) editor with stretch spacers. This keeps the
     // editor's width constant while the window/side panels resize, so dragging
@@ -98,17 +104,6 @@ void MainWindow::buildUi() {
         m_searchBox->setFocus();
         m_searchBox->selectAll();
     });
-
-    m_backlinks = new QListWidget(this);
-    auto *backDock = new QDockWidget(tr("Backlinks"), this);
-    backDock->setWidget(m_backlinks);
-    backDock->setFeatures(QDockWidget::DockWidgetMovable);
-    addDockWidget(Qt::RightDockWidgetArea, backDock);
-    connect(m_backlinks, &QListWidget::itemClicked, this, [this](QListWidgetItem *i) {
-        const QString path = i->data(kPathRole).toString();
-        if (!path.isEmpty())
-            openNoteByPath(path);
-    });
 }
 
 void MainWindow::buildMenu() {
@@ -122,6 +117,20 @@ void MainWindow::buildMenu() {
                     &MainWindow::saveCurrent);
     file->addSeparator();
     file->addAction(tr("Quit"), QKeySequence::Quit, this, &QWidget::close);
+
+    auto *nav = addToolBar(tr("Navigation"));
+    nav->setMovable(false);
+    nav->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_backAction = nav->addAction(QStringLiteral("←"));
+    m_backAction->setToolTip(tr("Back  (Alt+Left)"));
+    m_backAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
+    connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
+    m_forwardAction = nav->addAction(QStringLiteral("→"));
+    m_forwardAction->setToolTip(tr("Forward  (Alt+Right)"));
+    m_forwardAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Right));
+    connect(m_forwardAction, &QAction::triggered, this,
+            &MainWindow::navigateForward);
+    updateNavActions();
 }
 
 void MainWindow::chooseVault() {
@@ -136,15 +145,16 @@ void MainWindow::openVault(const QString &path) {
     delete m_vault;
     m_vault = new Vault(path);
     m_vault->scan();
-    m_index.rebuild(*m_vault);
     m_searchIndex.rebuild(*m_vault);
 
     m_currentPath.clear();
     m_currentTitle.clear();
+    m_history.clear();
+    m_histIndex = -1;
+    updateNavActions();
     m_loading = true;
     m_editor->clear();
     m_loading = false;
-    m_backlinks->clear();
     m_searchBox->blockSignals(true);
     m_searchBox->clear();
     m_searchBox->blockSignals(false);
@@ -170,7 +180,7 @@ void MainWindow::refreshNoteList() {
     selectInList(m_noteList, m_currentPath);
 }
 
-void MainWindow::openNoteByPath(const QString &path) {
+void MainWindow::openNoteByPath(const QString &path, bool record) {
     if (!m_vault || path.isEmpty())
         return;
     saveCurrent();
@@ -183,7 +193,9 @@ void MainWindow::openNoteByPath(const QString &path) {
     m_currentTitle = Vault::titleFromPath(path);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(m_currentTitle));
     selectInList(m_noteList, path);
-    updateBacklinks();
+    if (record)
+        pushHistory(path);
+    updateNavActions();
 }
 
 void MainWindow::saveCurrent() {
@@ -191,7 +203,6 @@ void MainWindow::saveCurrent() {
         return;
     const QString content = m_editor->toPlainText();
     m_vault->write(m_currentPath, content);
-    m_index.updateNote(m_currentTitle, content);
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, content);
 }
 
@@ -209,7 +220,6 @@ void MainWindow::newNote() {
 
     const Note note = m_vault->createNote(name.trimmed());
     const QString content = m_vault->read(note.path);
-    m_index.updateNote(note.title, content);
     m_searchIndex.updateNote(note.path, note.title, content);
     refreshNoteList();
     openNoteByPath(note.path);
@@ -222,7 +232,6 @@ void MainWindow::onLinkClicked(const QString &target) {
     if (path.isEmpty()) {
         const Note note = m_vault->createNote(target);
         const QString content = m_vault->read(note.path);
-        m_index.updateNote(note.title, content);
         m_searchIndex.updateNote(note.path, note.title, content);
         refreshNoteList();
         path = note.path;
@@ -230,16 +239,35 @@ void MainWindow::onLinkClicked(const QString &target) {
     openNoteByPath(path);
 }
 
-void MainWindow::updateBacklinks() {
-    m_backlinks->clear();
-    for (const QString &title : m_index.backlinks(m_currentTitle)) {
-        auto *item = new QListWidgetItem(title, m_backlinks);
-        item->setData(kPathRole, m_vault->pathForTitle(title));
+void MainWindow::navigateBack() {
+    if (m_histIndex > 0) {
+        --m_histIndex;
+        openNoteByPath(m_history.at(m_histIndex), false);
     }
-    if (m_backlinks->count() == 0) {
-        auto *empty = new QListWidgetItem(tr("No backlinks"), m_backlinks);
-        empty->setFlags(Qt::NoItemFlags);
+}
+
+void MainWindow::navigateForward() {
+    if (m_histIndex >= 0 && m_histIndex < m_history.size() - 1) {
+        ++m_histIndex;
+        openNoteByPath(m_history.at(m_histIndex), false);
     }
+}
+
+void MainWindow::pushHistory(const QString &path) {
+    if (m_histIndex >= 0 && m_history.at(m_histIndex) == path)
+        return; // re-opening the current note shouldn't add an entry
+    while (m_history.size() > m_histIndex + 1)
+        m_history.removeLast(); // opening a note drops the forward branch
+    m_history.append(path);
+    m_histIndex = m_history.size() - 1;
+}
+
+void MainWindow::updateNavActions() {
+    if (m_backAction)
+        m_backAction->setEnabled(m_histIndex > 0);
+    if (m_forwardAction)
+        m_forwardAction->setEnabled(m_histIndex >= 0 &&
+                                    m_histIndex < m_history.size() - 1);
 }
 
 void MainWindow::selectInList(QListWidget *list, const QString &path) {

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "core/LinkIndex.h"
 #include "core/SearchIndex.h"
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 
 class Vault;
 class MarkdownEditor;
@@ -11,6 +11,7 @@ class QListWidget;
 class QListWidgetItem;
 class QLineEdit;
 class QTimer;
+class QAction;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -28,26 +29,32 @@ private:
     void chooseVault();
     void openVault(const QString &path);
     void refreshNoteList();
-    void openNoteByPath(const QString &path);
+    void openNoteByPath(const QString &path, bool record = true);
     void saveCurrent();
     void newNote();
     void onLinkClicked(const QString &target);
-    void updateBacklinks();
     void selectInList(QListWidget *list, const QString &path);
     void onSearchChanged(const QString &text);
     void onNoteItemClicked(QListWidgetItem *item);
+    void navigateBack();
+    void navigateForward();
+    void pushHistory(const QString &path);
+    void updateNavActions();
 
     Vault *m_vault = nullptr;
-    LinkIndex m_index;
     SearchIndex m_searchIndex;
 
     MarkdownEditor *m_editor = nullptr;
     QListWidget *m_noteList = nullptr;
-    QListWidget *m_backlinks = nullptr;
     QLineEdit *m_searchBox = nullptr;
     QTimer *m_saveTimer = nullptr;
+    QAction *m_backAction = nullptr;
+    QAction *m_forwardAction = nullptr;
 
     QString m_currentPath;
     QString m_currentTitle;
     bool m_loading = false;
+
+    QStringList m_history; // visited note paths (browser-style)
+    int m_histIndex = -1;
 };
