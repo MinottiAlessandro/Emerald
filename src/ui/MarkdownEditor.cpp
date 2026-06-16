@@ -43,12 +43,9 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     document()->setDefaultFont(font);
     document()->setDocumentMargin(16);
 
-    // Cap the editor to a comfortable reading measure; MainWindow centers it
-    // with stretch spacers. Pinning the width means resizing the side panels
-    // doesn't reflow or repaint the text (it used to, on every resize event —
-    // that was the lag).
+    // MainWindow caps and centers the editor's column to a comfortable reading
+    // measure, so the editor itself just expands to fill it.
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    setMaximumWidth(820);
 
     m_highlighter = new MarkdownHighlighter(document());
 

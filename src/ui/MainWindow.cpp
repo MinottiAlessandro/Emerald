@@ -6,6 +6,7 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -103,21 +104,21 @@ void MainWindow::buildUi() {
     // Title + body stacked in a width-capped column, centered with stretch
     // spacers. The fixed measure means resizing the side panels doesn't reflow
     // or repaint the text.
-    auto *column = new QWidget(this);
-    auto *colLayout = new QVBoxLayout(column);
+    m_centerColumn = new QWidget(this);
+    auto *colLayout = new QVBoxLayout(m_centerColumn);
     colLayout->setContentsMargins(0, 0, 0, 0);
     colLayout->setSpacing(0);
     colLayout->addWidget(m_titleEdit);
     colLayout->addWidget(m_editor, 1);
-    column->setMaximumWidth(820);
-    column->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_centerColumn->setMaximumWidth(820); // overridden by the saved setting
+    m_centerColumn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     auto *center = new QWidget(this);
     auto *row = new QHBoxLayout(center);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(0);
     row->addStretch(0);
-    row->addWidget(column, 1);
+    row->addWidget(m_centerColumn, 1);
     row->addStretch(0);
     setCentralWidget(center);
 
@@ -242,6 +243,8 @@ void MainWindow::buildActions() {
 
 void MainWindow::loadSettings() {
     QSettings s;
+    m_centerColumn->setMaximumWidth(
+        s.value(QStringLiteral("editorWidth"), 820).toInt());
     // With no custom font saved, keep the editor's built-in fallback chain
     // (Inter -> Liberation Sans -> sans-serif) untouched.
     if (!s.contains(QStringLiteral("editorFontFamily")) &&
@@ -260,14 +263,46 @@ void MainWindow::openSettings() {
     dlg.setWindowTitle(tr("Settings"));
     auto *form = new QFormLayout(&dlg);
 
+    QSettings s;
+
     auto *fontBox = new QFontComboBox(&dlg);
     fontBox->setCurrentFont(m_editor->font());
     auto *sizeBox = new QSpinBox(&dlg);
     sizeBox->setRange(8, 32);
     sizeBox->setValue(m_editor->font().pointSize());
+    auto *widthBox = new QSpinBox(&dlg);
+    widthBox->setRange(500, 1600);
+    widthBox->setSingleStep(20);
+    widthBox->setSuffix(tr(" px"));
+    widthBox->setValue(m_centerColumn->maximumWidth());
+
+    // New-note folder + Home note pickers (need an open vault).
+    auto *folderBox = new QComboBox(&dlg);
+    auto *homeBox = new QComboBox(&dlg);
+    folderBox->addItem(tr("(Vault root)"), QString());
+    homeBox->addItem(tr("(None)"), QString());
+    if (m_vault) {
+        const QDir root(m_vault->root());
+        for (const QString &rel : m_vault->folders())
+            folderBox->addItem(rel, rel);
+        for (const Note &n : m_vault->notes())
+            homeBox->addItem(n.title, root.relativeFilePath(n.path));
+        const int fi = folderBox->findData(s.value(QStringLiteral("newNoteFolder")));
+        if (fi >= 0)
+            folderBox->setCurrentIndex(fi);
+        const int hi = homeBox->findData(s.value(QStringLiteral("homeNote")));
+        if (hi >= 0)
+            homeBox->setCurrentIndex(hi);
+    } else {
+        folderBox->setEnabled(false);
+        homeBox->setEnabled(false);
+    }
 
     form->addRow(tr("Editor font"), fontBox);
     form->addRow(tr("Font size"), sizeBox);
+    form->addRow(tr("Editor width"), widthBox);
+    form->addRow(tr("New notes in"), folderBox);
+    form->addRow(tr("Home note"), homeBox);
 
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -275,25 +310,34 @@ void MainWindow::openSettings() {
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
-    // Live preview as the user changes the controls.
-    auto preview = [this, fontBox, sizeBox] {
+    // Live preview of font + width as the user changes the controls.
+    auto preview = [this, fontBox, sizeBox, widthBox] {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
+        m_centerColumn->setMaximumWidth(widthBox->value());
     };
     connect(fontBox, &QFontComboBox::currentFontChanged, &dlg, preview);
     connect(sizeBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
+    connect(widthBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
 
-    const QFont original = m_editor->font();
+    const QFont originalFont = m_editor->font();
+    const int originalWidth = m_centerColumn->maximumWidth();
     if (dlg.exec() == QDialog::Accepted) {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
-        QSettings s;
+        m_centerColumn->setMaximumWidth(widthBox->value());
         s.setValue(QStringLiteral("editorFontFamily"), f.family());
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
+        s.setValue(QStringLiteral("editorWidth"), widthBox->value());
+        if (m_vault) {
+            s.setValue(QStringLiteral("newNoteFolder"), folderBox->currentData());
+            s.setValue(QStringLiteral("homeNote"), homeBox->currentData());
+        }
     } else {
-        m_editor->applyFont(original); // revert the live preview
+        m_editor->applyFont(originalFont); // revert the live preview
+        m_centerColumn->setMaximumWidth(originalWidth);
     }
 }
 
@@ -328,6 +372,26 @@ void MainWindow::openVault(const QString &path) {
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
     statusBar()->showMessage(
         tr("%1 notes").arg(m_vault->notes().size()), 4000);
+    openInitialNote();
+}
+
+void MainWindow::openInitialNote() {
+    if (!m_vault)
+        return;
+    QSettings s;
+    // A configured Home note wins; otherwise reopen the last-edited note.
+    const QString home = s.value(QStringLiteral("homeNote")).toString();
+    if (!home.isEmpty()) {
+        const QString p = QDir(m_vault->root()).filePath(home);
+        if (QFileInfo::exists(p)) {
+            openNoteByPath(p);
+            return;
+        }
+    }
+    const QString last = s.value(QStringLiteral("lastNote")).toString();
+    if (!last.isEmpty() && QFileInfo::exists(last) &&
+        last.startsWith(m_vault->root()))
+        openNoteByPath(last);
 }
 
 void MainWindow::refreshTree() {
@@ -389,6 +453,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     m_titleEdit->blockSignals(false);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(m_currentTitle));
     selectInTree(path);
+    QSettings().setValue(QStringLiteral("lastNote"), path); // reopen on launch
     if (record)
         pushHistory(path);
     updateNavActions();
@@ -449,17 +514,16 @@ void MainWindow::newNote() {
         if (!m_vault)
             return;
     }
-    bool ok = false;
-    const QString name = QInputDialog::getText(
-        this, tr("New Note"), tr("Title:"), QLineEdit::Normal, QString(), &ok);
-    if (!ok || name.trimmed().isEmpty())
-        return;
-
-    const Note note = m_vault->createNote(name.trimmed());
-    const QString content = m_vault->read(note.path);
-    m_searchIndex.updateNote(note.path, note.title, content);
-    refreshTree();
-    openNoteByPath(note.path);
+    // Create in the configured folder (default: vault root), falling back to
+    // the root if the saved folder no longer exists.
+    QString dir = m_vault->root();
+    const QString rel = QSettings().value(QStringLiteral("newNoteFolder")).toString();
+    if (!rel.isEmpty()) {
+        const QString candidate = QDir(m_vault->root()).filePath(rel);
+        if (QDir(candidate).exists())
+            dir = candidate;
+    }
+    newNoteIn(dir);
 }
 
 void MainWindow::onLinkClicked(const QString &target) {

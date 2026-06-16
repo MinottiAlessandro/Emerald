@@ -33,6 +33,7 @@ private:
 
     void chooseVault();
     void openVault(const QString &path);
+    void openInitialNote(); // open Home or the last-edited note on launch
     void refreshTree();
     void openNoteByPath(const QString &path, bool record = true);
     void saveCurrent();
@@ -56,6 +57,7 @@ private:
     SearchIndex m_searchIndex;
 
     MarkdownEditor *m_editor = nullptr;
+    QWidget *m_centerColumn = nullptr; // width-capped title + body column
     QLineEdit *m_titleEdit = nullptr;
     QTreeWidget *m_noteTree = nullptr;
     SearchPopup *m_searchPopup = nullptr;
