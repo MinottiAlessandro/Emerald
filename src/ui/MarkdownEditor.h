@@ -1,8 +1,10 @@
 #pragma once
 
+#include <QList>
 #include <QPlainTextEdit>
 #include <QRectF>
 #include <QStringList>
+#include <QTextBlock>
 #include <functional>
 
 class MarkdownHighlighter;
@@ -61,6 +63,14 @@ private:
     // If pos hits a code block's copy button, copy its code and return true.
     bool copyCodeBlockAt(const QPoint &pos);
 
+    // Heading folding. A heading hides everything below it until the next
+    // heading of the same or higher level.
+    int headingLevel(const QString &text) const;       // 0 if not a heading
+    bool headingFoldable(const QTextBlock &heading) const;
+    bool isFolded(const QTextBlock &heading) const;
+    void toggleFoldAt(const QTextBlock &heading);
+    void reapplyFolds(); // recompute block visibility from the folded set
+
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.
     QString wikiContextPrefix(bool *inContext) const;
@@ -70,4 +80,7 @@ private:
     MarkdownHighlighter *m_highlighter = nullptr;
     QCompleter *m_completer = nullptr;
     QStringListModel *m_completionModel = nullptr;
+
+    QList<QTextBlock> m_foldedHeadings; // headings whose section is collapsed
+    bool m_applyingFolds = false;       // guard against re-entrant relayout
 };

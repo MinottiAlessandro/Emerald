@@ -15,6 +15,7 @@
 #include <QScrollBar>
 #include <QStringListModel>
 #include <QTextBlock>
+#include <algorithm>
 
 namespace {
 // A task line: capture(1) = indent, capture(2) = the [ ] / [x] status char.
@@ -54,6 +55,11 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
         m_highlighter->setActiveBlock(textCursor().blockNumber());
         viewport()->update(); // repaint bullets as the active line moves
+    });
+    // Keep folded sections hidden as the document is edited.
+    connect(document(), &QTextDocument::contentsChanged, this, [this] {
+        if (!m_applyingFolds && !m_foldedHeadings.isEmpty())
+            reapplyFolds();
     });
 
     m_completionModel = new QStringListModel(this);
@@ -194,6 +200,15 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::ForwardButton) {
         emit navigateForward();
         return;
+    }
+    // A click in the left margin next to a heading folds/unfolds its section.
+    if (event->button() == Qt::LeftButton &&
+        event->pos().x() < document()->documentMargin()) {
+        const QTextBlock b = cursorForPosition(event->pos()).block();
+        if (headingFoldable(b)) {
+            toggleFoldAt(b);
+            return;
+        }
     }
     if (event->button() == Qt::LeftButton && copyCodeBlockAt(event->pos()))
         return;
@@ -379,6 +394,96 @@ bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
     return copied;
 }
 
+int MarkdownEditor::headingLevel(const QString &text) const {
+    int n = 0;
+    while (n < text.size() && n < 6 && text[n] == QLatin1Char('#'))
+        ++n;
+    if (n > 0 && n < text.size() && text[n] == QLatin1Char(' '))
+        return n;
+    return 0;
+}
+
+bool MarkdownEditor::headingFoldable(const QTextBlock &heading) const {
+    const int level = headingLevel(heading.text());
+    if (level == 0)
+        return false;
+    const QTextBlock next = heading.next();
+    if (!next.isValid())
+        return false;
+    const int l = headingLevel(next.text());
+    return !(l > 0 && l <= level); // foldable unless the next line is a peer
+}
+
+bool MarkdownEditor::isFolded(const QTextBlock &heading) const {
+    for (const QTextBlock &b : m_foldedHeadings)
+        if (b == heading)
+            return true;
+    return false;
+}
+
+void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
+    if (!headingFoldable(heading))
+        return;
+    int idx = -1;
+    for (int i = 0; i < m_foldedHeadings.size(); ++i)
+        if (m_foldedHeadings[i] == heading) {
+            idx = i;
+            break;
+        }
+    if (idx >= 0) {
+        m_foldedHeadings.removeAt(idx);
+    } else {
+        // Move the caret out of the section that is about to be hidden.
+        const int level = headingLevel(heading.text());
+        const int caret = textCursor().blockNumber();
+        for (QTextBlock b = heading.next(); b.isValid(); b = b.next()) {
+            const int l = headingLevel(b.text());
+            if (l > 0 && l <= level)
+                break;
+            if (b.blockNumber() == caret) {
+                QTextCursor c(heading);
+                c.movePosition(QTextCursor::EndOfBlock);
+                setTextCursor(c);
+                break;
+            }
+        }
+        m_foldedHeadings.append(heading);
+    }
+    reapplyFolds();
+}
+
+void MarkdownEditor::reapplyFolds() {
+    if (m_applyingFolds)
+        return;
+    m_applyingFolds = true;
+
+    // Forget folds whose heading was edited away or deleted.
+    m_foldedHeadings.erase(
+        std::remove_if(m_foldedHeadings.begin(), m_foldedHeadings.end(),
+                       [this](const QTextBlock &b) {
+                           return !b.isValid() || headingLevel(b.text()) == 0;
+                       }),
+        m_foldedHeadings.end());
+
+    for (QTextBlock b = document()->firstBlock(); b.isValid(); b = b.next())
+        if (!b.isVisible())
+            b.setVisible(true);
+
+    for (const QTextBlock &h : m_foldedHeadings) {
+        const int level = headingLevel(h.text());
+        for (QTextBlock b = h.next(); b.isValid(); b = b.next()) {
+            const int l = headingLevel(b.text());
+            if (l > 0 && l <= level)
+                break;
+            b.setVisible(false);
+        }
+    }
+
+    document()->markContentsDirty(0, document()->characterCount());
+    m_applyingFolds = false;
+    viewport()->update();
+}
+
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
     // Code-block backgrounds go behind the text.
     {
@@ -507,4 +612,30 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         p.drawRoundedRect(QRectF(btn.left() + 5, btn.top() + 2, 8, 10), 2, 2);
         p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
     });
+
+    // Fold arrows in the left margin next to foldable headings.
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x56, 0x5f, 0x89));
+    for (QTextBlock block = firstVisibleBlock(); block.isValid();
+         block = block.next()) {
+        const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
+        if (geo.top() > event->rect().bottom())
+            break;
+        if (geo.bottom() < event->rect().top() || !headingFoldable(block))
+            continue;
+        QTextCursor hc(block);
+        const qreal y = cursorRect(hc).center().y();
+        const qreal x = 5;
+        QPointF tri[3];
+        if (isFolded(block)) { // ▸ collapsed
+            tri[0] = {x, y - 4};
+            tri[1] = {x + 6, y};
+            tri[2] = {x, y + 4};
+        } else { // ▾ expanded
+            tri[0] = {x - 1, y - 3};
+            tri[1] = {x + 7, y - 3};
+            tri[2] = {x + 3, y + 4};
+        }
+        p.drawPolygon(tri, 3);
+    }
 }
