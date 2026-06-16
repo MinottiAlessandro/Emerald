@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFontComboBox>
 #include <QFormLayout>
 #include <QFrame>
@@ -34,6 +35,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
@@ -179,6 +181,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_saveTimer->setSingleShot(true);
     m_saveTimer->setInterval(700);
     connect(m_saveTimer, &QTimer::timeout, this, &MainWindow::saveCurrent);
+
+    // Watch the open note's file so edits from another program are noticed
+    // instead of being silently overwritten by our buffer.
+    m_watcher = new QFileSystemWatcher(this);
+    connect(m_watcher, &QFileSystemWatcher::fileChanged, this,
+            &MainWindow::onFileChanged);
     connect(m_editor, &MarkdownEditor::textChanged, this, [this] {
         if (!m_loading)
             m_saveTimer->start();
@@ -634,11 +642,14 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     saveCurrent();
 
     m_loading = true;
-    m_editor->setPlainText(m_vault->read(path));
+    const QString body = m_vault->read(path);
+    m_editor->setPlainText(body);
     m_loading = false;
 
     m_currentPath = path;
+    m_lastSavedContent = body;
     m_currentTitle = Vault::titleFromPath(path);
+    watchCurrent();
     m_titleEdit->blockSignals(true);
     m_titleEdit->setText(m_currentTitle);
     m_titleEdit->blockSignals(false);
@@ -682,6 +693,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     m_vault->updateLinksTo(oldTitle, newTitle);
     m_currentPath = newPath;
     m_currentTitle = newTitle;
+    watchCurrent(); // follow the file to its new name
     for (QString &p : m_history)
         if (p == oldPath)
             p = newPath;
@@ -695,8 +707,64 @@ void MainWindow::saveCurrent() {
     if (!m_vault || m_currentPath.isEmpty())
         return;
     const QString content = m_editor->toPlainText();
+    if (content == m_lastSavedContent)
+        return; // nothing new to flush; avoid a self-triggered watcher event
     m_vault->write(m_currentPath, content);
+    m_lastSavedContent = content;
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, content);
+}
+
+// Watch only the note that's currently open; drop whatever we watched before.
+void MainWindow::watchCurrent() {
+    if (!m_watcher)
+        return;
+    const QStringList watched = m_watcher->files();
+    if (!watched.isEmpty())
+        m_watcher->removePaths(watched);
+    if (!m_currentPath.isEmpty())
+        m_watcher->addPath(m_currentPath);
+}
+
+// The open note's file changed on disk (another program saved it). Adopt the
+// new contents when we have no unsaved edits; never clobber the user's buffer.
+void MainWindow::onFileChanged(const QString &path) {
+    if (path != m_currentPath)
+        return;
+
+    // Editors that save by replace-and-rename make the watcher forget the file;
+    // re-arm it once the new file has settled.
+    if (!m_watcher->files().contains(path))
+        QTimer::singleShot(50, this, [this, path] {
+            if (path == m_currentPath && QFileInfo::exists(path))
+                m_watcher->addPath(path);
+        });
+
+    if (!QFileInfo::exists(path)) {
+        statusBar()->showMessage(tr("This note was removed on disk"), 4000);
+        return;
+    }
+
+    const QString disk = m_vault->read(path);
+    if (disk == m_lastSavedContent)
+        return; // our own write, or no real change
+
+    if (m_editor->toPlainText() != m_lastSavedContent) {
+        statusBar()->showMessage(
+            tr("Changed on disk — saving will keep your version"), 5000);
+        return;
+    }
+
+    // No local edits: reload, keeping the caret roughly where it was.
+    const int caret = m_editor->textCursor().position();
+    m_loading = true;
+    m_editor->setPlainText(disk);
+    m_loading = false;
+    m_lastSavedContent = disk;
+
+    QTextCursor c = m_editor->textCursor();
+    c.setPosition(qMin(caret, int(disk.size())));
+    m_editor->setTextCursor(c);
+    statusBar()->showMessage(tr("Reloaded — changed on disk"), 3000);
 }
 
 void MainWindow::newNote() {
@@ -998,6 +1066,7 @@ void MainWindow::moveItem(const QString &srcPath, const QString &destDirIn) {
     remap(m_currentPath);
     for (QString &p : m_history)
         remap(p);
+    watchCurrent(); // the open note may have moved with it
 
     m_vault->scan();
     m_searchIndex.rebuild(*m_vault);

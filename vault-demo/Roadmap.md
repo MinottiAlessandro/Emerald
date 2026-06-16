@@ -35,8 +35,9 @@
 - [ ] Can you check if there is a bug when I add a default Note or default creation note folder and then remove it?
 - [ ] If I delete a note and there is a default Note display that, otherwise open the last opened one, otherwise open the untitled note.
 - [ ] If i click on the resize bar it automatically collapse and if i click the collapsed bar it automatically reopen at the menimum width
-- [ ] Question: is it possible to make Emerald real time aware of the file changes made by another program? Right now it seems like it just ignore the changes and then overwrite the file with the one it has in the buffer.
+- [x] Question: is it possible to make Emerald real time aware of the file changes made by another program? Right now it seems like it just ignore the changes and then overwrite the file with the one it has in the buffer.
 - [ ] (deferred) Add a setting to enable the creation of a "Mascotte" of the file. It will use an extensible set of image on wich the color will be modified following an alogorithm i still have to think. The idea behind this point is to have something visual to associate to the note and that i can use in mnemonic techniques like the memory palace. Leave this point as the last one to implement and give me your opinions on the implementation.
+
 
 
 See also [[Welcome]].

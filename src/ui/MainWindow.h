@@ -18,6 +18,7 @@ class QMenu;
 class QPoint;
 class QSplitter;
 class QFrame;
+class QFileSystemWatcher;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -45,6 +46,8 @@ private:
     void newNote();
     void renameCurrent(const QString &rawTitle);
     void onLinkClicked(const QString &target);
+    void onFileChanged(const QString &path); // external edit on disk
+    void watchCurrent();
     void selectInTree(const QString &path);
     void openSearch();
     void openQuickOpen();
@@ -80,8 +83,10 @@ private:
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
 
+    QFileSystemWatcher *m_watcher = nullptr;
     QString m_currentPath;
     QString m_currentTitle;
+    QString m_lastSavedContent; // body as last written/loaded, to spot extern edits
     bool m_loading = false;
 
     QStringList m_history; // visited note paths (browser-style)
