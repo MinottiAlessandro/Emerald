@@ -24,63 +24,63 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
             m_baseSize = pt;
     }
 
-    m_heading.setForeground(QColor("#c0caf5"));
+    m_heading.setForeground(QColor("#d7eee2"));
     m_heading.setFontWeight(QFont::Bold);
 
-    m_bold.setForeground(QColor("#c0caf5"));
+    m_bold.setForeground(QColor("#d7eee2"));
     m_bold.setFontWeight(QFont::Bold);
 
-    m_italic.setForeground(QColor("#c0caf5"));
+    m_italic.setForeground(QColor("#d7eee2"));
     m_italic.setFontItalic(true);
 
-    m_boldItalic.setForeground(QColor("#c0caf5"));
+    m_boldItalic.setForeground(QColor("#d7eee2"));
     m_boldItalic.setFontWeight(QFont::Bold);
     m_boldItalic.setFontItalic(true);
 
-    m_code.setForeground(QColor("#7dcfff"));
+    m_code.setForeground(QColor("#7ee0b0"));
     m_code.setFontFamilies({QStringLiteral("monospace")});
-    m_code.setBackground(QColor("#24283b"));
+    m_code.setBackground(QColor("#16241c"));
 
-    m_codeBlock.setForeground(QColor("#a9b1d6"));
+    m_codeBlock.setForeground(QColor("#a9c8b8"));
     m_codeBlock.setFontFamilies({QStringLiteral("monospace")});
-    m_codeBlock.setBackground(QColor("#1f2335"));
+    m_codeBlock.setBackground(QColor("#13201a"));
 
-    m_codeLang.setForeground(QColor("#7dcfff"));
+    m_codeLang.setForeground(QColor("#7ee0b0"));
     m_codeLang.setFontFamilies({QStringLiteral("monospace")});
     m_codeLang.setFontItalic(true);
-    m_codeLang.setBackground(QColor("#1f2335"));
+    m_codeLang.setBackground(QColor("#13201a"));
 
-    m_strike.setForeground(QColor("#737aa2"));
+    m_strike.setForeground(QColor("#5e7d6d"));
     m_strike.setFontStrikeOut(true);
 
-    m_highlight.setForeground(QColor("#1a1b26"));
-    m_highlight.setBackground(QColor("#e0af68"));
+    m_highlight.setForeground(QColor("#101814"));
+    m_highlight.setBackground(QColor("#7ee0a8"));
 
-    m_link.setForeground(QColor("#7aa2f7"));
+    m_link.setForeground(QColor("#33d685"));
     m_link.setFontUnderline(true);
 
-    m_quote.setForeground(QColor("#9aa5ce"));
+    m_quote.setForeground(QColor("#92b3a2"));
     m_quote.setFontItalic(true);
 
-    m_rule.setForeground(QColor("#565f89"));
+    m_rule.setForeground(QColor("#4f7565"));
 
-    m_listMarker.setForeground(QColor("#7aa2f7"));
+    m_listMarker.setForeground(QColor("#33d685"));
     m_listMarker.setFontWeight(QFont::Bold);
 
-    m_taskDone.setForeground(QColor("#565f89"));
+    m_taskDone.setForeground(QColor("#4f7565"));
     m_taskDone.setFontStrikeOut(true);
 
-    m_table.setForeground(QColor("#a9b1d6"));
+    m_table.setForeground(QColor("#a9c8b8"));
     m_table.setFontFamilies({QStringLiteral("monospace")});
 
     m_tableHeader = m_table;
-    m_tableHeader.setForeground(QColor("#c0caf5"));
+    m_tableHeader.setForeground(QColor("#d7eee2"));
     m_tableHeader.setFontWeight(QFont::Bold);
 
     m_tablePipe = m_table;
-    m_tablePipe.setForeground(QColor("#565f89"));
+    m_tablePipe.setForeground(QColor("#4f7565"));
 
-    m_marker.setForeground(QColor("#565f89"));
+    m_marker.setForeground(QColor("#4f7565"));
 
     m_reHeading    = QRegularExpression(QStringLiteral("^(#{1,6})\\s+(.+)$"));
     m_reFence      = QRegularExpression(QStringLiteral("^\\s*(```|~~~)\\s*(\\S*).*$"));

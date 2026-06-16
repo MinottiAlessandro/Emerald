@@ -1,38 +1,38 @@
-/* Emerald — dark theme (Tokyo Night inspired) */
+/* Emerald — emerald-green dark theme, colours sampled from the app icon */
 
 QMainWindow,
 QWidget {
-    background: #1a1b26;
-    color: #a9b1d6;
+    background: #101814;
+    color: #a9c8b8;
 }
 
 QPlainTextEdit#editor {
-    background: #1a1b26;
-    color: #c0caf5;
+    background: #101814;
+    color: #d7eee2;
     border: none;
-    selection-background-color: #2e3c64;
-    selection-color: #c0caf5;
+    selection-background-color: #1f4a33;
+    selection-color: #d7eee2;
 }
 
 /* The note title shown as the first line above the body (maps to the file
    name; the .md is never shown). */
 QLineEdit#noteTitle {
-    background: #1a1b26;
-    color: #c0caf5;
+    background: #101814;
+    color: #d7eee2;
     border: none;
     padding: 14px 18px 2px 18px;
     font-size: 26px;
     font-weight: 700;
-    selection-background-color: #2e3c64;
+    selection-background-color: #1f4a33;
 }
 QLineEdit#noteTitle::placeholder {
-    color: #3b4261;
+    color: #2f4a3b;
 }
 
 /* Sidebar + backlinks lists */
 QListWidget {
-    background: #16161e;
-    color: #9aa5ce;
+    background: #0b120e;
+    color: #92b3a2;
     border: none;
     outline: 0;
     padding: 6px;
@@ -43,17 +43,17 @@ QListWidget::item {
     margin: 1px 0;
 }
 QListWidget::item:hover {
-    background: #20222e;
+    background: #16241c;
 }
 QListWidget::item:selected {
-    background: #2a2e42;
-    color: #c0caf5;
+    background: #1d3a2a;
+    color: #d7eee2;
 }
 
 /* Sidebar note tree (folders + notes) */
 QTreeWidget {
-    background: #16161e;
-    color: #9aa5ce;
+    background: #0b120e;
+    color: #92b3a2;
     border: none;
     outline: 0;
     padding: 6px;
@@ -65,11 +65,11 @@ QTreeView::item {
     margin: 2px 4px;
 }
 QTreeView::item:hover {
-    background: #20222e;
+    background: #16241c;
 }
 QTreeView::item:selected {
-    background: #2a2e42;
-    color: #c0caf5;
+    background: #1d3a2a;
+    color: #d7eee2;
 }
 /* Keep the branch/indent column free of its own highlight, so a hovered or
    selected row shows a single highlight zone (no extra block on the left). */
@@ -81,54 +81,54 @@ QTreeView::branch:selected {
 
 /* Sidebar header (title + nav arrows) and footer (gear) */
 QWidget#sideHeader, QWidget#sideFooter {
-    background: #16161e;
+    background: #0b120e;
 }
 QLabel#sideTitle {
-    color: #c0caf5;
+    color: #d7eee2;
     font-size: 19px;
     font-weight: 600;
     padding: 2px 0;
 }
 QToolButton#navButton, QToolButton#gearButton {
     background: transparent;
-    color: #787c99;
+    color: #6d8e7c;
     border: none;
     border-radius: 6px;
     padding: 4px 9px;
     font-size: 18px;
 }
 QToolButton#navButton:hover, QToolButton#gearButton:hover {
-    background: #2a2e42;
-    color: #c0caf5;
+    background: #1d3a2a;
+    color: #d7eee2;
 }
 QToolButton#navButton:disabled {
-    color: #3b4261;
+    color: #2f4a3b;
 }
 QToolButton#gearButton::menu-indicator {
     image: none;
 }
 
 QWidget#sidebar {
-    background: #16161e;
+    background: #0b120e;
 }
 
 /* The drag-to-resize divider between the sidebar and the editor: a plain
    full-height line (no gripper dots) that lights up on hover. Drag it to the
    left edge to collapse the sidebar, and back out to reopen it. */
 QSplitter#mainSplitter::handle {
-    background: #2a2e42;
+    background: #1d3a2a;
 }
 QSplitter#mainSplitter::handle:hover {
-    background: #7aa2f7;
+    background: #33d685;
 }
 
 QDockWidget {
-    color: #565f89;
+    color: #4f7565;
     titlebar-close-icon: none;
     titlebar-normal-icon: none;
 }
 QDockWidget::title {
-    background: #16161e;
+    background: #0b120e;
     padding: 8px 12px;
     font-size: 11px;
     text-transform: uppercase;
@@ -137,38 +137,38 @@ QDockWidget::title {
 
 /* Telescope-style search overlay */
 QFrame#searchPopup {
-    background: #16161e;
-    border: 1px solid #3b4261;
+    background: #0b120e;
+    border: 1px solid #2f4a3b;
     border-radius: 10px;
 }
 QLineEdit#searchInput {
-    background: #1a1b26;
-    color: #c0caf5;
-    border: 1px solid #2a2e42;
+    background: #101814;
+    color: #d7eee2;
+    border: 1px solid #1d3a2a;
     border-radius: 6px;
     padding: 7px 10px;
     font-size: 14px;
-    selection-background-color: #2e3c64;
+    selection-background-color: #1f4a33;
 }
 QLineEdit#searchInput:focus {
-    border: 1px solid #7aa2f7;
+    border: 1px solid #33d685;
 }
 /* In-note find bar (top-right of the editor) */
 QFrame#findBar {
-    background: #16161e;
-    border: 1px solid #3b4261;
+    background: #0b120e;
+    border: 1px solid #2f4a3b;
     border-radius: 8px;
 }
 QLineEdit#findInput {
-    background: #1a1b26;
-    color: #c0caf5;
-    border: 1px solid #2a2e42;
+    background: #101814;
+    color: #d7eee2;
+    border: 1px solid #1d3a2a;
     border-radius: 6px;
     padding: 5px 8px;
-    selection-background-color: #2e3c64;
+    selection-background-color: #1f4a33;
 }
 QLineEdit#findInput:focus {
-    border: 1px solid #7aa2f7;
+    border: 1px solid #33d685;
 }
 
 QListWidget#searchResults {
@@ -179,9 +179,9 @@ QListWidget#searchResults {
 
 /* [[ autocomplete popup */
 QListView#completer {
-    background: #16161e;
-    color: #c0caf5;
-    border: 1px solid #2a2e42;
+    background: #0b120e;
+    color: #d7eee2;
+    border: 1px solid #1d3a2a;
     border-radius: 6px;
     padding: 4px;
     outline: 0;
@@ -191,20 +191,20 @@ QListView#completer::item {
     border-radius: 4px;
 }
 QListView#completer::item:selected {
-    background: #2a2e42;
+    background: #1d3a2a;
 }
 
 QMenuBar {
-    background: #16161e;
-    color: #a9b1d6;
+    background: #0b120e;
+    color: #a9c8b8;
 }
 QMenuBar::item:selected {
-    background: #2a2e42;
+    background: #1d3a2a;
 }
 QMenu {
-    background: #16161e;
-    color: #a9b1d6;
-    border: 1px solid #2a2e42;
+    background: #0b120e;
+    color: #a9c8b8;
+    border: 1px solid #1d3a2a;
     padding: 4px;
 }
 QMenu::item {
@@ -212,20 +212,20 @@ QMenu::item {
     border-radius: 5px;
 }
 QMenu::item:selected {
-    background: #2a2e42;
+    background: #1d3a2a;
 }
 QMenu::separator {
     height: 1px;
-    background: #2a2e42;
+    background: #1d3a2a;
     margin: 4px 8px;
 }
 
 /* Transient toast notice that floats over the bottom of the editor and
    auto-hides — replaces the old persistent status bar. */
 QLabel#toast {
-    background: #2a2e42;
-    color: #c0caf5;
-    border: 1px solid #3b4261;
+    background: #1d3a2a;
+    color: #d7eee2;
+    border: 1px solid #2f4a3b;
     border-radius: 8px;
     padding: 6px 14px;
     font-size: 13px;
@@ -237,12 +237,12 @@ QScrollBar:vertical {
     margin: 0;
 }
 QScrollBar::handle:vertical {
-    background: #2a2e42;
+    background: #1d3a2a;
     border-radius: 3px;
     min-height: 36px;
 }
 QScrollBar::handle:vertical:hover {
-    background: #3b4261;
+    background: #2f4a3b;
 }
 QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical {

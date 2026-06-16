@@ -149,7 +149,7 @@ protected:
             return;
         const int ind = indentation();
         painter->save();
-        painter->setPen(QColor(0x2a, 0x2e, 0x42));
+        painter->setPen(QColor(0x1d, 0x3a, 0x2a));
         for (int level = 1; level <= depth; ++level) {
             const int x = rect.right() - ind * (depth - level) - ind / 2;
             painter->drawLine(x, rect.top(), x, rect.bottom());
@@ -166,7 +166,7 @@ const QIcon &folderIcon() {
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor("#7aa2f7"));
+        p.setBrush(QColor("#33d685"));
         p.drawRoundedRect(QRectF(2, 3.5, 6, 3), 1, 1);   // tab
         p.drawRoundedRect(QRectF(2, 5, 12, 8.5), 1.5, 1.5); // body
         return QIcon(pm);

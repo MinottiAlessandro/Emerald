@@ -673,7 +673,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                               cb.body.bottom() - cb.header.top());
             if (!full.intersects(event->rect()))
                 return;
-            bg.setBrush(QColor(0x1f, 0x23, 0x35));
+            bg.setBrush(QColor(0x13, 0x20, 0x1a));
             bg.drawRoundedRect(full, 6, 6);
             if (cb.active) // editing: show the raw ``` fence, no header bar
                 return;
@@ -687,7 +687,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             path.quadTo(h.right(), h.top(), h.right(), h.top() + r);
             path.lineTo(h.right(), h.bottom());
             path.closeSubpath();
-            bg.fillPath(path, QColor(0x2a, 0x2e, 0x42));
+            bg.fillPath(path, QColor(0x1d, 0x3a, 0x2a));
         });
     }
 
@@ -703,7 +703,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
 
     QPainter p(viewport());
     p.setRenderHint(QPainter::Antialiasing);
-    const QColor color(0x78, 0x7c, 0x99);
+    const QColor color(0x6d, 0x8e, 0x7c);
 
     for (QTextBlock block = firstVisibleBlock(); block.isValid();
          block = block.next()) {
@@ -719,7 +719,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         if (ruleRe.match(block.text()).hasMatch()) {
             const qreal margin = document()->documentMargin();
             const qreal y = geo.center().y();
-            QPen pen(QColor(0x3b, 0x42, 0x61));
+            QPen pen(QColor(0x2f, 0x4a, 0x3b));
             pen.setWidthF(1.4);
             p.setPen(pen);
             p.drawLine(QPointF(margin, y),
@@ -736,12 +736,12 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             const QRectF box(cellT.left(), cellT.center().y() - s / 2.0, s, s);
             const bool checked = t.captured(2).compare(QStringLiteral("x"),
                                                        Qt::CaseInsensitive) == 0;
-            const QColor accent(0x7a, 0xa2, 0xf7);
+            const QColor accent(0x33, 0xd6, 0x85);
             if (checked) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(accent);
                 p.drawRoundedRect(box, 3, 3);
-                QPen tick(QColor(0x1a, 0x1b, 0x26));
+                QPen tick(QColor(0x10, 0x18, 0x14));
                 tick.setWidthF(1.6);
                 tick.setCapStyle(Qt::RoundCap);
                 tick.setJoinStyle(Qt::RoundJoin);
@@ -802,24 +802,24 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         QFont lf = font();
         lf.setPointSizeF(font().pointSizeF() * 0.85);
         p.setFont(lf);
-        p.setPen(QColor(0x7d, 0xcf, 0xff));
+        p.setPen(QColor(0x7e, 0xe0, 0xb0));
         p.drawText(QRectF(cb.header.left() + 12, cb.header.top(),
                           cb.header.width() - 44, cb.header.height()),
                    Qt::AlignVCenter | Qt::AlignLeft, cb.language);
         p.setFont(font());
 
         const QRectF btn = cb.copyBtn;
-        QPen pen(QColor(0x9a, 0xa5, 0xce));
+        QPen pen(QColor(0x92, 0xb3, 0xa2));
         pen.setWidthF(1.3);
         p.setPen(pen);
-        p.setBrush(QColor(0x2a, 0x2e, 0x42));
+        p.setBrush(QColor(0x1d, 0x3a, 0x2a));
         p.drawRoundedRect(QRectF(btn.left() + 5, btn.top() + 2, 8, 10), 2, 2);
         p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
     });
 
     // Fold arrows in the left margin next to foldable headings.
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0x56, 0x5f, 0x89));
+    p.setBrush(QColor(0x4f, 0x75, 0x65));
     for (QTextBlock block = firstVisibleBlock(); block.isValid();
          block = block.next()) {
         const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
