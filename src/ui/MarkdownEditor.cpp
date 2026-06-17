@@ -4,6 +4,8 @@
 #include "core/WikiLink.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
+#include <QClipboard>
 #include <QCompleter>
 #include <QFontMetricsF>
 #include <QKeyEvent>
@@ -49,11 +51,11 @@ QStringList splitRow(const QString &text) {
         c = c.trimmed();
     return cells;
 }
-int sepAlign(const QString &cell) { // 0 left, 1 right, 2 centre
+int sepAlign(const QString &cell) { // 0 left, 1 right, 2 centre, 3 explicit-left
     const QString t = cell.trimmed();
     const bool l = t.startsWith(QLatin1Char(':'));
     const bool r = t.endsWith(QLatin1Char(':'));
-    return (l && r) ? 2 : r ? 1 : 0;
+    return (l && r) ? 2 : r ? 1 : l ? 3 : 0;
 }
 QString padCell(const QString &s, int width, int align) {
     const int pad = qMax(0, width - int(s.length()));
@@ -71,6 +73,8 @@ QString dashCell(int width, int align) {
                QLatin1Char(':');
     if (align == 1)
         return QString(width - 1, QLatin1Char('-')) + QLatin1Char(':');
+    if (align == 3) // explicit left ":--": keep the colon the user typed
+        return QLatin1Char(':') + QString(width - 1, QLatin1Char('-'));
     return QString(width, QLatin1Char('-'));
 }
 }
@@ -234,23 +238,27 @@ bool MarkdownEditor::followsLink(const QPoint &pos,
     return cursorForPosition(pos).blockNumber() != textCursor().blockNumber();
 }
 
-bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
+QTextBlock MarkdownEditor::taskCheckboxBlockAt(const QPoint &pos) const {
     const QTextBlock block = cursorForPosition(pos).block();
     if (block.blockNumber() == textCursor().blockNumber())
-        return false; // the active line shows raw markup; edit it normally
+        return {}; // the active line shows raw markup; edit it normally
     const auto m = taskRe().match(block.text());
     if (!m.hasMatch())
-        return false;
-
+        return {};
     // The checkbox is painted over the dash; accept a click on that column.
     QTextCursor at(block);
     at.setPosition(block.position() + m.capturedLength(1)); // dash column
     const QRectF cell = cursorRect(at);
     const qreal cw = QFontMetricsF(font()).horizontalAdvance(QLatin1Char(' '));
     const QRectF hit(cell.left() - cw * 0.5, cell.top(), cw * 2.4, cell.height());
-    if (!hit.contains(pos))
-        return false;
+    return hit.contains(pos) ? block : QTextBlock();
+}
 
+bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
+    const QTextBlock block = taskCheckboxBlockAt(pos);
+    if (!block.isValid())
+        return false;
+    const auto m = taskRe().match(block.text());
     const int statusPos = m.capturedStart(2);
     QTextCursor edit(block);
     edit.setPosition(block.position() + statusPos);
@@ -258,6 +266,11 @@ bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
     const bool done = block.text().at(statusPos).toLower() == QLatin1Char('x');
     edit.insertText(done ? QStringLiteral(" ") : QStringLiteral("x"));
     return true;
+}
+
+bool MarkdownEditor::isOverFoldControl(const QPoint &pos) const {
+    return pos.x() < document()->documentMargin() &&
+           headingFoldable(cursorForPosition(pos).block());
 }
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
@@ -270,14 +283,12 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         return;
     }
     // A click in the left margin next to a heading folds/unfolds its section.
-    if (event->button() == Qt::LeftButton &&
-        event->pos().x() < document()->documentMargin()) {
-        const QTextBlock b = cursorForPosition(event->pos()).block();
-        if (headingFoldable(b)) {
-            toggleFoldAt(b);
-            return;
-        }
+    if (event->button() == Qt::LeftButton && isOverFoldControl(event->pos())) {
+        toggleFoldAt(cursorForPosition(event->pos()).block());
+        return;
     }
+    if (event->button() == Qt::LeftButton && copyCodeBlockAt(event->pos()))
+        return;
     if (event->button() == Qt::LeftButton && toggleTaskAt(event->pos()))
         return;
     if (event->button() == Qt::LeftButton &&
@@ -289,8 +300,13 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
 }
 
 void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
-    const bool overLink = followsLink(event->pos(), event->modifiers());
-    viewport()->setCursor(overLink ? Qt::PointingHandCursor : Qt::IBeamCursor);
+    // Show the hand cursor over anything clickable: links, task checkboxes, the
+    // heading fold control, and a code block's copy button.
+    const QPoint p = event->pos();
+    const bool clickable = followsLink(p, event->modifiers()) ||
+                           taskCheckboxBlockAt(p).isValid() ||
+                           isOverFoldControl(p) || isOverCopyButton(p);
+    viewport()->setCursor(clickable ? Qt::PointingHandCursor : Qt::IBeamCursor);
     QPlainTextEdit::mouseMoveEvent(event);
 }
 
@@ -385,6 +401,14 @@ bool MarkdownEditor::adjustListIndent(bool deeper) {
 }
 
 void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
+    // Ctrl+Del deletes the whole note. QPlainTextEdit would otherwise eat this
+    // as "delete word forward" (it claims the shortcut via ShortcutOverride),
+    // so intercept it here where the editor has focus and hand it to the window.
+    if (event->modifiers() == Qt::ControlModifier &&
+        event->key() == Qt::Key_Delete) {
+        emit deleteNoteRequested();
+        return;
+    }
     if (m_completer->popup()->isVisible()) {
         // These keys belong to the popup while it is open.
         switch (event->key()) {
@@ -399,17 +423,180 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             break;
         }
     }
-    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
-        !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
-        continueList()) {
+    // Inside a fenced code block the text is verbatim: Enter and Tab insert a
+    // plain newline / indent instead of continuing a list or folding markup.
+    const bool inCode = insideCodeBlock(textCursor().block());
+    if (!inCode) {
+        if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+            !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+            continueList()) {
+            return;
+        }
+        if (event->key() == Qt::Key_Tab && adjustListIndent(true))
+            return;
+        if (event->key() == Qt::Key_Backtab && adjustListIndent(false))
+            return;
+    }
+
+    // Editor keybindings. (On macOS Qt maps ControlModifier to ⌘, so these are
+    // Cmd-based there automatically.)
+    const auto mods = event->modifiers();
+    if (mods == Qt::ControlModifier) {
+        switch (event->key()) {
+        case Qt::Key_B: wrapSelection(QStringLiteral("**")); return; // bold
+        case Qt::Key_I: wrapSelection(QStringLiteral("*")); return;  // italic
+        case Qt::Key_L: selectCurrentLine(); return;
+        case Qt::Key_D: duplicateLineOrSelection(); return;
+        default: break;
+        }
+    } else if (mods == (Qt::ControlModifier | Qt::ShiftModifier) &&
+               event->key() == Qt::Key_K) {
+        deleteCurrentLine();
+        return;
+    } else if (mods == Qt::AltModifier &&
+               (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+        moveLines(event->key() == Qt::Key_Up);
         return;
     }
-    if (event->key() == Qt::Key_Tab && adjustListIndent(true))
-        return;
-    if (event->key() == Qt::Key_Backtab && adjustListIndent(false))
-        return;
+
     QPlainTextEdit::keyPressEvent(event);
     updateCompletionPopup();
+}
+
+// Wrap the selection in `marker` (e.g. ** or *), or unwrap if it's already
+// wrapped. With no selection, insert an empty pair and place the caret inside.
+void MarkdownEditor::wrapSelection(const QString &marker) {
+    QTextCursor cur = textCursor();
+    if (!cur.hasSelection()) {
+        cur.insertText(marker + marker);
+        cur.movePosition(QTextCursor::PreviousCharacter, QTextCursor::MoveAnchor,
+                         marker.size());
+        setTextCursor(cur);
+        return;
+    }
+    const QString text = cur.selectedText();
+    const int n = marker.size();
+    const bool wrapped =
+        text.size() >= 2 * n && text.startsWith(marker) && text.endsWith(marker);
+    const QString out =
+        wrapped ? text.mid(n, text.size() - 2 * n) : marker + text + marker;
+    cur.insertText(out);
+    // Keep the result selected so a second press toggles it back off.
+    cur.setPosition(cur.position() - out.size());
+    cur.setPosition(cur.position() + out.size(), QTextCursor::KeepAnchor);
+    setTextCursor(cur);
+}
+
+void MarkdownEditor::selectCurrentLine() {
+    QTextCursor cur = textCursor();
+    cur.movePosition(QTextCursor::StartOfBlock);
+    // Include the trailing newline (so a follow-up delete removes the whole
+    // line); fall back to end-of-block on the last line.
+    if (!cur.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor))
+        cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    setTextCursor(cur);
+}
+
+void MarkdownEditor::duplicateLineOrSelection() {
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection()) {
+        const QString sel = cur.selectedText();
+        const int end = cur.selectionEnd();
+        cur.setPosition(end);
+        cur.insertText(sel); // a second copy right after the selection
+        setTextCursor(cur);
+        return;
+    }
+    const QString line = cur.block().text();
+    const int col = cur.positionInBlock();
+    cur.movePosition(QTextCursor::EndOfBlock);
+    cur.insertText(QStringLiteral("\n") + line);
+    // Keep the caret on the new (lower) copy, at the same column.
+    cur.movePosition(QTextCursor::StartOfBlock);
+    cur.movePosition(QTextCursor::Right, QTextCursor::MoveAnchor,
+                     qMin(col, line.size()));
+    setTextCursor(cur);
+}
+
+void MarkdownEditor::deleteCurrentLine() {
+    const QTextBlock blk = textCursor().block();
+    QTextCursor cur = textCursor();
+    cur.beginEditBlock();
+    if (blk.next().isValid()) {
+        // Not the last line: take this line plus its trailing newline.
+        cur.setPosition(blk.position());
+        cur.setPosition(blk.next().position(), QTextCursor::KeepAnchor);
+    } else if (blk.previous().isValid()) {
+        // Last line: take the preceding newline too, so no blank line is left.
+        cur.setPosition(blk.previous().position() + blk.previous().length() - 1);
+        cur.setPosition(blk.position() + blk.length() - 1, QTextCursor::KeepAnchor);
+    } else {
+        // The only line: just clear its text.
+        cur.setPosition(blk.position());
+        cur.setPosition(blk.position() + blk.length() - 1, QTextCursor::KeepAnchor);
+    }
+    cur.removeSelectedText();
+    cur.endEditBlock();
+    setTextCursor(cur);
+}
+
+// Move the current line (or every line the selection touches) up or down by one,
+// preserving the relative caret/selection.
+void MarkdownEditor::moveLines(bool up) {
+    QTextCursor cur = textCursor();
+    QTextBlock first = document()->findBlock(cur.selectionStart());
+    QTextBlock last = document()->findBlock(cur.selectionEnd());
+    // A selection ending at the very start of a line doesn't include that line.
+    if (cur.hasSelection() && cur.selectionEnd() == last.position() &&
+        last.blockNumber() > first.blockNumber())
+        last = last.previous();
+    if (up ? !first.previous().isValid() : !last.next().isValid())
+        return;
+    // Capture line numbers now; the block handles will report their *new*
+    // numbers once the edit below moves them.
+    const int firstNo = first.blockNumber();
+    const int lastNo = last.blockNumber();
+
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    if (up) {
+        QTextBlock prev = first.previous();
+        const QString prevText = prev.text();
+        const int cut = prevText.size() + 1; // the line plus its newline
+        // End of the last line (before its newline); it shifts up by `cut` once
+        // the previous line is removed. Compute it now, from original positions.
+        const int insertAt = last.position() + last.length() - 1 - cut;
+        // Cut the previous line plus its trailing newline...
+        edit.setPosition(prev.position());
+        edit.setPosition(first.position(), QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        // ...and paste it just after the (now shifted-up) last line.
+        edit.setPosition(insertAt);
+        edit.insertText(QStringLiteral("\n") + prevText);
+    } else {
+        QTextBlock next = last.next();
+        const QString nextText = next.text();
+        // Cut the next line plus its leading newline...
+        edit.setPosition(last.position() + last.length() - 1);
+        edit.setPosition(next.position() + next.length() - 1,
+                         QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        // ...and paste it just before the first line.
+        edit.setPosition(first.position());
+        edit.insertText(nextText + QStringLiteral("\n"));
+    }
+    edit.endEditBlock();
+
+    // Re-anchor the selection onto the moved lines at their new position.
+    const int delta = (up ? -1 : 1);
+    QTextBlock nf = document()->findBlockByNumber(firstNo + delta);
+    QTextBlock nl = document()->findBlockByNumber(lastNo + delta);
+    if (nf.isValid() && nl.isValid()) {
+        QTextCursor sel(document());
+        sel.setPosition(nf.position());
+        sel.setPosition(nl.position() + nl.length() - 1, QTextCursor::KeepAnchor);
+        setTextCursor(sel);
+    }
 }
 
 void MarkdownEditor::forEachCodeBlock(
@@ -430,6 +617,9 @@ void MarkdownEditor::forEachCodeBlock(
         CodeBlock cb;
         cb.header = QRectF(left, headerTop, right - left, headerBottom - headerTop);
         cb.body = QRectF(left, headerBottom, right - left, bodyBottom - headerBottom);
+        const qreal s = 16;
+        cb.copyBtn = QRectF(cb.header.right() - s - 8,
+                            cb.header.center().y() - s / 2, s, s);
         cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang;
         cb.code = code.join(QLatin1Char('\n'));
         // The caret sitting anywhere from the opening to the closing fence means
@@ -464,6 +654,37 @@ void MarkdownEditor::forEachCodeBlock(
                    document()->lastBlock().blockNumber());
 }
 
+bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
+    bool copied = false;
+    forEachCodeBlock([&](const CodeBlock &cb) {
+        if (!copied && !cb.active && cb.copyBtn.contains(pos)) {
+            QApplication::clipboard()->setText(cb.code);
+            copied = true;
+        }
+    });
+    if (copied)
+        emit noticeRequested(tr("Copied code to clipboard"));
+    return copied;
+}
+
+bool MarkdownEditor::isOverCopyButton(const QPoint &pos) const {
+    bool over = false;
+    forEachCodeBlock([&](const CodeBlock &cb) {
+        if (!cb.active && cb.copyBtn.contains(pos))
+            over = true;
+    });
+    return over;
+}
+
+bool MarkdownEditor::insideCodeBlock(const QTextBlock &block) const {
+    // The highlighter marks every fence + inner line StateCode (1). A line is
+    // *inside* the block (so it must render verbatim) when it is StateCode and
+    // its predecessor is too — that excludes the opening fence, whose previous
+    // line is normal text. The closing fence is StateNormal, so it's excluded.
+    return block.isValid() && block.userState() == 1 &&
+           block.previous().isValid() && block.previous().userState() == 1;
+}
+
 int MarkdownEditor::headingLevel(const QString &text) const {
     int n = 0;
     while (n < text.size() && n < 6 && text[n] == QLatin1Char('#'))
@@ -474,6 +695,8 @@ int MarkdownEditor::headingLevel(const QString &text) const {
 }
 
 bool MarkdownEditor::headingFoldable(const QTextBlock &heading) const {
+    if (insideCodeBlock(heading))
+        return false; // a "# ..." line inside a code block isn't a heading
     const int level = headingLevel(heading.text());
     if (level == 0)
         return false;
@@ -507,7 +730,9 @@ void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
         const int level = headingLevel(heading.text());
         const int caret = textCursor().blockNumber();
         for (QTextBlock b = heading.next(); b.isValid(); b = b.next()) {
-            const int l = headingLevel(b.text());
+            // A "# ..." line inside a code block is literal text, not a heading,
+            // so it must not end the folded section early.
+            const int l = insideCodeBlock(b) ? 0 : headingLevel(b.text());
             if (l > 0 && l <= level)
                 break;
             if (b.blockNumber() == caret) {
@@ -542,7 +767,9 @@ void MarkdownEditor::reapplyFolds() {
     for (const QTextBlock &h : m_foldedHeadings) {
         const int level = headingLevel(h.text());
         for (QTextBlock b = h.next(); b.isValid(); b = b.next()) {
-            const int l = headingLevel(b.text());
+            // Headings *inside* a fenced code block are literal text — skip them
+            // so a folded section keeps collapsing past its code blocks.
+            const int l = insideCodeBlock(b) ? 0 : headingLevel(b.text());
             if (l > 0 && l <= level)
                 break;
             b.setVisible(false);
@@ -689,6 +916,13 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
 
     for (QTextBlock block = firstVisibleBlock(); block.isValid();
          block = block.next()) {
+        // Folded-away lines collapse onto their heading; skip them or their
+        // bullet/checkbox/rule glyphs would pile up just under the title.
+        if (!block.isVisible())
+            continue;
+        // Inside a code block the text is verbatim — no bullets/rules/checkboxes.
+        if (insideCodeBlock(block))
+            continue;
         const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
         if (geo.top() > event->rect().bottom())
             break;
@@ -777,7 +1011,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
     }
 
-    // Code-block header content: the language label on the left.
+    // Code-block header content: language label on the left, copy button right.
     forEachCodeBlock([&](const CodeBlock &cb) {
         if (cb.active || !cb.header.intersects(event->rect()))
             return; // while editing, the raw fence shows instead
@@ -786,14 +1020,21 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         p.setFont(lf);
         p.setPen(QColor(0x7e, 0xe0, 0xb0));
         p.drawText(QRectF(cb.header.left() + 12, cb.header.top(),
-                          cb.header.width() - 24, cb.header.height()),
+                          cb.header.width() - 44, cb.header.height()),
                    Qt::AlignVCenter | Qt::AlignLeft, cb.language);
         p.setFont(font());
+
+        // Two offset rounded rects = a "copy" (stacked pages) glyph.
+        const QRectF btn = cb.copyBtn;
+        QPen pen(QColor(0x92, 0xb3, 0xa2));
+        pen.setWidthF(1.3);
+        p.setPen(pen);
+        p.setBrush(QColor(0x1f, 0x47, 0x33)); // the header bar's colour
+        p.drawRoundedRect(QRectF(btn.left() + 5, btn.top() + 2, 8, 10), 2, 2);
+        p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
     });
 
     // Fold arrows in the left margin next to foldable headings.
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0x4f, 0x75, 0x65));
     for (QTextBlock block = firstVisibleBlock(); block.isValid();
          block = block.next()) {
         const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
@@ -804,8 +1045,11 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         QTextCursor hc(block);
         const qreal y = cursorRect(hc).center().y();
         const qreal x = 5;
+        const bool folded = isFolded(block);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x4f, 0x75, 0x65));
         QPointF tri[3];
-        if (isFolded(block)) { // ▸ collapsed
+        if (folded) { // ▸ collapsed
             tri[0] = {x, y - 4};
             tri[1] = {x + 6, y};
             tri[2] = {x, y + 4};
@@ -815,5 +1059,18 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             tri[2] = {x + 3, y + 4};
         }
         p.drawPolygon(tri, 3);
+
+        // Trailing "⋯" — three faint dots after a collapsed heading's title —
+        // so a folded section reads as collapsed even away from the margin.
+        if (folded) {
+            hc.movePosition(QTextCursor::EndOfBlock);
+            const QRectF end = cursorRect(hc);
+            const qreal dotR = 1.4;
+            const qreal gap = 5.5;
+            qreal dx = end.right() + 10;
+            p.setBrush(QColor(0x4f, 0x75, 0x65));
+            for (int i = 0; i < 3; ++i, dx += gap)
+                p.drawEllipse(QPointF(dx, end.center().y()), dotR, dotR);
+        }
     }
 }

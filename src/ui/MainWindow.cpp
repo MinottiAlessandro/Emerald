@@ -113,7 +113,8 @@ QString manualText() {
         "\n"
         "## Code blocks\n"
         "Fence a block between lines of three backticks (or three tildes) and "
-        "add a language name for a labelled header bar:\n"
+        "add a language name for a labelled header bar — click the copy icon on "
+        "the right of that bar to copy the whole block:\n"
         "\n"
         "```cpp\n"
         "int answer = 42;  // the header bar shows the language\n"
@@ -136,6 +137,15 @@ QString manualText() {
         "\n"
         "---\n"
         "\n"
+        "## Editing shortcuts\n"
+        "Handy keys while writing (on macOS, Ctrl is ⌘):\n"
+        "\n"
+        "- **Ctrl+B** / **Ctrl+I** — bold / italic the selection\n"
+        "- **Ctrl+L** — select the whole line\n"
+        "- **Ctrl+D** — duplicate the current line\n"
+        "- **Ctrl+Shift+K** — delete the current line\n"
+        "- **Alt+↑** / **Alt+↓** — move the line (or selection) up / down\n"
+        "\n"
         "## Linking notes\n"
         "Type `[[` to autocomplete a link to another note. `[[Emerald Manual]]` "
         "jumps to a note — click it once rendered, or Ctrl+click while editing — "
@@ -149,7 +159,7 @@ QString manualText() {
         "- **Sidebar** — notes live in a folder tree. Right-click to create or "
         "delete notes and folders, drag to move them, Shift/Ctrl-click to select "
         "several at once, and single-click a folder to fold it.\n"
-        "- **History** — the ⟵ ⟶ arrows (Alt+Left / Alt+Right, Ctrl+[ / Ctrl+], "
+        "- **History** — the < > arrows (Alt+Left / Alt+Right, Ctrl+[ / Ctrl+], "
         "or the mouse side buttons) walk back and forward through the notes "
         "you've opened.\n"
         "- **Find in note** — Ctrl+F opens a find bar; Enter and Shift+Enter step "
@@ -160,8 +170,25 @@ QString manualText() {
         "## Settings\n"
         "Open the gear in the bottom-left for **Settings**: the editor font, its "
         "size and width, the folder new notes are created in, and a Home note to "
-        "open at launch. New Note is Ctrl+N and Open Vault is Ctrl+O. Edits save "
-        "themselves a moment after you stop typing — Ctrl+S forces a save.\n");
+        "open at launch. The same menu has **New Vault…** to start a fresh vault "
+        "and **Delete Note** to remove the open one. New Note is Ctrl+N and Open "
+        "Vault is Ctrl+O. Edits save themselves a moment after you stop typing — "
+        "Ctrl+S forces a save.\n"
+        "\n"
+        "## Other shortcuts\n"
+        "More keys to control the app workflow (on macOS, Ctrl is ⌘):\n"
+        "- **Ctrl+O** — Open a Vault\n"
+        "- **Ctrl+N** — Create a new file\n"
+        "- **Ctrl+S** — Save the current file (Emerald has auto-save)\n"
+        "- **Ctrl+F** — Perform a file search\n"
+        "- **Ctrl+Shift+F** — Perform a Vault search\n"
+        "- **Ctrl+P** — Open the file picker\n"
+        "- **Ctrl+Q** — Close Emerald\n"
+        "- **Ctrl+Del** — Delete the current note\n"
+        "- **Ctrl++** / **Ctrl+-** — Increase / decrease the font size "
+        "(**Ctrl+0** resets it)\n"
+        "- **Alt+←** — Back in the backlink history\n"
+        "- **Alt+→** — Next in the backlink history\n");
 }
 
 // A tree that draws a faint vertical guide for each nesting level, so notes
@@ -302,6 +329,16 @@ void MainWindow::buildUi() {
             &MainWindow::navigateBack);
     connect(m_editor, &MarkdownEditor::navigateForward, this,
             &MainWindow::navigateForward);
+    connect(m_editor, &MarkdownEditor::noticeRequested, this,
+            [this](const QString &text) { notify(text, 2000); });
+    connect(m_editor, &MarkdownEditor::deleteNoteRequested, this,
+            &MainWindow::deleteCurrentNote);
+    // A right-click menu on the editor with the usual edit actions plus a
+    // working "Delete Note" (the standard menu's Delete only acts on a text
+    // selection, so it reads as permanently disabled).
+    m_editor->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_editor, &QWidget::customContextMenuRequested, this,
+            &MainWindow::onEditorContextMenu);
 
     // The note's title is shown (and edited) as the first line above the body;
     // it maps to the filename, so the ".md" is never shown. Committing an edit
@@ -312,6 +349,13 @@ void MainWindow::buildUi() {
     m_titleEdit->setFrame(false);
     connect(m_titleEdit, &QLineEdit::editingFinished, this,
             [this] { renameCurrent(m_titleEdit->text()); });
+    // Enter on the title drops the caret onto the first body line, ready to type.
+    connect(m_titleEdit, &QLineEdit::returnPressed, this, [this] {
+        QTextCursor c = m_editor->textCursor();
+        c.movePosition(QTextCursor::Start);
+        m_editor->setTextCursor(c);
+        m_editor->setFocus();
+    });
 
     // Title + body stacked in a width-capped column, centered with stretch
     // spacers. The fixed measure means resizing the side panels doesn't reflow
@@ -490,64 +534,82 @@ void MainWindow::positionToast() {
 }
 
 void MainWindow::buildActions() {
-    struct Spec {
-        const char *text;
-        QKeySequence::StandardKey key;
-        void (MainWindow::*slot)();
-    };
-    const Spec specs[] = {
-        {QT_TR_NOOP("Open Vault…"), QKeySequence::Open, &MainWindow::chooseVault},
-        {QT_TR_NOOP("New Note"), QKeySequence::New, &MainWindow::newNote},
-        {QT_TR_NOOP("Save"), QKeySequence::Save, &MainWindow::saveCurrent},
-    };
-
     m_gearMenu = new QMenu(this);
-    auto *settings = m_gearMenu->addAction(tr("Settings…"));
-    connect(settings, &QAction::triggered, this, &MainWindow::openSettings);
-    auto *manual = m_gearMenu->addAction(tr("Manual"));
-    connect(manual, &QAction::triggered, this, &MainWindow::openManual);
-    m_gearMenu->addSeparator();
-    for (const Spec &s : specs) {
-        auto *act = new QAction(tr(s.text), this);
-        act->setShortcut(s.key);
-        connect(act, &QAction::triggered, this, s.slot);
-        addAction(act); // keep the shortcut live without a menubar
-        m_gearMenu->addAction(act);
-    }
-    // Find in the current note (Ctrl+F) and global vault search (Ctrl+Shift+F).
-    auto *findHere = new QAction(tr("Find in Note…"), this);
-    findHere->setShortcut(QKeySequence::Find); // Ctrl+F
-    connect(findHere, &QAction::triggered, this, &MainWindow::openFindInFile);
-    addAction(findHere);
-    m_gearMenu->addAction(findHere);
-    auto *search = new QAction(tr("Search Vault…"), this);
-    search->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
-    connect(search, &QAction::triggered, this, &MainWindow::openSearch);
-    addAction(search);
-    m_gearMenu->addAction(search);
-    // Quick "go to note" picker (titles only).
-    auto *goTo = new QAction(tr("Go to Note…"), this);
-    goTo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
-    connect(goTo, &QAction::triggered, this, &MainWindow::openQuickOpen);
-    addAction(goTo);
-    m_gearMenu->addAction(goTo);
-    m_gearMenu->addSeparator();
+
+    // Build each action; addAction() on the window keeps its shortcut live
+    // without a menubar. The menu itself is assembled in a fixed order below.
+    auto make = [this](const QString &text, const QKeySequence &ks,
+                       void (MainWindow::*slot)()) {
+        auto *a = new QAction(text, this);
+        if (!ks.isEmpty())
+            a->setShortcut(ks);
+        connect(a, &QAction::triggered, this, slot);
+        addAction(a);
+        return a;
+    };
+    auto *settings = make(tr("Settings…"), {}, &MainWindow::openSettings);
+    auto *manual = make(tr("Manual"), {}, &MainWindow::openManual);
+    auto *newVault = make(tr("New Vault…"), {}, &MainWindow::newVault);
+    auto *openVault = make(tr("Open Vault…"), QKeySequence(QKeySequence::Open),
+                           &MainWindow::chooseVault);
+    auto *newNote = make(tr("New Note"), QKeySequence(QKeySequence::New),
+                         &MainWindow::newNote);
+    auto *goTo = make(tr("Go to Note…"), QKeySequence(Qt::CTRL | Qt::Key_P),
+                      &MainWindow::openQuickOpen);
+    auto *save = make(tr("Save"), QKeySequence(QKeySequence::Save),
+                      &MainWindow::saveCurrent);
+    m_deleteAction = make(tr("Delete Note"),
+                          QKeySequence(Qt::CTRL | Qt::Key_Delete),
+                          &MainWindow::deleteCurrentNote);
+    auto *findHere = make(tr("Find in Note…"), QKeySequence(QKeySequence::Find),
+                          &MainWindow::openFindInFile);
+    auto *search = make(tr("Search Vault…"),
+                        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F),
+                        &MainWindow::openSearch);
     auto *quit = new QAction(tr("Quit"), this);
-    quit->setShortcut(QKeySequence::Quit);
+    quit->setShortcut(QKeySequence(QKeySequence::Quit));
     connect(quit, &QAction::triggered, this, &QWidget::close);
     addAction(quit);
+
+    // Requested order: app → file ops → search → quit, grouped by separators.
+    m_gearMenu->addAction(settings);
+    m_gearMenu->addAction(manual);
+    m_gearMenu->addSeparator();
+    m_gearMenu->addAction(newVault);
+    m_gearMenu->addAction(openVault);
+    m_gearMenu->addAction(newNote);
+    m_gearMenu->addAction(goTo);
+    m_gearMenu->addAction(save);
+    m_gearMenu->addAction(m_deleteAction);
+    m_gearMenu->addSeparator();
+    m_gearMenu->addAction(findHere);
+    m_gearMenu->addAction(search);
+    m_gearMenu->addSeparator();
     m_gearMenu->addAction(quit);
+
+    // Font size, bound to the browser zoom keys (Ctrl +/=, Ctrl -, Ctrl 0).
+    auto addFontAction = [this](const QList<QKeySequence> &keys, int delta) {
+        auto *act = new QAction(this);
+        act->setShortcuts(keys);
+        connect(act, &QAction::triggered, this,
+                [this, delta] { changeFontSize(delta); });
+        addAction(act);
+    };
+    addFontAction({QKeySequence(Qt::CTRL | Qt::Key_Plus),
+                   QKeySequence(Qt::CTRL | Qt::Key_Equal)}, 1);
+    addFontAction({QKeySequence(Qt::CTRL | Qt::Key_Minus)}, -1);
+    addFontAction({QKeySequence(Qt::CTRL | Qt::Key_0)}, 0);
 
     // Navigation actions drive both the header arrow buttons and the shortcuts.
     // Two bindings each: Alt+Arrow (browser-style) and Ctrl+[ / Ctrl+] (editor
     // style, like VS Code / Vim jumplists).
-    m_backAction = new QAction(QStringLiteral("⟵"), this);
+    m_backAction = new QAction(QStringLiteral("<"), this);
     m_backAction->setToolTip(tr("Back  (Alt+Left or Ctrl+[)"));
     m_backAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Left),
                                 QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)});
     connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
     addAction(m_backAction);
-    m_forwardAction = new QAction(QStringLiteral("⟶"), this);
+    m_forwardAction = new QAction(QStringLiteral(">"), this);
     m_forwardAction->setToolTip(tr("Forward  (Alt+Right or Ctrl+])"));
     m_forwardAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Right),
                                    QKeySequence(Qt::CTRL | Qt::Key_BracketRight)});
@@ -658,6 +720,68 @@ void MainWindow::openSettings() {
         m_editor->applyFont(originalFont); // revert the live preview
         m_centerColumn->setMaximumWidth(originalWidth);
     }
+}
+
+void MainWindow::changeFontSize(int delta) {
+    QFont f = m_editor->font();
+    const int size = delta == 0 ? 12 : qBound(8, f.pointSize() + delta, 32);
+    if (delta != 0 && size == f.pointSize())
+        return; // already at the min/max
+    f.setPointSize(size);
+    m_editor->applyFont(f);
+    QSettings s;
+    s.setValue(QStringLiteral("editorFontFamily"), f.family());
+    s.setValue(QStringLiteral("editorFontSize"), size);
+    notify(tr("Font size: %1 pt").arg(size), 1200);
+}
+
+void MainWindow::newVault() {
+    const QString parent = QFileDialog::getExistingDirectory(
+        this, tr("Choose where to create the vault"), QDir::homePath());
+    if (parent.isEmpty())
+        return;
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, tr("New Vault"), tr("Vault name:"),
+                              QLineEdit::Normal, QString(), &ok)
+            .trimmed();
+    if (!ok || name.isEmpty())
+        return;
+    QDir dir(parent);
+    if (dir.exists(name)) {
+        notify(tr("A folder named “%1” already exists here").arg(name), 3000);
+        return;
+    }
+    if (!dir.mkdir(name)) {
+        notify(tr("Couldn't create the vault"), 3000);
+        return;
+    }
+    openVault(dir.filePath(name));
+    notify(tr("Created vault “%1”").arg(name), 2500);
+}
+
+void MainWindow::deleteCurrentNote() {
+    if (m_currentPath.isEmpty()) {
+        notify(tr("No note is open to delete"), 2000);
+        return;
+    }
+    deleteEntries({m_currentPath}); // shows the confirm dialog + reconciles
+}
+
+void MainWindow::onEditorContextMenu(const QPoint &pos) {
+    QMenu *menu = m_editor->createStandardContextMenu();
+    // Drop the standard "Delete" entry — it only removes a text selection, so it
+    // reads as a broken delete-the-file. Offer the real "Delete Note" instead,
+    // which carries its Ctrl+Del shortcut label.
+    for (QAction *a : menu->actions())
+        if (a->objectName() == QLatin1String("edit-delete"))
+            menu->removeAction(a);
+    if (m_deleteAction && !m_currentPath.isEmpty()) {
+        menu->addSeparator();
+        menu->addAction(m_deleteAction);
+    }
+    menu->exec(m_editor->mapToGlobal(pos));
+    delete menu;
 }
 
 void MainWindow::openManual() {
@@ -778,6 +902,10 @@ void MainWindow::refreshTree() {
 void MainWindow::openNoteByPath(const QString &path, bool record) {
     if (!m_vault || path.isEmpty())
         return;
+    // Remember where the caret sat in the note we're leaving, so returning to
+    // it (e.g. via the backlink history) lands back at the same spot.
+    if (!m_currentPath.isEmpty() && m_currentPath != path)
+        m_cursorPositions[m_currentPath] = m_editor->textCursor().position();
     saveCurrent();
 
     m_loading = true;
@@ -799,11 +927,14 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
         pushHistory(path);
     updateNavActions();
 
-    // Land the caret in the body (first line) and focus the editor, so a newly
-    // created or just-selected note is ready to type into without a mouse click.
+    // Restore the caret only when arriving via the back/forward arrows
+    // (record == false); a manual open (tree click, link, launch) lands on the
+    // first line. Either way the editor is focused, ready to type.
     QTextCursor c = m_editor->textCursor();
-    c.movePosition(QTextCursor::Start);
+    const int last = record ? 0 : m_cursorPositions.value(path, 0);
+    c.setPosition(qBound(0, last, m_editor->document()->characterCount() - 1));
     m_editor->setTextCursor(c);
+    m_editor->ensureCursorVisible();
     m_editor->setFocus();
 }
 
@@ -843,6 +974,8 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     for (QString &p : m_history)
         if (p == oldPath)
             p = newPath;
+    if (m_cursorPositions.contains(oldPath))
+        m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
     m_searchIndex.rebuild(*m_vault); // paths and link text changed vault-wide
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
@@ -850,8 +983,47 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
 }
 
 void MainWindow::saveCurrent() {
-    if (!m_vault || m_currentPath.isEmpty())
+    if (!m_vault)
         return;
+    if (m_currentPath.isEmpty()) {
+        // Untitled buffer: a save creates the note, but only once it has a
+        // valid, unused title — with no title we save nothing at all.
+        const QString title = m_titleEdit->text().trimmed();
+        if (!Vault::isValidTitle(title))
+            return;
+        if (!m_vault->pathForTitle(title).isEmpty()) {
+            notify(tr("A note named “%1” already exists").arg(title), 3000);
+            return;
+        }
+        // Honour the configured new-note folder (default: the vault root).
+        QString dir = m_vault->root();
+        const QString rel =
+            QSettings().value(QStringLiteral("newNoteFolder")).toString();
+        if (!rel.isEmpty()) {
+            const QString candidate = QDir(m_vault->root()).filePath(rel);
+            if (QDir(candidate).exists())
+                dir = candidate;
+        }
+        const Note note = m_vault->createNoteIn(dir, title);
+        if (note.path.isEmpty())
+            return;
+        m_currentPath = note.path;
+        m_currentTitle = title;
+        const QString content = m_editor->toPlainText();
+        m_vault->write(note.path, content);
+        m_lastSavedContent = content;
+        m_vault->scan();
+        m_searchIndex.rebuild(*m_vault);
+        refreshTree();
+        watchCurrent();
+        selectInTree(note.path);
+        setWindowTitle(QStringLiteral("Emerald — %1").arg(title));
+        QSettings().setValue(QStringLiteral("lastNote"), note.path);
+        pushHistory(note.path);
+        updateNavActions();
+        notify(tr("Created “%1”").arg(title), 2000);
+        return;
+    }
     const QString content = m_editor->toPlainText();
     if (content == m_lastSavedContent)
         return; // nothing new to flush; avoid a self-triggered watcher event
@@ -1154,6 +1326,17 @@ void MainWindow::reconcileAfterDeletion() {
     }
     m_currentPath.clear();
     m_currentTitle.clear();
+    // Empty the editor + title buffer now. Otherwise the pre-load save that
+    // openNoteByPath() runs below would see an empty m_currentPath next to the
+    // deleted note's still-present title/body and re-create it as a new note —
+    // making the deletion appear to silently fail.
+    m_loading = true;
+    m_editor->clear();
+    m_loading = false;
+    m_titleEdit->blockSignals(true);
+    m_titleEdit->clear();
+    m_titleEdit->blockSignals(false);
+
     m_history.erase(
         std::remove_if(m_history.begin(), m_history.end(),
                        [](const QString &p) { return !QFileInfo::exists(p); }),
@@ -1172,17 +1355,10 @@ void MainWindow::reconcileAfterDeletion() {
     }
     if (fallback.isEmpty() && !m_history.isEmpty())
         fallback = m_history.last();
-    if (!fallback.isEmpty()) {
+    if (!fallback.isEmpty())
         openNoteByPath(fallback);
-    } else {
-        m_loading = true;
-        m_editor->clear();
-        m_loading = false;
-        m_titleEdit->blockSignals(true);
-        m_titleEdit->clear();
-        m_titleEdit->blockSignals(false);
+    else
         setWindowTitle(QStringLiteral("Emerald"));
-    }
 }
 
 void MainWindow::deleteEntries(const QStringList &pathsIn) {
@@ -1271,6 +1447,8 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
         remap(m_currentPath);
         for (QString &p : m_history)
             remap(p);
+        if (m_cursorPositions.contains(srcPath))
+            m_cursorPositions[newPath] = m_cursorPositions.take(srcPath);
         ++moved;
     }
     if (moved == 0) {

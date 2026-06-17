@@ -326,12 +326,21 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         if (reveal) {
             setFormat(0, markerEnd, m_listMarker);
         } else {
-            // Keep the dash + its spaces as invisible width for the painted
-            // box; collapse "[ ] " to nothing so the label sits right after it.
-            QTextCharFormat box;
-            box.setForeground(QColor(0, 0, 0, 0)); // transparent, full width
-            setFormat(0, bracketOpen, box);
-            setFormat(bracketOpen, markerEnd - bracketOpen, conceal());
+            // Hide the "- [ ] " markup but reserve room for the painted box.
+            // Conceal the glyphs (dash, brackets, status char) so they stay
+            // invisible even under a selection — a full-size transparent glyph
+            // would otherwise reappear in the selection colour, leaving a stray
+            // "-" inside the rendered square. Spaces carry no glyph, so keep
+            // them full width to reserve the box's space.
+            QTextCharFormat space;
+            space.setForeground(QColor(0, 0, 0, 0)); // full width, no glyph
+            const QTextCharFormat hide = conceal();
+            for (int i = 0; i < markerEnd && i < text.size(); ++i) {
+                const QChar ch = text.at(i);
+                const bool blank =
+                    ch == QLatin1Char(' ') || ch == QLatin1Char('\t');
+                setFormat(i, 1, blank ? space : hide);
+            }
         }
         for (int i = 0; i < markerEnd && i < consumed.size(); ++i)
             consumed[i] = true;

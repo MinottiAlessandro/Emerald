@@ -32,6 +32,8 @@ signals:
     void linkClicked(const QString &target);
     void navigateBack();
     void navigateForward();
+    void noticeRequested(const QString &text); // transient feedback (e.g. "Copied")
+    void deleteNoteRequested(); // Ctrl+Del: delete the open note, not a word
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -54,19 +56,41 @@ private:
     // On Tab/Shift+Tab inside a list item, indent/outdent it by one level.
     // Returns true if it handled the key.
     bool adjustListIndent(bool deeper);
+    // The rendered task line whose checkbox sits under `pos`, or an invalid
+    // block. Used both to toggle (on click) and to show a pointer cursor (on
+    // hover). The active line is excluded — it shows raw markup.
+    QTextBlock taskCheckboxBlockAt(const QPoint &pos) const;
     // If pos hits the checkbox of a rendered task line, toggle [ ]<->[x] and
-    // return true. The active line is left alone (it shows raw markup).
+    // return true.
     bool toggleTaskAt(const QPoint &pos);
+    // Is `pos` over a foldable heading's fold control (the left margin)?
+    bool isOverFoldControl(const QPoint &pos) const;
 
     struct CodeBlock {
-        QRectF header;   // the top header bar (shows the language tag)
+        QRectF header;   // the top header bar (language tag + copy button)
         QRectF body;     // the code body below the header
+        QRectF copyBtn;  // copy-button rect, inside the header on the right
         QString language; // language tag, or "Text"
         QString code;     // the block's inner lines
         bool active = false; // the caret is inside this block (show raw markup)
     };
     // Visit each fenced code block's geometry/content.
     void forEachCodeBlock(const std::function<void(const CodeBlock &)> &fn) const;
+    // True for a line *inside* a fenced code block (not a fence itself). Such
+    // lines must render verbatim: no bullets, rules, headings or list-continue.
+    bool insideCodeBlock(const QTextBlock &block) const;
+    // If pos hits a code block's copy button, copy its code and return true.
+    bool copyCodeBlockAt(const QPoint &pos);
+    // Is `pos` over a (non-active) code block's copy button?
+    bool isOverCopyButton(const QPoint &pos) const;
+
+    // Editor keybindings (line ops + inline formatting). Each acts on the
+    // selection when there is one, else the current line.
+    void wrapSelection(const QString &marker); // Ctrl+B / Ctrl+I
+    void selectCurrentLine();                  // Ctrl+L
+    void duplicateLineOrSelection();           // Ctrl+D
+    void deleteCurrentLine();                  // Ctrl+Shift+K
+    void moveLines(bool up);                   // Alt+Up / Alt+Down
 
     // Heading folding. A heading hides everything below it until the next
     // heading of the same or higher level.

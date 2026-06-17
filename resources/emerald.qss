@@ -86,6 +86,9 @@ QWidget#sideHeader, QWidget#sideFooter {
     background: #101113;
 }
 QLabel#sideTitle {
+    /* Transparent so it shows the sidebar header's colour, not the generic
+       widget background, behind the "Notes" text. */
+    background: transparent;
     color: #d7eee2;
     font-size: 19px;
     font-weight: 600;
@@ -99,14 +102,16 @@ QToolButton#gearButton {
     padding: 4px 9px;
     font-size: 18px;
 }
-/* Back / forward arrows: large, easy-to-hit glyphs. */
+/* Back / forward arrows (< >): large, bold, easy-to-hit glyphs. The padding
+   keeps a generous click target around each arrow regardless of glyph size. */
 QToolButton#navButton {
     background: transparent;
     color: #6d8e7c;
     border: none;
     border-radius: 6px;
-    padding: 2px 10px;
-    font-size: 26px;
+    padding: 2px 12px;
+    font-size: 30px;
+    font-weight: 700;
 }
 QToolButton#navButton:hover, QToolButton#gearButton:hover {
     background: #1f4733;

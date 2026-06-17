@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/SearchIndex.h"
+#include <QHash>
 #include <QMainWindow>
 #include <QPoint>
 #include <QString>
@@ -37,6 +38,10 @@ private:
     void openSettings();
     void loadSettings();
     void openManual();
+    void newVault();              // create a fresh vault folder, then open it
+    void deleteCurrentNote();     // delete the open note (with confirmation)
+    void changeFontSize(int delta); // +1 / -1 step; 0 resets to the default
+    void onEditorContextMenu(const QPoint &pos);
 
     void chooseVault();
     void openVault(const QString &path);
@@ -89,6 +94,7 @@ private:
     QMenu *m_gearMenu = nullptr;
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
+    QAction *m_deleteAction = nullptr; // Delete Note (shared by menu + context menu)
 
     QFileSystemWatcher *m_watcher = nullptr;
     QString m_currentPath;
@@ -98,4 +104,5 @@ private:
 
     QStringList m_history; // visited note paths (browser-style)
     int m_histIndex = -1;
+    QHash<QString, int> m_cursorPositions; // note path -> last caret position
 };
