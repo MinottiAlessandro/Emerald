@@ -40,6 +40,11 @@ private:
     // Wiki links need bespoke handling so [[Note|alias]] hides "Note|" and
     // shows only "alias" when the cursor is elsewhere.
     void applyWikiLinks(const QString &text, QList<bool> &consumed, bool reveal);
+    // [text](url) inline links: off the active line show only "text" (styled as
+    // a link) and hide the "](url)" + brackets; on it dim the markup but keep
+    // the raw text editable, like the wiki-link handling above.
+    void applyInternetLinks(const QString &text, QList<bool> &consumed,
+                            bool reveal);
     // Dim a marker off the active line, reveal it (dimmed) on it. Marks the
     // span consumed either way.
     void markup(int start, int len, QList<bool> &consumed, bool reveal);
@@ -82,4 +87,5 @@ private:
     QRegularExpression m_reStrike;
     QRegularExpression m_reHighlight;
     QRegularExpression m_reTableSep;
+    QRegularExpression m_reLink;         // [text](url)
 };

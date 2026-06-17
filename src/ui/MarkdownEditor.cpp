@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCompleter>
+#include <QDesktopServices>
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -19,6 +20,7 @@
 #include <QStringListModel>
 #include <QTextBlock>
 #include <QTextLayout>
+#include <QUrl>
 #include <algorithm>
 
 namespace {
@@ -26,6 +28,13 @@ namespace {
 const QRegularExpression &taskRe() {
     static const QRegularExpression re(
         QStringLiteral("^(\\s*)[-*+]\\s+\\[([ xX])\\]\\s"));
+    return re;
+}
+
+// A [text](url) inline link: capture(1) = text, capture(2) = url.
+const QRegularExpression &mdLinkRe() {
+    static const QRegularExpression re(
+        QStringLiteral("\\[([^\\]\\[]+)\\]\\(([^)\\s]+)\\)"));
     return re;
 }
 
@@ -231,9 +240,23 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
     return {};
 }
 
+QString MarkdownEditor::internetLinkAt(const QPoint &pos) const {
+    const QTextCursor cursor = cursorForPosition(pos);
+    const int column = cursor.positionInBlock();
+    const QString text = cursor.block().text();
+
+    auto it = mdLinkRe().globalMatch(text);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        if (column >= m.capturedStart(0) && column <= m.capturedEnd(0))
+            return m.captured(2); // the URL
+    }
+    return {};
+}
+
 bool MarkdownEditor::followsLink(const QPoint &pos,
                                  Qt::KeyboardModifiers mods) const {
-    if (linkAt(pos).isEmpty())
+    if (linkAt(pos).isEmpty() && internetLinkAt(pos).isEmpty())
         return false;
     if (mods & Qt::ControlModifier)
         return true;
@@ -298,7 +321,11 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         return;
     if (event->button() == Qt::LeftButton &&
         followsLink(event->pos(), event->modifiers())) {
-        emit linkClicked(linkAt(event->pos()));
+        const QString url = internetLinkAt(event->pos());
+        if (!url.isEmpty())
+            QDesktopServices::openUrl(QUrl::fromUserInput(url));
+        else
+            emit linkClicked(linkAt(event->pos()));
         return;
     }
     QPlainTextEdit::mousePressEvent(event);

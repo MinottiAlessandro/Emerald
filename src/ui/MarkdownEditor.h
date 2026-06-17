@@ -47,6 +47,9 @@ protected:
 
 private:
     QString linkAt(const QPoint &pos) const;
+    // The URL of the [text](url) link under `pos`, or empty. Distinct from
+    // linkAt (wiki note targets): these open in the system browser.
+    QString internetLinkAt(const QPoint &pos) const;
     // Should a click at `pos` follow a link? True on Ctrl+click, or a plain
     // click on a rendered link that lives off the active (cursor) line.
     bool followsLink(const QPoint &pos, Qt::KeyboardModifiers mods) const;

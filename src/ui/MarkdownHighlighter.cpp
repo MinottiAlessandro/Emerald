@@ -117,6 +117,8 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
         QRegularExpression(QStringLiteral("(?<!\\w)_([^_]+)_(?!\\w)"));
     m_reTableSep =
         QRegularExpression(QStringLiteral("^\\s*\\|?[\\s:|-]*-[\\s:|-]*\\|?\\s*$"));
+    m_reLink =
+        QRegularExpression(QStringLiteral("\\[([^\\]\\[]+)\\]\\(([^)\\s]+)\\)"));
 }
 
 void MarkdownHighlighter::setActiveBlock(int blockNumber) {
@@ -216,6 +218,35 @@ void MarkdownHighlighter::applyWikiLinks(const QString &text,
             setFormat(displayStart, innerEnd - displayStart, m_link);
             setFormat(innerEnd, end - innerEnd, conceal());
         }
+
+        for (int i = start; i < end; ++i)
+            consumed[i] = true;
+    }
+}
+
+void MarkdownHighlighter::applyInternetLinks(const QString &text,
+                                             QList<bool> &consumed, bool reveal) {
+    auto it = m_reLink.globalMatch(text);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        const int start = m.capturedStart(0);
+        const int end = m.capturedEnd(0);
+
+        bool overlaps = false;
+        for (int i = start; i < end; ++i)
+            if (consumed[i]) { overlaps = true; break; }
+        if (overlaps)
+            continue;
+
+        const int textStart = m.capturedStart(1);
+        const int textEnd = m.capturedEnd(1);
+
+        // The link text is shown either way; only the surrounding "[" and
+        // "](url)" differ — dimmed on the active line, hidden off it.
+        const QTextCharFormat wrap = reveal ? m_marker : conceal();
+        setFormat(start, textStart - start, wrap); // "["
+        setFormat(textStart, textEnd - textStart, m_link);
+        setFormat(textEnd, end - textEnd, wrap);   // "](url)"
 
         for (int i = start; i < end; ++i)
             consumed[i] = true;
@@ -386,6 +417,8 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // re-parsed), then the bold+italic combos before plain bold/italic, then
     // strike, highlight, italics, and finally links.
     applyInline(m_reCode, text, consumed, m_code, reveal);
+    // Before bold/italic so a URL containing '_' or '*' isn't chewed up by them.
+    applyInternetLinks(text, consumed, reveal);
     applyInline(m_reBoldItalic, text, consumed, m_boldItalic, reveal);
     applyInline(m_reBoldUnder, text, consumed, m_boldItalic, reveal);
     applyInline(m_reUnderBold, text, consumed, m_boldItalic, reveal);
