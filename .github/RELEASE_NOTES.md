@@ -1,23 +1,19 @@
-## Emerald 1.1.0
+## Emerald 1.1.1
 
-A feature release: ARM64 Linux builds, clickable web links, and a cleaner icon.
+A small fix-up release polishing links, navigation and folding.
 
-### New
-- **ARM64 Linux builds.** A native `Emerald-aarch64.AppImage` joins the x86-64
-  one, so Emerald runs on Apple Silicon Linux, modern Raspberry Pi / SBC desktops
-  and other aarch64 machines (needs glibc ≥ 2.39).
-- **Clickable internet links.** Standard Markdown `[text](https://…)` links now
-  render inline like wiki-links — the `](url)` melts away leaving just the text,
-  which opens in your browser on click (Ctrl+click on the line you're editing).
-- **Universal macOS app.** The `.dmg` is a single universal binary for both
-  Apple Silicon and Intel.
+### Fixes
+- **Link click area stays on the text.** Clicking in the empty space past the
+  end of a line ending in a `[[link]]` or `[text](url)` no longer follows the
+  link — only the link text itself is clickable.
+- **Alt / Option + ← / → navigate back / forward on macOS.** The Option+Arrow
+  history shortcut used to be swallowed by the editor's word navigation on
+  macOS; it now works on every platform.
 
-### Polish
-- **Refined app icon** — the white corners are gone (transparent now), so the
-  icon looks right on dark backgrounds and in every OS's icon shelf.
-- **Stable download links.** Release artifacts now have version-less names
-  (`Emerald-macOS.dmg`, `Emerald-x86_64.AppImage`, …) served from
-  `releases/latest`, so the README links always point at the newest build.
+### Changed
+- **Tidier heading folding.** Collapsing a heading now leaves the blank line(s)
+  before the next heading visible, so collapsed sections keep their spacing. A
+  heading with nothing but blank lines under it is no longer foldable.
 
 ### Downloads
 | Platform | File | Notes |
