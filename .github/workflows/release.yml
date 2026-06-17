@@ -12,7 +12,7 @@ on:
       tag:
         description: 'Tag to build and attach artifacts to (e.g. v1.0.0)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.0.1'
 
 env:
   QT_VERSION: '6.8.1'
@@ -29,9 +29,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-22.04,  name: linux }
-          - { os: macos-latest,  name: macos }
-          - { os: windows-latest, name: windows }
+          - { os: ubuntu-22.04,  name: linux,   cmake_args: '' }
+          # Build a universal binary so the dmg runs on both Apple Silicon and
+          # Intel. The install-qt-action Qt is already universal2, so this only
+          # adds the main binary's second slice (negligible size). Single-quote
+          # the semicolon list so bash keeps it as one cmake argument.
+          - { os: macos-latest,  name: macos,   cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'" }
+          - { os: windows-latest, name: windows, cmake_args: '' }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +49,7 @@ jobs:
 
       - name: Configure & build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
           cmake --build build --config Release -j
 
       - name: Package — Linux AppImage

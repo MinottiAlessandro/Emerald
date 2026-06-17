@@ -1,26 +1,32 @@
-## Emerald 1.0.0
+## Emerald 1.0.1
 
-First stable, cross-platform release of Emerald — a minimal, fast, Obsidian-like
-Markdown note editor built with Qt 6.
+Maintenance release that makes the **macOS build actually launch**. The 1.0.0
+`.dmg` shipped a bundle whose main executable had no `LC_RPATH`, so macOS aborted
+at startup with *"Library not loaded: @rpath/QtWidgets.framework… no LC_RPATH's
+found."* If you grabbed 1.0.0 on a Mac, replace it with this build.
 
-### Highlights
-- **Runs on Linux, macOS and Windows** from a single Qt 6 Widgets codebase.
-- Live Markdown preview with inline "markup melt", fenced code blocks and pipe tables.
-- Wiki-style `[[links]]` with rename-aware backlink updates and browser-style history.
-- Fast full-text search over the vault with an in-memory inverted index.
-- Folder-tree sidebar, debounced autosave, external-edit file watching, dark theme.
+### Fixes
+- **macOS: app launches correctly.** The bundle now carries an
+  `@executable_path/../Frameworks` rpath, so it locates its bundled Qt
+  frameworks instead of crashing at startup.
+- **macOS: universal binary.** The `.dmg` now runs natively on both Apple
+  Silicon and Intel Macs.
+- **macOS: ad-hoc signed** so Gatekeeper no longer reports the app as "damaged".
 
-### Cross-platform polish in this release
-- Fixed-width fonts now resolve correctly on Windows/macOS (code blocks & tables stay aligned).
-- Filename validation rejects Windows reserved names, trailing dots/spaces and control characters.
-- Case-only note retitles work on case-insensitive filesystems (macOS/Windows).
-- Notes are written with LF line endings everywhere, so vaults are byte-identical across OSes.
+Linux and Windows are functionally unchanged from 1.0.0 (rebuilt for parity).
+
+### What Emerald is
+A minimal, fast, Obsidian-like Markdown note editor built with Qt 6: live inline
+preview, wiki-style `[[links]]` with rename-aware backlinks, fast full-text
+search, a folder-tree sidebar, debounced autosave and external-edit watching —
+all over plain `.md` files, on Linux, macOS and Windows.
 
 ### Downloads
-- **Linux** — `Emerald-1.0.0-x86_64.AppImage` (portable; `chmod +x` and run).
-- **macOS** — `Emerald-1.0.0-Darwin.dmg` (drag to Applications). Ad-hoc signed,
-  not notarized: on first launch **right-click the app → Open → Open**. If macOS
-  still blocks it, run `xattr -cr /Applications/Emerald.app` in Terminal.
-- **Windows** — `Emerald-1.0.0-win64.zip` (extract and run `emerald.exe`).
+- **Linux** — `Emerald-1.0.1-x86_64.AppImage` (portable; `chmod +x` and run).
+- **macOS** — `Emerald-1.0.1-Darwin.dmg` (universal; drag to Applications).
+  Ad-hoc signed, not notarized: on first launch **right-click the app → Open →
+  Open**. If macOS still blocks it, run `xattr -cr /Applications/Emerald.app` in
+  Terminal.
+- **Windows** — `Emerald-1.0.1-win64.zip` (extract and run `emerald.exe`).
 
 Built automatically by the `Release` GitHub Actions workflow.

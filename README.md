@@ -26,9 +26,9 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 
 | Platform | Download | Notes |
 |---|---|---|
-| 🐧 **Linux** | [`Emerald-x86_64.AppImage`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.0/Emerald-1.0.0-x86_64.AppImage) | `chmod +x` then run |
-| 🍎 **macOS** | [`Emerald.dmg`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.0/Emerald-1.0.0-Darwin.dmg) | first launch: **right-click → Open → Open** |
-| 🪟 **Windows** | [`Emerald-win64.zip`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.0/Emerald-1.0.0-win64.zip) | extract and run `emerald.exe` |
+| 🐧 **Linux** | [`Emerald-x86_64.AppImage`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.1/Emerald-1.0.1-x86_64.AppImage) | `chmod +x` then run |
+| 🍎 **macOS** | [`Emerald.dmg`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.1/Emerald-1.0.1-Darwin.dmg) | first launch: **right-click → Open → Open** |
+| 🪟 **Windows** | [`Emerald-win64.zip`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.1/Emerald-1.0.1-win64.zip) | extract and run `emerald.exe` |
 
 > Every download bundles its own Qt runtime, so there's nothing else to install. Looking for older versions? See **[all releases](https://github.com/MinottiAlessandro/Emerald/releases)**.
 
