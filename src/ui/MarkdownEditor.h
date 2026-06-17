@@ -56,6 +56,12 @@ private:
     // On Tab/Shift+Tab inside a list item, indent/outdent it by one level.
     // Returns true if it handled the key.
     bool adjustListIndent(bool deeper);
+    // On Tab inside a pipe table, move to the next cell — growing the table
+    // (new column/row) at its edges. Shift+Tab (forward=false) just steps back
+    // one cell. Returns true if it handled the key.
+    bool handleTableTab(bool forward = true);
+    // Place the caret in cell `cellIdx` of a table row, selecting its content.
+    void moveToTableCell(const QTextBlock &block, int cellIdx);
     // The rendered task line whose checkbox sits under `pos`, or an invalid
     // block. Used both to toggle (on click) and to show a pointer cursor (on
     // hover). The active line is excluded — it shows raw markup.

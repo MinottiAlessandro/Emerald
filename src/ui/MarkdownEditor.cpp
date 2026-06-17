@@ -437,6 +437,10 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             continueList()) {
             return;
         }
+        if (event->key() == Qt::Key_Tab && handleTableTab())
+            return;
+        if (event->key() == Qt::Key_Backtab && handleTableTab(false))
+            return;
         if (event->key() == Qt::Key_Tab && adjustListIndent(true))
             return;
         if (event->key() == Qt::Key_Backtab && adjustListIndent(false))
@@ -843,6 +847,172 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
     m_prettifying = true;
     cur.insertText(out.join(QLatin1Char('\n')));
     m_prettifying = false;
+}
+
+// Tab inside a pipe table grows/navigates the grid:
+//  - header row, last cell → append a new column (a cell in every row)
+//  - separator row          → build a fresh data row below, go to its first cell
+//  - any other non-last cell→ move to the next cell
+//  - data row, last cell    → first cell of the row below, appending one if last
+// Shift+Tab (forward=false) just steps back one cell, never growing the table.
+bool MarkdownEditor::handleTableTab(bool forward) {
+    const QTextCursor cursor = textCursor();
+    const QTextBlock block = cursor.block();
+    if (!isTableRow(block.text()))
+        return false;
+
+    // Table extent and where the caret sits within it.
+    QTextBlock first = block, last = block;
+    while (first.previous().isValid() && isTableRow(first.previous().text()))
+        first = first.previous();
+    while (last.next().isValid() && isTableRow(last.next().text()))
+        last = last.next();
+    const int firstNo = first.blockNumber();
+    const int rowIdx = block.blockNumber() - firstNo;
+    const int rowCount = last.blockNumber() - firstNo + 1;
+
+    // Row model + the separator's index (if any).
+    QList<QStringList> rows;
+    int sepRow = -1;
+    for (QTextBlock b = first;; b = b.next()) {
+        if (isSeparatorRow(b.text()))
+            sepRow = rows.size();
+        rows << splitRow(b.text());
+        if (b == last)
+            break;
+    }
+    int nCols = 0;
+    for (const QStringList &r : rows)
+        nCols = qMax(nCols, int(r.size()));
+
+    // The caret's cell = number of pipes before it, minus the leading one.
+    const QString text = block.text();
+    const int caret = cursor.positionInBlock();
+    int pipes = 0;
+    for (int i = 0; i < caret && i < text.size(); ++i)
+        if (text[i] == QLatin1Char('|'))
+            ++pipes;
+    const int cells = qMax(1, int(rows[rowIdx].size()));
+    const int cellIdx = qBound(0, pipes - 1, cells - 1);
+    const bool lastCell = cellIdx >= cells - 1;
+
+    if (!forward) { // Shift+Tab: just step back one cell, no table growth.
+        int backRow = rowIdx, backCell = cellIdx;
+        if (cellIdx > 0) {
+            backCell = cellIdx - 1;
+        } else {
+            int prev = rowIdx - 1;
+            if (prev == sepRow) // never park the caret in the --- row
+                --prev;
+            if (prev < 0)
+                return true; // already at the first cell; nothing precedes it
+            backRow = prev;
+            backCell = qMax(0, int(rows[prev].size()) - 1);
+        }
+        const QTextBlock dest = document()->findBlockByNumber(firstNo + backRow);
+        if (dest.isValid())
+            moveToTableCell(dest, backCell);
+        return true;
+    }
+
+    // Pad every row out to `width`; separator cells fill with dashes.
+    auto normalize = [&](int width) {
+        for (int r = 0; r < rows.size(); ++r)
+            while (rows[r].size() < width)
+                rows[r] << (r == sepRow ? QStringLiteral("---") : QString());
+    };
+    auto emptyRow = [&] {
+        QStringList r;
+        for (int i = 0; i < nCols; ++i)
+            r << QString();
+        return r;
+    };
+
+    int targetRow = rowIdx;
+    int targetCell = cellIdx;
+    bool structural = false;
+
+    if (isSeparatorRow(text)) {
+        // Separator: build a fresh data row right below it.
+        normalize(nCols);
+        rows.insert(rowIdx + 1, emptyRow());
+        targetRow = rowIdx + 1;
+        targetCell = 0;
+        structural = true;
+    } else if (rowIdx == 0 && lastCell) {
+        // End of the header: grow a new column across the whole table.
+        normalize(nCols);
+        for (int r = 0; r < rows.size(); ++r)
+            rows[r] << (r == sepRow ? QStringLiteral("---") : QString());
+        targetRow = 0;
+        targetCell = nCols; // the freshly added last column
+        structural = true;
+    } else if (!lastCell) {
+        targetCell = cellIdx + 1; // plain hop to the next cell
+    } else if (rowIdx < rowCount - 1) {
+        targetRow = rowIdx + 1; // first cell of the existing row below
+        targetCell = 0;
+    } else {
+        // Last cell of the last row: append a new data row.
+        normalize(nCols);
+        rows << emptyRow();
+        targetRow = rowIdx + 1;
+        targetCell = 0;
+        structural = true;
+    }
+
+    if (structural) {
+        QStringList lines;
+        for (const QStringList &r : rows) {
+            QString line = QStringLiteral("|");
+            for (const QString &cell : r)
+                line += QLatin1Char(' ') + cell + QStringLiteral(" |");
+            lines << line;
+        }
+        QTextCursor edit(document());
+        edit.beginEditBlock();
+        edit.setPosition(first.position());
+        edit.setPosition(last.position() + last.length() - 1,
+                         QTextCursor::KeepAnchor);
+        m_prettifying = true; // suppress the leave-table reformat during the edit
+        edit.insertText(lines.join(QLatin1Char('\n')));
+        edit.endEditBlock();
+        m_prettifying = false;
+        prettifyTableAt(firstNo); // align the rebuilt grid
+    }
+
+    const QTextBlock dest = document()->findBlockByNumber(firstNo + targetRow);
+    if (dest.isValid())
+        moveToTableCell(dest, targetCell);
+    return true;
+}
+
+void MarkdownEditor::moveToTableCell(const QTextBlock &block, int cellIdx) {
+    const QString t = block.text();
+    QList<int> pipes;
+    for (int i = 0; i < t.size(); ++i)
+        if (t[i] == QLatin1Char('|'))
+            pipes << i;
+    QTextCursor cur(block);
+    if (pipes.size() < 2) { // not a real row; land at its start
+        setTextCursor(cur);
+        return;
+    }
+    cellIdx = qBound(0, cellIdx, int(pipes.size()) - 2);
+    int s = pipes[cellIdx] + 1;
+    int e = pipes[cellIdx + 1];
+    while (s < e && t[s] == QLatin1Char(' '))
+        ++s;
+    while (e > s && t[e - 1] == QLatin1Char(' '))
+        --e;
+    if (e > s) { // select the cell's content so typing overwrites it
+        cur.setPosition(block.position() + s);
+        cur.setPosition(block.position() + e, QTextCursor::KeepAnchor);
+    } else { // empty cell: sit just inside it
+        const int p = qMin(pipes[cellIdx] + 2, pipes[cellIdx + 1] - 1);
+        cur.setPosition(block.position() + p);
+    }
+    setTextCursor(cur);
 }
 
 void MarkdownEditor::resizeEvent(QResizeEvent *event) {
