@@ -680,16 +680,8 @@ void MainWindow::openManual() {
 }
 
 void MainWindow::chooseVault() {
-    // The static helper requests the OS-native folder picker (the system file
-    // manager's own dialog), which the desktop themes itself — so it never
-    // wears our app stylesheet. (If a bare Qt dialog shows up instead, the
-    // desktop is missing its file portal / Qt platform-theme plugin.) Start in
-    // the current vault's parent so reopening lands near the other vaults.
-    QString start = QDir::homePath();
-    if (m_vault)
-        start = QFileInfo(m_vault->root()).absolutePath();
-    const QString dir =
-        QFileDialog::getExistingDirectory(this, tr("Open Vault"), start);
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Open Vault"), QDir::homePath());
     if (!dir.isEmpty())
         openVault(dir);
 }
