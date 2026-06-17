@@ -47,7 +47,7 @@ QListWidget::item:hover {
     background: #16241c;
 }
 QListWidget::item:selected {
-    background: #1d3a2a;
+    background: #1f4733;
     color: #d7eee2;
 }
 
@@ -69,7 +69,7 @@ QTreeView::item:hover {
     background: #16241c;
 }
 QTreeView::item:selected {
-    background: #1d3a2a;
+    background: #1f4733;
     color: #d7eee2;
 }
 /* Paint the branch/indent column with the sidebar background so the row's
@@ -109,7 +109,7 @@ QToolButton#navButton {
     font-size: 26px;
 }
 QToolButton#navButton:hover, QToolButton#gearButton:hover {
-    background: #1d3a2a;
+    background: #1f4733;
     color: #d7eee2;
 }
 QToolButton#navButton:disabled {
@@ -129,10 +129,10 @@ QWidget#sidebar {
    edge to collapse the sidebar, and back out to reopen it. */
 QSplitter#mainSplitter::handle {
     background: transparent;
-    border-left: 2px solid #1d3a2a;
+    border-left: 2px solid #1f4733;
 }
 QSplitter#mainSplitter::handle:hover {
-    border-left: 2px solid #33d685;
+    border-left: 2px solid #2bbf74;
 }
 
 QDockWidget {
@@ -157,14 +157,14 @@ QFrame#searchPopup {
 QLineEdit#searchInput {
     background: #17181b;
     color: #d7eee2;
-    border: 1px solid #1d3a2a;
+    border: 1px solid #1f4733;
     border-radius: 6px;
     padding: 7px 10px;
     font-size: 14px;
     selection-background-color: #1f4a33;
 }
 QLineEdit#searchInput:focus {
-    border: 1px solid #33d685;
+    border: 1px solid #2bbf74;
 }
 /* In-note find bar (top-right of the editor) */
 QFrame#findBar {
@@ -175,13 +175,13 @@ QFrame#findBar {
 QLineEdit#findInput {
     background: #17181b;
     color: #d7eee2;
-    border: 1px solid #1d3a2a;
+    border: 1px solid #1f4733;
     border-radius: 6px;
     padding: 5px 8px;
     selection-background-color: #1f4a33;
 }
 QLineEdit#findInput:focus {
-    border: 1px solid #33d685;
+    border: 1px solid #2bbf74;
 }
 
 QListWidget#searchResults {
@@ -194,7 +194,7 @@ QListWidget#searchResults {
 QListView#completer {
     background: #101113;
     color: #d7eee2;
-    border: 1px solid #1d3a2a;
+    border: 1px solid #1f4733;
     border-radius: 6px;
     padding: 4px;
     outline: 0;
@@ -204,7 +204,7 @@ QListView#completer::item {
     border-radius: 4px;
 }
 QListView#completer::item:selected {
-    background: #1d3a2a;
+    background: #1f4733;
 }
 
 QMenuBar {
@@ -212,12 +212,12 @@ QMenuBar {
     color: #a9c8b8;
 }
 QMenuBar::item:selected {
-    background: #1d3a2a;
+    background: #1f4733;
 }
 QMenu {
     background: #101113;
     color: #a9c8b8;
-    border: 1px solid #1d3a2a;
+    border: 1px solid #1f4733;
     padding: 4px;
 }
 QMenu::item {
@@ -225,18 +225,18 @@ QMenu::item {
     border-radius: 5px;
 }
 QMenu::item:selected {
-    background: #1d3a2a;
+    background: #1f4733;
 }
 QMenu::separator {
     height: 1px;
-    background: #1d3a2a;
+    background: #1f4733;
     margin: 4px 8px;
 }
 
 /* Transient toast notice that floats over the bottom of the editor and
    auto-hides — replaces the old persistent status bar. */
 QLabel#toast {
-    background: #1d3a2a;
+    background: #1f4733;
     color: #d7eee2;
     border: 1px solid #2f4a3b;
     border-radius: 8px;
@@ -250,7 +250,7 @@ QScrollBar:vertical {
     margin: 0;
 }
 QScrollBar::handle:vertical {
-    background: #1d3a2a;
+    background: #1f4733;
     border-radius: 3px;
     min-height: 36px;
 }
@@ -270,4 +270,82 @@ QScrollBar::sub-page:vertical {
 QScrollBar:horizontal {
     height: 0;
     background: transparent;
+}
+
+/* ── Dialogs & inputs ──────────────────────────────────────────────────────
+   The Settings dialog, the New Note / New Folder prompts, and the delete
+   confirmation are Qt's stock dialogs; skin them (and the spin/combo/line
+   inputs inside) so they match the dark emerald theme instead of the default
+   washed-out widget look. (The Open Vault picker uses the OS-native dialog,
+   which the system themes itself — not these rules.) */
+QDialog, QMessageBox, QInputDialog {
+    background: #17181b;
+}
+QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel {
+    color: #cde6d8;
+    background: transparent;
+}
+
+QSpinBox, QComboBox, QFontComboBox, QInputDialog QLineEdit {
+    background: #101113;
+    color: #d7eee2;
+    border: 1px solid #1f4733;
+    border-radius: 6px;
+    padding: 5px 8px;
+    min-height: 20px;
+    selection-background-color: #1f4a33;
+}
+QSpinBox:focus, QComboBox:focus, QFontComboBox:focus,
+QInputDialog QLineEdit:focus {
+    border: 1px solid #2bbf74;
+}
+QComboBox::drop-down, QFontComboBox::drop-down {
+    border: none;
+    width: 18px;
+}
+QComboBox QAbstractItemView, QFontComboBox QAbstractItemView {
+    background: #101113;
+    color: #d7eee2;
+    border: 1px solid #1f4733;
+    border-radius: 6px;
+    padding: 4px;
+    outline: 0;
+    selection-background-color: #1f4733;
+    selection-color: #d7eee2;
+}
+QSpinBox::up-button, QSpinBox::down-button {
+    width: 16px;
+    border: none;
+    background: #16241c;
+}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+    background: #1f4733;
+}
+
+/* Push buttons live only in these dialogs (OK / Cancel, Yes / No); the rest of
+   the app uses tool buttons. The default action gets the bright accent. */
+QPushButton {
+    background: #1f4733;
+    color: #d7eee2;
+    border: 1px solid #2f6048;
+    border-radius: 6px;
+    padding: 6px 16px;
+    min-width: 72px;
+    outline: 0;
+}
+QPushButton:hover {
+    background: #265a40;
+    border: 1px solid #2bbf74;
+}
+QPushButton:pressed {
+    background: #1a3d2b;
+}
+QPushButton:default {
+    background: #2bbf74;
+    color: #0c130f;
+    border: 1px solid #2bbf74;
+    font-weight: 600;
+}
+QPushButton:default:hover {
+    background: #39cc81;
 }

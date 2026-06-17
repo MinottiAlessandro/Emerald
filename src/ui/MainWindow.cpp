@@ -228,7 +228,7 @@ protected:
             return;
         const int ind = indentation();
         painter->save();
-        painter->setPen(QColor(0x1d, 0x3a, 0x2a));
+        painter->setPen(QColor(0x1f, 0x47, 0x33));
         for (int level = 1; level <= depth; ++level) {
             const int x = rect.right() - ind * (depth - level) - ind / 2;
             painter->drawLine(x, rect.top(), x, rect.bottom());
@@ -244,7 +244,7 @@ QIcon makeChevron(bool up) {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(QColor("#7fae97"));
+    QPen pen(QColor("#52b58a"));
     pen.setWidthF(1.7);
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
@@ -680,8 +680,16 @@ void MainWindow::openManual() {
 }
 
 void MainWindow::chooseVault() {
-    const QString dir = QFileDialog::getExistingDirectory(
-        this, tr("Open Vault"), QDir::homePath());
+    // The static helper requests the OS-native folder picker (the system file
+    // manager's own dialog), which the desktop themes itself — so it never
+    // wears our app stylesheet. (If a bare Qt dialog shows up instead, the
+    // desktop is missing its file portal / Qt platform-theme plugin.) Start in
+    // the current vault's parent so reopening lands near the other vaults.
+    QString start = QDir::homePath();
+    if (m_vault)
+        start = QFileInfo(m_vault->root()).absolutePath();
+    const QString dir =
+        QFileDialog::getExistingDirectory(this, tr("Open Vault"), start);
     if (!dir.isEmpty())
         openVault(dir);
 }

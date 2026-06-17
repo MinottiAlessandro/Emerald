@@ -56,7 +56,7 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_highlight.setForeground(QColor("#101814"));
     m_highlight.setBackground(QColor("#7ee0a8"));
 
-    m_link.setForeground(QColor("#33d685"));
+    m_link.setForeground(QColor("#2bbf74"));
     m_link.setFontUnderline(true);
 
     m_quote.setForeground(QColor("#92b3a2"));
@@ -64,7 +64,7 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
 
     m_rule.setForeground(QColor("#4f7565"));
 
-    m_listMarker.setForeground(QColor("#33d685"));
+    m_listMarker.setForeground(QColor("#2bbf74"));
     m_listMarker.setFontWeight(QFont::Bold);
 
     m_taskDone.setForeground(QColor("#4f7565"));

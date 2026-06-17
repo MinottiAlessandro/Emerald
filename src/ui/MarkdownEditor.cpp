@@ -669,7 +669,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             path.quadTo(h.right(), h.top(), h.right(), h.top() + r);
             path.lineTo(h.right(), h.bottom());
             path.closeSubpath();
-            bg.fillPath(path, QColor(0x1d, 0x3a, 0x2a));
+            bg.fillPath(path, QColor(0x1f, 0x47, 0x33));
         });
     }
 
@@ -718,7 +718,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             const QRectF box(cellT.left(), cellT.center().y() - s / 2.0, s, s);
             const bool checked = t.captured(2).compare(QStringLiteral("x"),
                                                        Qt::CaseInsensitive) == 0;
-            const QColor accent(0x33, 0xd6, 0x85);
+            const QColor accent(0x2b, 0xbf, 0x74);
             if (checked) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(accent);
