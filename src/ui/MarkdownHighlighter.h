@@ -18,7 +18,9 @@ public:
     explicit MarkdownHighlighter(QTextDocument *document);
 
     // The block (paragraph) currently holding the cursor. Markers in this
-    // block are shown; markers elsewhere are concealed.
+    // block are shown; markers elsewhere are concealed. The editor calls this
+    // on cursor moves *and* on content changes — some edits (e.g. Ctrl+Backspace
+    // joining two lines) relocate the caret without a cursorPositionChanged.
     void setActiveBlock(int blockNumber);
 
     // The base point size headings scale from; call when the editor font size
@@ -42,7 +44,7 @@ private:
     // span consumed either way.
     void markup(int start, int len, QList<bool> &consumed, bool reveal);
 
-    int m_activeBlock = 0;
+    int m_activeBlock = 0; // block number of the cursor's line
     double m_baseSize = 12.0;
 
     QTextCharFormat m_heading;

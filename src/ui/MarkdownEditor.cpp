@@ -130,6 +130,11 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     });
     // Keep folded sections hidden as the document is edited.
     connect(document(), &QTextDocument::contentsChanged, this, [this] {
+        // Some edits move the caret to a new line without emitting
+        // cursorPositionChanged — notably Ctrl+Backspace joining two lines. Re-
+        // sync the active (revealed) block here too, or the merged line keeps
+        // its markup concealed with no glyph painted (showing nothing at all).
+        m_highlighter->setActiveBlock(textCursor().blockNumber());
         if (!m_applyingFolds && !m_foldedHeadings.isEmpty())
             reapplyFolds();
     });
