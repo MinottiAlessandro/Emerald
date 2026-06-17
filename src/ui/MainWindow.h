@@ -44,6 +44,7 @@ private:
     void onEditorContextMenu(const QPoint &pos);
 
     void chooseVault();
+    void openVaultSwitcher(); // quick picker for sibling vaults (Ctrl+Shift+O)
     void openVault(const QString &path);
     void openInitialNote(); // open Home or the last-edited note on launch
     void refreshTree();

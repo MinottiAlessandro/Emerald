@@ -159,7 +159,8 @@ QString manualText() {
         "- **Sidebar** — notes live in a folder tree. Right-click to create or "
         "delete notes and folders, drag to move them, Shift/Ctrl-click to select "
         "several at once, and single-click a folder to fold it.\n"
-        "- **History** — the < > arrows (Alt+Left / Alt+Right, Ctrl+[ / Ctrl+], "
+        "- **History** — the back / forward arrows (Alt+Left / Alt+Right, "
+        "Ctrl+[ / Ctrl+], "
         "or the mouse side buttons) walk back and forward through the notes "
         "you've opened.\n"
         "- **Find in note** — Ctrl+F opens a find bar; Enter and Shift+Enter step "
@@ -171,13 +172,16 @@ QString manualText() {
         "Open the gear in the bottom-left for **Settings**: the editor font, its "
         "size and width, the folder new notes are created in, and a Home note to "
         "open at launch. The same menu has **New Vault…** to start a fresh vault "
-        "and **Delete Note** to remove the open one. New Note is Ctrl+N and Open "
-        "Vault is Ctrl+O. Edits save themselves a moment after you stop typing — "
+        "and **Delete Note** to remove the open one. New Note is Ctrl+N, Open "
+        "Vault is Ctrl+O, and **Switch Vault…** (Ctrl+Shift+O) jumps between "
+        "vaults sitting in the same folder. Edits save themselves a moment after "
+        "you stop typing — "
         "Ctrl+S forces a save.\n"
         "\n"
         "## Other shortcuts\n"
         "More keys to control the app workflow (on macOS, Ctrl is ⌘):\n"
         "- **Ctrl+O** — Open a Vault\n"
+        "- **Ctrl+Shift+O** — Quick-switch to another vault in the same folder\n"
         "- **Ctrl+N** — Create a new file\n"
         "- **Ctrl+S** — Save the current file (Emerald has auto-save)\n"
         "- **Ctrl+F** — Perform a file search\n"
@@ -285,6 +289,37 @@ const QIcon &chevronIcon(bool expanded) {
     static const QIcon up = makeChevron(true);
     static const QIcon down = makeChevron(false);
     return expanded ? up : down;
+}
+
+// Chrome-style back/forward arrow: a horizontal shaft tipped with an arrowhead,
+// drawn thin with rounded ends to mirror the browser toolbar glyphs.
+QIcon makeNavArrow(bool back) {
+    QPixmap pm(22, 22);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(QColor("#a9c8b8"));
+    pen.setWidthF(2.0);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    p.drawLine(QPointF(5, 11), QPointF(17, 11)); // shaft
+    const QPointF backHead[] = {{10.5, 5.5}, {5, 11}, {10.5, 16.5}};
+    const QPointF fwdHead[] = {{11.5, 5.5}, {17, 11}, {11.5, 16.5}};
+    p.drawPolyline(back ? backHead : fwdHead, 3); // arrowhead
+    return QIcon(pm);
+}
+
+// Where the vault file dialogs should start: alongside the last opened vault,
+// or the home folder when there isn't one (or it has since been removed).
+QString vaultStartDir() {
+    const QString last = QSettings().value(QStringLiteral("lastVault")).toString();
+    if (!last.isEmpty()) {
+        const QString parent = QFileInfo(last).absolutePath();
+        if (QDir(parent).exists())
+            return parent;
+    }
+    return QDir::homePath();
 }
 }
 
@@ -420,9 +455,11 @@ void MainWindow::buildUi() {
     auto *backBtn = new QToolButton(header);
     backBtn->setObjectName(QStringLiteral("navButton"));
     backBtn->setDefaultAction(m_backAction);
+    backBtn->setIconSize(QSize(22, 22));
     auto *fwdBtn = new QToolButton(header);
     fwdBtn->setObjectName(QStringLiteral("navButton"));
     fwdBtn->setDefaultAction(m_forwardAction);
+    fwdBtn->setIconSize(QSize(22, 22));
     hrow->addWidget(title);
     hrow->addStretch();
     hrow->addWidget(backBtn);
@@ -480,6 +517,8 @@ void MainWindow::buildUi() {
                 if (!tokens.isEmpty())
                     m_editor->jumpToMatch(tokens.first());
             });
+    connect(m_searchPopup, &SearchPopup::openVaultRequested, this,
+            &MainWindow::openVault);
 
     // In-note find bar, floating at the top-right of the editor.
     m_findBar = new QFrame(m_editor);
@@ -552,6 +591,9 @@ void MainWindow::buildActions() {
     auto *newVault = make(tr("New Vault…"), {}, &MainWindow::newVault);
     auto *openVault = make(tr("Open Vault…"), QKeySequence(QKeySequence::Open),
                            &MainWindow::chooseVault);
+    auto *switchVault = make(tr("Switch Vault…"),
+                             QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O),
+                             &MainWindow::openVaultSwitcher);
     auto *newNote = make(tr("New Note"), QKeySequence(QKeySequence::New),
                          &MainWindow::newNote);
     auto *goTo = make(tr("Go to Note…"), QKeySequence(Qt::CTRL | Qt::Key_P),
@@ -577,6 +619,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(newVault);
     m_gearMenu->addAction(openVault);
+    m_gearMenu->addAction(switchVault);
     m_gearMenu->addAction(newNote);
     m_gearMenu->addAction(goTo);
     m_gearMenu->addAction(save);
@@ -603,13 +646,15 @@ void MainWindow::buildActions() {
     // Navigation actions drive both the header arrow buttons and the shortcuts.
     // Two bindings each: Alt+Arrow (browser-style) and Ctrl+[ / Ctrl+] (editor
     // style, like VS Code / Vim jumplists).
-    m_backAction = new QAction(QStringLiteral("<"), this);
+    m_backAction = new QAction(this);
+    m_backAction->setIcon(makeNavArrow(true));
     m_backAction->setToolTip(tr("Back  (Alt+Left or Ctrl+[)"));
     m_backAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Left),
                                 QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)});
     connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
     addAction(m_backAction);
-    m_forwardAction = new QAction(QStringLiteral(">"), this);
+    m_forwardAction = new QAction(this);
+    m_forwardAction->setIcon(makeNavArrow(false));
     m_forwardAction->setToolTip(tr("Forward  (Alt+Right or Ctrl+])"));
     m_forwardAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Right),
                                    QKeySequence(Qt::CTRL | Qt::Key_BracketRight)});
@@ -737,7 +782,7 @@ void MainWindow::changeFontSize(int delta) {
 
 void MainWindow::newVault() {
     const QString parent = QFileDialog::getExistingDirectory(
-        this, tr("Choose where to create the vault"), QDir::homePath());
+        this, tr("Choose where to create the vault"), vaultStartDir());
     if (parent.isEmpty())
         return;
     bool ok = false;
@@ -805,9 +850,32 @@ void MainWindow::openManual() {
 
 void MainWindow::chooseVault() {
     const QString dir = QFileDialog::getExistingDirectory(
-        this, tr("Open Vault"), QDir::homePath());
+        this, tr("Open Vault"), vaultStartDir());
     if (!dir.isEmpty())
         openVault(dir);
+}
+
+void MainWindow::openVaultSwitcher() {
+    // Candidate vaults are the sub-folders beside the current vault (i.e. in its
+    // parent folder), or the home folder's sub-folders when none is open.
+    QString base = QDir::homePath();
+    if (m_vault) {
+        const QString parent = QFileInfo(m_vault->root()).absolutePath();
+        if (QDir(parent).exists())
+            base = parent;
+    }
+    QDir dir(base);
+    QStringList paths;
+    const QStringList names =
+        dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QString &n : names)
+        paths << dir.absoluteFilePath(n);
+    if (paths.isEmpty()) {
+        notify(tr("No vaults found in %1").arg(QDir::toNativeSeparators(base)),
+               2500);
+        return;
+    }
+    m_searchPopup->showVaults(paths);
 }
 
 void MainWindow::openVault(const QString &path) {

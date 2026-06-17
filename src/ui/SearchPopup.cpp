@@ -2,6 +2,7 @@
 
 #include "core/SearchIndex.h"
 
+#include <QFileInfo>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
@@ -44,11 +45,24 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
 }
 
 void SearchPopup::showCentered(bool titlesOnly) {
+    m_vaultMode = false;
     m_titlesOnly = titlesOnly;
     m_input->setPlaceholderText(titlesOnly ? tr("Go to note…")
                                            : tr("Search notes…"));
     m_input->clear();
     m_results->clear();
+    reposition();
+    show();
+    raise();
+    m_input->setFocus();
+}
+
+void SearchPopup::showVaults(const QStringList &dirs) {
+    m_vaultMode = true;
+    m_vaultDirs = dirs;
+    m_input->setPlaceholderText(tr("Switch vault…"));
+    m_input->clear();
+    refresh(QString()); // empty filter shows every vault straight away
     reposition();
     show();
     raise();
@@ -67,6 +81,21 @@ void SearchPopup::reposition() {
 
 void SearchPopup::refresh(const QString &text) {
     m_results->clear();
+    if (m_vaultMode) {
+        const QString needle = text.trimmed();
+        for (const QString &dir : m_vaultDirs) {
+            const QString name = QFileInfo(dir).fileName();
+            if (needle.isEmpty() || name.contains(needle, Qt::CaseInsensitive)) {
+                auto *item = new QListWidgetItem(name, m_results);
+                item->setData(kPathRole, dir);
+            }
+        }
+        if (m_results->count())
+            m_results->setCurrentRow(0);
+        adjustSize();
+        reposition();
+        return;
+    }
     if (!m_index || text.trimmed().isEmpty()) {
         adjustSize();
         return;
@@ -93,7 +122,10 @@ void SearchPopup::accept() {
     const QString path = item->data(kPathRole).toString();
     if (path.isEmpty())
         return;
-    emit openRequested(path, m_input->text());
+    if (m_vaultMode)
+        emit openVaultRequested(path);
+    else
+        emit openRequested(path, m_input->text());
     hide();
 }
 
