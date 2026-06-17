@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Emerald
+GenericName=Markdown Notes
+Comment=A minimal Obsidian-like Markdown note editor
+Exec=emerald %F
+Icon=emerald
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/markdown;text/plain;
+Keywords=notes;markdown;wiki;editor;
+StartupWMClass=emerald

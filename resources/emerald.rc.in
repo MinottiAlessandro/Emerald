@@ -1,0 +1,4 @@
+// Windows application icon. Configured by CMake (configure_file) so the icon
+// path is absolute with forward slashes, which the resource compiler resolves
+// regardless of the build's working directory.
+IDI_ICON1 ICON "@EMERALD_ICON_ICO@"

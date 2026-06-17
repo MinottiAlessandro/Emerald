@@ -6,7 +6,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
-#include <QTextStream>
 #include <algorithm>
 
 Vault::Vault(QString rootPath) : m_root(std::move(rootPath)) {}
@@ -38,21 +37,25 @@ void Vault::scan() {
 
 QString Vault::read(const QString &path) const {
     QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+    // No QIODevice::Text: we normalize end-of-lines ourselves so the in-memory
+    // model is always LF, regardless of how the file was written on disk.
+    if (!f.open(QIODevice::ReadOnly))
         return {};
-    QTextStream in(&f);
-    in.setEncoding(QStringConverter::Utf8);
-    return in.readAll();
+    QString content = QString::fromUtf8(f.readAll());
+    content.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    content.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    return content;
 }
 
 bool Vault::write(const QString &path, const QString &content) const {
     QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+    // No QIODevice::Text: write raw UTF-8 so newlines stay LF on every platform
+    // (Text mode would translate to CRLF on Windows). Vault files are byte-for-
+    // byte identical across OSes, which keeps git/cloud-synced vaults clean.
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
-    QTextStream out(&f);
-    out.setEncoding(QStringConverter::Utf8);
-    out << content;
-    return true;
+    const QByteArray bytes = content.toUtf8();
+    return f.write(bytes) == bytes.size();
 }
 
 QString Vault::pathForTitle(const QString &title) const {
@@ -67,9 +70,21 @@ bool Vault::isValidTitle(const QString &title) {
     if (title.isEmpty() || title == QStringLiteral(".") ||
         title == QStringLiteral(".."))
         return false;
+    // Windows silently strips trailing dots/spaces from filenames, which would
+    // cause a renamed/created note to land somewhere other than its title.
+    if (title.endsWith(QLatin1Char('.')) || title.endsWith(QLatin1Char(' ')))
+        return false;
     for (const QChar c : title)
-        if (QStringLiteral("/\\:*?\"<>|").contains(c))
+        if (c.unicode() < 0x20 || QStringLiteral("/\\:*?\"<>|").contains(c))
             return false;
+    // Windows reserved device names (CON, NUL, COM1-9, LPT1-9, ...). Reserved
+    // even with an extension, so match the segment before the first dot,
+    // case-insensitively.
+    static const QRegularExpression reserved(
+        QStringLiteral("^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$"),
+        QRegularExpression::CaseInsensitiveOption);
+    if (reserved.match(title).hasMatch())
+        return false;
     return true;
 }
 
@@ -108,7 +123,12 @@ QString Vault::renameNote(const QString &oldPath, const QString &newTitle) {
         QDir(fi.absolutePath()).filePath(newTitle + QStringLiteral(".md"));
     if (newPath == oldPath)
         return oldPath; // unchanged
-    if (QFileInfo::exists(newPath))
+    // On case-insensitive filesystems (Windows, default macOS) newPath "exists"
+    // when it differs from oldPath only by case — that's the same file, so a
+    // case-only retitle is allowed. canonicalFilePath() resolves both to the
+    // real on-disk entry, so a genuine collision still has a different canonical.
+    if (QFileInfo::exists(newPath) &&
+        QFileInfo(newPath).canonicalFilePath() != fi.canonicalFilePath())
         return {}; // would clobber another note
     if (!QFile::rename(oldPath, newPath))
         return {};

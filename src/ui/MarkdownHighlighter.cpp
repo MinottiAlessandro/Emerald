@@ -14,6 +14,20 @@ double headingScale(int level) {
     default: return 1.0;
     }
 }
+
+// "monospace" is a fontconfig generic alias that only resolves on Linux; on
+// Windows/macOS it falls back to a proportional font, which breaks code blocks
+// and the pipe-table grid. List real per-platform families plus a Monospace
+// style hint so a fixed-width font is picked everywhere.
+void applyMono(QTextCharFormat &fmt) {
+    static const QStringList families{
+        QStringLiteral("Menlo"),            // macOS
+        QStringLiteral("Consolas"),         // Windows
+        QStringLiteral("DejaVu Sans Mono"), // common on Linux
+        QStringLiteral("monospace")};       // fontconfig generic fallback
+    fmt.setFontFamilies(families);
+    fmt.setFontStyleHint(QFont::Monospace);
+}
 } // namespace
 
 MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
@@ -38,15 +52,15 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_boldItalic.setFontItalic(true);
 
     m_code.setForeground(QColor("#7ee0b0"));
-    m_code.setFontFamilies({QStringLiteral("monospace")});
+    applyMono(m_code);
     m_code.setBackground(QColor("#16241c"));
 
     m_codeBlock.setForeground(QColor("#a9c8b8"));
-    m_codeBlock.setFontFamilies({QStringLiteral("monospace")});
+    applyMono(m_codeBlock);
     m_codeBlock.setBackground(QColor("#13201a"));
 
     m_codeLang.setForeground(QColor("#7ee0b0"));
-    m_codeLang.setFontFamilies({QStringLiteral("monospace")});
+    applyMono(m_codeLang);
     m_codeLang.setFontItalic(true);
     m_codeLang.setBackground(QColor("#13201a"));
 
@@ -71,7 +85,7 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_taskDone.setFontStrikeOut(true);
 
     m_table.setForeground(QColor("#a9c8b8"));
-    m_table.setFontFamilies({QStringLiteral("monospace")});
+    applyMono(m_table);
 
     m_tableHeader = m_table;
     m_tableHeader.setForeground(QColor("#d7eee2"));

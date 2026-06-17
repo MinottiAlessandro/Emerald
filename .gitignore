@@ -1,4 +1,6 @@
 build/
+build-appimage/
+*.AppImage
 *.user
 .cache/
 compile_commands.json
