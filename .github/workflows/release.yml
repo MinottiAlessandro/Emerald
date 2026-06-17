@@ -1,0 +1,100 @@
+name: Release
+
+# Build Emerald for Linux, macOS and Windows and attach the packages to the
+# GitHub Release for the tag. Runs automatically when a v* tag is pushed, or
+# manually (Actions > Release > Run workflow) against an existing tag.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and attach artifacts to (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  QT_VERSION: '6.8.1'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04,  name: linux }
+          - { os: macos-latest,  name: macos }
+          - { os: windows-latest, name: windows }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Configure & build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j
+
+      - name: Package — Linux AppImage
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y libfuse2 || true
+          ./packaging/linux/make_appimage.sh "$PWD/build-appimage"
+          mkdir -p dist && mv Emerald-*.AppImage dist/
+
+      - name: Package — macOS dmg
+        if: matrix.name == 'macos'
+        run: |
+          ( cd build && cpack -G DragNDrop )   # runs macdeployqt via install(SCRIPT)
+          mkdir -p dist && mv build/*.dmg dist/
+
+      - name: Package — Windows zip
+        if: matrix.name == 'windows'
+        run: |
+          ( cd build && cpack -G ZIP -C Release )   # runs windeployqt via install(SCRIPT)
+          mkdir -p dist && mv build/*.zip dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emerald-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release and upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if [ -f .github/RELEASE_NOTES.md ]; then
+              gh release create "$TAG" --title "Emerald $TAG" --notes-file .github/RELEASE_NOTES.md
+            else
+              gh release create "$TAG" --title "Emerald $TAG" --generate-notes
+            fi
+          fi
+          gh release upload "$TAG" dist/* --clobber
