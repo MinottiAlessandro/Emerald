@@ -29,11 +29,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # qt_arch is left empty so install-qt-action auto-detects, except on
-          # arm64 Linux where the host arch must be named explicitly. Both Linux
-          # jobs run on 22.04 for an older-glibc (more portable) AppImage.
+          # qt_arch is empty so install-qt-action auto-detects, except arm64
+          # Linux which must be named explicitly. x86_64 builds on 22.04 (older
+          # glibc = more portable AppImage); the arm64 Qt 6.8.1 binaries need
+          # glibc >= 2.38, so that job uses 24.04-arm (its AppImage in turn
+          # needs a reasonably recent glibc).
           - { os: ubuntu-22.04,      name: linux,       cmake_args: '', qt_arch: '' }
-          - { os: ubuntu-22.04-arm,  name: linux-arm64, cmake_args: '', qt_arch: 'linux_gcc_arm64' }
+          - { os: ubuntu-24.04-arm,  name: linux-arm64, cmake_args: '', qt_arch: 'linux_gcc_arm64' }
           # Build a universal binary so the dmg runs on both Apple Silicon and
           # Intel. The install-qt-action Qt is already universal2, so this only
           # adds the main binary's second slice (negligible size). Single-quote
