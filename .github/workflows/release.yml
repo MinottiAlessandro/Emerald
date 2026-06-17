@@ -29,13 +29,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-22.04,  name: linux,   cmake_args: '' }
+          # qt_arch is left empty so install-qt-action auto-detects, except on
+          # arm64 Linux where the host arch must be named explicitly. Both Linux
+          # jobs run on 22.04 for an older-glibc (more portable) AppImage.
+          - { os: ubuntu-22.04,      name: linux,       cmake_args: '', qt_arch: '' }
+          - { os: ubuntu-22.04-arm,  name: linux-arm64, cmake_args: '', qt_arch: 'linux_gcc_arm64' }
           # Build a universal binary so the dmg runs on both Apple Silicon and
           # Intel. The install-qt-action Qt is already universal2, so this only
           # adds the main binary's second slice (negligible size). Single-quote
           # the semicolon list so bash keeps it as one cmake argument.
-          - { os: macos-latest,  name: macos,   cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'" }
-          - { os: windows-latest, name: windows, cmake_args: '' }
+          - { os: macos-latest,      name: macos,       cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'", qt_arch: '' }
+          - { os: windows-latest,    name: windows,     cmake_args: '', qt_arch: '' }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,6 +49,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
+          arch: ${{ matrix.qt_arch }}
           cache: true
 
       - name: Configure & build
@@ -53,7 +58,7 @@ jobs:
           cmake --build build --config Release -j
 
       - name: Package — Linux AppImage
-        if: matrix.name == 'linux'
+        if: startsWith(matrix.name, 'linux')
         run: |
           sudo apt-get update && sudo apt-get install -y libfuse2 || true
           ./packaging/linux/make_appimage.sh "$PWD/build-appimage"

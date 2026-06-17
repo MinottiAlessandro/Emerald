@@ -1,0 +1,35 @@
+name: ARM build test
+
+# Throwaway workflow to validate the linux-arm64 AppImage build in isolation
+# before wiring it into the release. Delete once verified. Run via:
+#   Actions > ARM build test > Run workflow
+on: workflow_dispatch
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.1'
+          arch: linux_gcc_arm64
+          cache: true
+      - name: Build + AppImage
+        run: |
+          sudo apt-get update && sudo apt-get install -y libfuse2 || true
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          ./packaging/linux/make_appimage.sh "$PWD/build-appimage"
+          mkdir -p dist && mv Emerald-*.AppImage dist/
+          echo "=== arch check ==="; file dist/*.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emerald-linux-arm64-test
+          path: dist/*
+          if-no-files-found: error
