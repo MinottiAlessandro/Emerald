@@ -1,32 +1,31 @@
-## Emerald 1.0.1
+## Emerald 1.1.0
 
-Maintenance release that makes the **macOS build actually launch**. The 1.0.0
-`.dmg` shipped a bundle whose main executable had no `LC_RPATH`, so macOS aborted
-at startup with *"Library not loaded: @rpath/QtWidgets.framework… no LC_RPATH's
-found."* If you grabbed 1.0.0 on a Mac, replace it with this build.
+A feature release: ARM64 Linux builds, clickable web links, and a cleaner icon.
 
-### Fixes
-- **macOS: app launches correctly.** The bundle now carries an
-  `@executable_path/../Frameworks` rpath, so it locates its bundled Qt
-  frameworks instead of crashing at startup.
-- **macOS: universal binary.** The `.dmg` now runs natively on both Apple
-  Silicon and Intel Macs.
-- **macOS: ad-hoc signed** so Gatekeeper no longer reports the app as "damaged".
+### New
+- **ARM64 Linux builds.** A native `Emerald-aarch64.AppImage` joins the x86-64
+  one, so Emerald runs on Apple Silicon Linux, modern Raspberry Pi / SBC desktops
+  and other aarch64 machines (needs glibc ≥ 2.39).
+- **Clickable internet links.** Standard Markdown `[text](https://…)` links now
+  render inline like wiki-links — the `](url)` melts away leaving just the text,
+  which opens in your browser on click (Ctrl+click on the line you're editing).
+- **Universal macOS app.** The `.dmg` is a single universal binary for both
+  Apple Silicon and Intel.
 
-Linux and Windows are functionally unchanged from 1.0.0 (rebuilt for parity).
-
-### What Emerald is
-A minimal, fast, Obsidian-like Markdown note editor built with Qt 6: live inline
-preview, wiki-style `[[links]]` with rename-aware backlinks, fast full-text
-search, a folder-tree sidebar, debounced autosave and external-edit watching —
-all over plain `.md` files, on Linux, macOS and Windows.
+### Polish
+- **Refined app icon** — the white corners are gone (transparent now), so the
+  icon looks right on dark backgrounds and in every OS's icon shelf.
+- **Stable download links.** Release artifacts now have version-less names
+  (`Emerald-macOS.dmg`, `Emerald-x86_64.AppImage`, …) served from
+  `releases/latest`, so the README links always point at the newest build.
 
 ### Downloads
-- **Linux** — `Emerald-1.0.1-x86_64.AppImage` (portable; `chmod +x` and run).
-- **macOS** — `Emerald-1.0.1-Darwin.dmg` (universal; drag to Applications).
-  Ad-hoc signed, not notarized: on first launch **right-click the app → Open →
-  Open**. If macOS still blocks it, run `xattr -cr /Applications/Emerald.app` in
-  Terminal.
-- **Windows** — `Emerald-1.0.1-win64.zip` (extract and run `emerald.exe`).
+| Platform | File | Notes |
+|---|---|---|
+| Linux (x86-64) | `Emerald-x86_64.AppImage` | `chmod +x` and run |
+| Linux (ARM64)  | `Emerald-aarch64.AppImage` | `chmod +x` and run · glibc ≥ 2.39 |
+| macOS (universal) | `Emerald-macOS.dmg` | drag to Applications; first launch **right-click → Open → Open**. If still blocked: `xattr -cr /Applications/emerald.app` |
+| Windows | `Emerald-win64.zip` | extract and run `emerald.exe` |
 
-Built automatically by the `Release` GitHub Actions workflow.
+Every download bundles its own Qt runtime — nothing else to install. Built
+automatically by the `Release` GitHub Actions workflow.
