@@ -50,6 +50,10 @@ private:
     // The URL of the [text](url) link under `pos`, or empty. Distinct from
     // linkAt (wiki note targets): these open in the system browser.
     QString internetLinkAt(const QPoint &pos) const;
+    // True if `pos` lies within the rendered horizontal span of block columns
+    // [startCol, endCol) — keeps a trailing link's click area on its text.
+    bool posInColumns(const QPoint &pos, const QTextBlock &block, int startCol,
+                      int endCol) const;
     // Should a click at `pos` follow a link? True on Ctrl+click, or a plain
     // click on a rendered link that lives off the active (cursor) line.
     bool followsLink(const QPoint &pos, Qt::KeyboardModifiers mods) const;
@@ -104,6 +108,9 @@ private:
     // Heading folding. A heading hides everything below it until the next
     // heading of the same or higher level.
     int headingLevel(const QString &text) const;       // 0 if not a heading
+    // Last block a fold of `heading` hides (section minus trailing blank lines);
+    // invalid if the heading has no foldable content below it.
+    QTextBlock foldSectionEnd(const QTextBlock &heading) const;
     bool headingFoldable(const QTextBlock &heading) const;
     bool isFolded(const QTextBlock &heading) const;
     void toggleFoldAt(const QTextBlock &heading);

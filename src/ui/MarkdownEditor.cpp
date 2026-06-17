@@ -226,15 +226,32 @@ void MarkdownEditor::insertCompletion(const QString &completion) {
     setTextCursor(cursor);
 }
 
+bool MarkdownEditor::posInColumns(const QPoint &pos, const QTextBlock &block,
+                                  int startCol, int endCol) const {
+    // cursorForPosition snaps a click in the blank area past the end of a line
+    // onto the nearest character — for a line that ends with a [[link]] that is
+    // the link itself. Confirm the click x actually lies within the token's
+    // rendered horizontal span so the clickable area stops at the text. (The
+    // concealed brackets collapse to ~0 width, so [start,end] tracks what's
+    // visible.)
+    QTextCursor c(block);
+    c.setPosition(block.position() + startCol);
+    const int left = cursorRect(c).left();
+    c.setPosition(block.position() + endCol);
+    const int right = cursorRect(c).left();
+    return pos.x() >= left && pos.x() <= right;
+}
+
 QString MarkdownEditor::linkAt(const QPoint &pos) const {
     const QTextCursor cursor = cursorForPosition(pos);
+    const QTextBlock block = cursor.block();
     const int column = cursor.positionInBlock();
-    const QString text = cursor.block().text();
 
-    auto it = WikiLink::pattern().globalMatch(text);
+    auto it = WikiLink::pattern().globalMatch(block.text());
     while (it.hasNext()) {
         const auto m = it.next();
-        if (column >= m.capturedStart(0) && column <= m.capturedEnd(0))
+        if (column >= m.capturedStart(0) && column <= m.capturedEnd(0) &&
+            posInColumns(pos, block, m.capturedStart(0), m.capturedEnd(0)))
             return WikiLink::cleanTarget(m.captured(1));
     }
     return {};
@@ -242,13 +259,14 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
 
 QString MarkdownEditor::internetLinkAt(const QPoint &pos) const {
     const QTextCursor cursor = cursorForPosition(pos);
+    const QTextBlock block = cursor.block();
     const int column = cursor.positionInBlock();
-    const QString text = cursor.block().text();
 
-    auto it = mdLinkRe().globalMatch(text);
+    auto it = mdLinkRe().globalMatch(block.text());
     while (it.hasNext()) {
         const auto m = it.next();
-        if (column >= m.capturedStart(0) && column <= m.capturedEnd(0))
+        if (column >= m.capturedStart(0) && column <= m.capturedEnd(0) &&
+            posInColumns(pos, block, m.capturedStart(0), m.capturedEnd(0)))
             return m.captured(2); // the URL
     }
     return {};
@@ -493,6 +511,17 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
                (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
         moveLines(event->key() == Qt::Key_Up);
         return;
+    } else if (mods == Qt::AltModifier &&
+               (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)) {
+        // Browser-style history. Also bound as a window shortcut, but on macOS
+        // Option+Arrow is a text-editing key (word left/right) that the QAction
+        // shortcut never receives, so handle it here — where the editor has
+        // focus — to make Alt/Option+Arrow navigate on every platform.
+        if (event->key() == Qt::Key_Left)
+            emit navigateBack();
+        else
+            emit navigateForward();
+        return;
     }
 
     QPlainTextEdit::keyPressEvent(event);
@@ -730,17 +759,31 @@ int MarkdownEditor::headingLevel(const QString &text) const {
     return 0;
 }
 
+QTextBlock MarkdownEditor::foldSectionEnd(const QTextBlock &heading) const {
+    // The last block a fold of `heading` should hide: the section runs from
+    // heading.next() down to the next same-or-higher heading (or EOF), minus any
+    // trailing blank lines — so the blank separation before that next heading
+    // stays visible. Invalid when the section has no foldable content.
+    const int level = headingLevel(heading.text());
+    QTextBlock lastContent;
+    for (QTextBlock b = heading.next(); b.isValid(); b = b.next()) {
+        // A "# ..." line inside a code block is literal text, not a heading,
+        // so it must not end the section early.
+        const int l = insideCodeBlock(b) ? 0 : headingLevel(b.text());
+        if (l > 0 && l <= level)
+            break;
+        if (!b.text().trimmed().isEmpty())
+            lastContent = b;
+    }
+    return lastContent;
+}
+
 bool MarkdownEditor::headingFoldable(const QTextBlock &heading) const {
     if (insideCodeBlock(heading))
         return false; // a "# ..." line inside a code block isn't a heading
-    const int level = headingLevel(heading.text());
-    if (level == 0)
+    if (headingLevel(heading.text()) == 0)
         return false;
-    const QTextBlock next = heading.next();
-    if (!next.isValid())
-        return false;
-    const int l = headingLevel(next.text());
-    return !(l > 0 && l <= level); // foldable unless the next line is a peer
+    return foldSectionEnd(heading).isValid(); // foldable only with content below
 }
 
 bool MarkdownEditor::isFolded(const QTextBlock &heading) const {
@@ -762,21 +805,21 @@ void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
     if (idx >= 0) {
         m_foldedHeadings.removeAt(idx);
     } else {
-        // Move the caret out of the section that is about to be hidden.
-        const int level = headingLevel(heading.text());
+        // Move the caret out of the section about to be hidden. Only the blocks
+        // up to foldSectionEnd are hidden; trailing blank lines stay visible, so
+        // a caret resting on one of those is fine to leave in place.
+        const QTextBlock end = foldSectionEnd(heading);
         const int caret = textCursor().blockNumber();
-        for (QTextBlock b = heading.next(); b.isValid(); b = b.next()) {
-            // A "# ..." line inside a code block is literal text, not a heading,
-            // so it must not end the folded section early.
-            const int l = insideCodeBlock(b) ? 0 : headingLevel(b.text());
-            if (l > 0 && l <= level)
-                break;
+        for (QTextBlock b = heading.next(); end.isValid() && b.isValid();
+             b = b.next()) {
             if (b.blockNumber() == caret) {
                 QTextCursor c(heading);
                 c.movePosition(QTextCursor::EndOfBlock);
                 setTextCursor(c);
                 break;
             }
+            if (b == end)
+                break;
         }
         m_foldedHeadings.append(heading);
     }
@@ -801,14 +844,13 @@ void MarkdownEditor::reapplyFolds() {
             b.setVisible(true);
 
     for (const QTextBlock &h : m_foldedHeadings) {
-        const int level = headingLevel(h.text());
+        const QTextBlock end = foldSectionEnd(h);
+        if (!end.isValid())
+            continue;
         for (QTextBlock b = h.next(); b.isValid(); b = b.next()) {
-            // Headings *inside* a fenced code block are literal text — skip them
-            // so a folded section keeps collapsing past its code blocks.
-            const int l = insideCodeBlock(b) ? 0 : headingLevel(b.text());
-            if (l > 0 && l <= level)
-                break;
             b.setVisible(false);
+            if (b == end)
+                break; // leave the trailing blank lines before the next heading
         }
     }
 
