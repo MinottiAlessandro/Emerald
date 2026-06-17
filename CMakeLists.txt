@@ -72,6 +72,15 @@ if(APPLE)
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_ICON_FILE        "emerald.icns"
     MACOSX_BUNDLE_COPYRIGHT        "© 2026 Alessandro Minotti — MIT License"
+    # Qt is referenced as @rpath/QtFoo.framework/...; the frameworks land in
+    # Contents/Frameworks (@executable_path/../Frameworks). CMake's install step
+    # strips the build rpath, and macdeployqt doesn't reliably re-add one to the
+    # main executable — leaving every @rpath dangling ("Library not loaded:
+    # @rpath/QtWidgets... no LC_RPATH's found"). Bake the rpath in ourselves so
+    # the bundle is self-locating regardless of macdeployqt's behaviour. This one
+    # rpath on the executable also resolves the frameworks'/plugins' own @rpath
+    # cross-references, since the main image's rpaths are in scope process-wide.
+    INSTALL_RPATH                  "@executable_path/../Frameworks"
   )
 endif()
 
