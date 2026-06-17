@@ -71,7 +71,7 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_VERSION   "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_ICON_FILE        "emerald.icns"
-    MACOSX_BUNDLE_COPYRIGHT        "© 2026 Emerald"
+    MACOSX_BUNDLE_COPYRIGHT        "© 2026 Alessandro Minotti — MIT License"
   )
 endif()
 

@@ -14,6 +14,7 @@ Plain `.md` files · inline live preview · one dependency · Linux · macOS · 
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-2bbf74)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Qt6](https://img.shields.io/badge/Qt-6-41cd52?logo=qt&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2bbf74)](LICENSE)
 
 </div>
 
@@ -149,5 +150,4 @@ The `core/` layer is GUI-free, so the vault and link logic can be tested without
 
 ## License
 
-No license has been chosen yet, so default copyright applies (all rights
-reserved). If you'd like to use or contribute to Emerald, please open an issue.
+Released under the [MIT License](LICENSE) — © 2026 Alessandro Minotti.
