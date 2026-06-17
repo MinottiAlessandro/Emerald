@@ -152,11 +152,18 @@ set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A minimal Obsidian-like Markdown note editor")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Emerald")
 set(CPACK_PACKAGE_EXECUTABLES "emerald" "Emerald")
+# Stable, version-less archive names. The README links to
+# /releases/latest/download/<name>, which GitHub always redirects to the newest
+# release's asset of that name — so the download links never need bumping. The
+# version still lives in the release tag/title and the package metadata.
 if(WIN32)
   set(CPACK_GENERATOR "ZIP")
+  set(CPACK_PACKAGE_FILE_NAME "Emerald-win64")
 elseif(APPLE)
   set(CPACK_GENERATOR "DragNDrop")
+  set(CPACK_PACKAGE_FILE_NAME "Emerald-macOS")
 else()
   set(CPACK_GENERATOR "TGZ")
+  set(CPACK_PACKAGE_FILE_NAME "Emerald-linux-${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 include(CPack)

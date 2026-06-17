@@ -40,9 +40,11 @@ echo ">> installing into AppDir"
 rm -rf "$APPDIR"
 DESTDIR="$APPDIR" cmake --install "$BUILD_DIR" --prefix /usr
 
+# VERSION is embedded in the AppImage's metadata; the filename stays version-less
+# so README can link to /releases/latest/download/Emerald-<arch>.AppImage forever.
 VERSION="$(sed -n 's/^project(Emerald VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
 export VERSION
-export OUTPUT="Emerald-${VERSION}-${ARCH}.AppImage"
+export OUTPUT="Emerald-${ARCH}.AppImage"
 
 echo ">> bundling Qt + generating $OUTPUT"
 "$TOOLS_DIR/linuxdeploy-${ARCH}.AppImage" \
