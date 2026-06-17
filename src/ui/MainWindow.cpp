@@ -70,54 +70,98 @@ QStringList topLevelPaths(const QStringList &paths) {
 QString manualText() {
     return QStringLiteral(
         "Welcome to **Emerald** — a tiny, fast, Obsidian-style note app. This "
-        "note is generated; edit or delete it freely.\n"
+        "note shows everything the editor can do; edit or delete it freely.\n"
         "\n"
-        "## Writing\n"
-        "Markup melts away on every line except the one your cursor is on:\n"
+        "Emerald is a *live* Markdown editor — there is no separate preview "
+        "pane. The markup on the line your cursor sits on stays visible so you "
+        "can edit it, and melts into formatted text on every other line.\n"
         "\n"
-        "- **bold**, *italic*, ***both***, ~~strikethrough~~ and ==highlight==\n"
-        "- `inline code` and fenced blocks:\n"
+        "## Text formatting\n"
+        "- **bold** — wrap text in `**double asterisks**`\n"
+        "- *italic* — wrap text in `*single asterisks*` or `_underscores_`\n"
+        "- ***bold italic*** — combine them: `***three asterisks***`\n"
+        "- ~~strikethrough~~ — wrap text in `~~tildes~~`\n"
+        "- ==highlight== — wrap text in `==double equals==`\n"
+        "- `inline code` — wrap text in single backticks\n"
+        "\n"
+        "## Headings\n"
+        "Start a line with one to six `#` marks; the more marks, the smaller the "
+        "heading. Hover the left margin beside a heading and click the ▾ arrow to "
+        "fold its whole section away — click the ▸ to unfold it.\n"
+        "\n"
+        "### This is a third-level heading\n"
+        "\n"
+        "## Lists\n"
+        "- bullets start with `-`, `*` or `+`\n"
+        "  - press Tab to indent, Shift+Tab to outdent\n"
+        "    - the bullet glyph changes with the nesting depth\n"
+        "- Enter keeps the list going; Enter on an empty item ends it\n"
+        "\n"
+        "1. ordered lists start with `1.` or `1)`\n"
+        "2. the next number is filled in for you on Enter\n"
+        "\n"
+        "## Tasks\n"
+        "- [ ] an open task — type `- [ ] ` before the text\n"
+        "- [x] a finished task — `- [x] ` (the text is struck through)\n"
+        "\n"
+        "Click a checkbox on any line other than the one you're editing to "
+        "toggle it.\n"
+        "\n"
+        "## Quotes\n"
+        "> Blockquotes start with `>`.\n"
+        "> Enter keeps quoting; Enter on an empty quote line stops.\n"
+        "\n"
+        "## Code blocks\n"
+        "Fence a block between lines of three backticks (or three tildes) and "
+        "add a language name for a labelled header bar:\n"
         "\n"
         "```cpp\n"
-        "int answer = 42;\n"
+        "int answer = 42;  // the header bar shows the language\n"
+        "return answer;\n"
         "```\n"
         "\n"
-        "> Blockquotes — press Enter to keep quoting, Enter on an empty line to "
-        "stop.\n"
+        "## Tables\n"
+        "Type a pipe table and Emerald lines the columns up when you click away. "
+        "Colons in the separator row set the alignment — `:--` left, `:-:` "
+        "centre, `--:` right.\n"
         "\n"
-        "Horizontal rule:\n"
+        "| Feature      | Shortcut     |\n"
+        "| :----------- | -----------: |\n"
+        "| Find in note | Ctrl+F       |\n"
+        "| Search vault | Ctrl+Shift+F |\n"
+        "| Go to note   | Ctrl+P       |\n"
+        "\n"
+        "## Horizontal rule\n"
+        "Three or more dashes on a line of their own draw a divider:\n"
         "\n"
         "---\n"
         "\n"
-        "## Lists & tasks\n"
-        "- bullets render as glyphs (Tab / Shift+Tab to indent)\n"
-        "  - nested item\n"
-        "1. numbered lists auto-increment on Enter\n"
-        "- [ ] a task — click the box to toggle\n"
-        "- [x] a done task\n"
-        "\n"
-        "## Tables\n"
-        "| Feature | Shortcut |\n"
-        "| --- | --- |\n"
-        "| Search | Ctrl+F |\n"
-        "| Go to note | Ctrl+P |\n"
-        "\n"
-        "## Links\n"
-        "Type `[[` to autocomplete a link. `[[Welcome]]` jumps to a note "
-        "(click it when rendered, Ctrl+click while editing). Use "
-        "`[[Welcome|alias]]` to show a different label. Renaming a note's title "
-        "rewrites links to it.\n"
+        "## Linking notes\n"
+        "Type `[[` to autocomplete a link to another note. `[[Emerald Manual]]` "
+        "jumps to a note — click it once rendered, or Ctrl+click while editing — "
+        "and a note that doesn't exist yet is created on the spot. Use "
+        "`[[Note|label]]` to show a different label. Renaming a note's title "
+        "rewrites every link that points to it.\n"
         "\n"
         "## Getting around\n"
-        "- **Title** — the first line is the file name (no `.md`); edit it to "
-        "rename.\n"
-        "- **Sidebar** — notes live in a folder tree; right-click to create or "
-        "delete; single-click a folder to fold it.\n"
-        "- **Navigation** — the ← → arrows (Alt+Left / Alt+Right or the mouse "
-        "side buttons) walk your history.\n"
-        "- **Search** — Ctrl+F searches everything; Ctrl+P jumps by title.\n"
-        "- **Settings** — the gear holds font, editor width, new-note folder "
-        "and a Home note.\n");
+        "- **Title** — the first line above the body is the file name (without "
+        "`.md`); edit it to rename the note.\n"
+        "- **Sidebar** — notes live in a folder tree. Right-click to create or "
+        "delete notes and folders, drag to move them, Shift/Ctrl-click to select "
+        "several at once, and single-click a folder to fold it.\n"
+        "- **History** — the ⟵ ⟶ arrows (Alt+Left / Alt+Right, Ctrl+[ / Ctrl+], "
+        "or the mouse side buttons) walk back and forward through the notes "
+        "you've opened.\n"
+        "- **Find in note** — Ctrl+F opens a find bar; Enter and Shift+Enter step "
+        "through the matches.\n"
+        "- **Search vault** — Ctrl+Shift+F searches the text of every note; "
+        "Ctrl+P jumps to a note by title.\n"
+        "\n"
+        "## Settings\n"
+        "Open the gear in the bottom-left for **Settings**: the editor font, its "
+        "size and width, the folder new notes are created in, and a Home note to "
+        "open at launch. New Note is Ctrl+N and Open Vault is Ctrl+O. Edits save "
+        "themselves a moment after you stop typing — Ctrl+S forces a save.\n");
 }
 
 // A tree that draws a faint vertical guide for each nesting level, so notes
@@ -193,20 +237,27 @@ protected:
     }
 };
 
-// A small themed folder glyph drawn once and reused for every folder row.
-const QIcon &folderIcon() {
-    static const QIcon icon = [] {
-        QPixmap pm(16, 16);
-        pm.fill(Qt::transparent);
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor("#33d685"));
-        p.drawRoundedRect(QRectF(2, 3.5, 6, 3), 1, 1);   // tab
-        p.drawRoundedRect(QRectF(2, 5, 12, 8.5), 1.5, 1.5); // body
-        return QIcon(pm);
-    }();
-    return icon;
+// A small chevron drawn in place of a folder glyph: it points up when the
+// folder is expanded and down when it's collapsed. Drawn once and reused.
+QIcon makeChevron(bool up) {
+    QPixmap pm(16, 16);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(QColor("#7fae97"));
+    pen.setWidthF(1.7);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    const QPointF upPts[] = {{4.5, 10.0}, {8.0, 5.5}, {11.5, 10.0}};
+    const QPointF downPts[] = {{4.5, 6.0}, {8.0, 10.5}, {11.5, 6.0}};
+    p.drawPolyline(up ? upPts : downPts, 3);
+    return QIcon(pm);
+}
+const QIcon &chevronIcon(bool expanded) {
+    static const QIcon up = makeChevron(true);
+    static const QIcon down = makeChevron(false);
+    return expanded ? up : down;
 }
 }
 
@@ -300,6 +351,18 @@ void MainWindow::buildUi() {
             &MainWindow::onTreeItemClicked);
     connect(m_noteTree, &QTreeWidget::customContextMenuRequested, this,
             &MainWindow::onTreeContextMenu);
+    // Folders carry an up/down chevron instead of a folder icon; keep it in
+    // sync with the fold state.
+    connect(m_noteTree, &QTreeWidget::itemExpanded, this,
+            [](QTreeWidgetItem *it) {
+                if (!it->data(0, kDirRole).toString().isEmpty())
+                    it->setIcon(0, chevronIcon(true));
+            });
+    connect(m_noteTree, &QTreeWidget::itemCollapsed, this,
+            [](QTreeWidgetItem *it) {
+                if (!it->data(0, kDirRole).toString().isEmpty())
+                    it->setIcon(0, chevronIcon(false));
+            });
 
     // Sidebar header: a big "Notes" title with the back/forward arrows on the
     // right (replaces the old top toolbar).
@@ -355,7 +418,9 @@ void MainWindow::buildUi() {
     m_splitter->setCollapsible(1, false);
     m_splitter->setStretchFactor(0, 0);
     m_splitter->setStretchFactor(1, 1);
-    m_splitter->setHandleWidth(2);
+    // A wide handle for an easy drag/click target; the QSS paints only a thin
+    // line inside it so the divider still looks slim.
+    m_splitter->setHandleWidth(11);
     m_splitter->setSizes({260, 900});
     setCentralWidget(m_splitter);
     // Clicking (not dragging) the handle collapses / reopens the sidebar.
@@ -476,13 +541,13 @@ void MainWindow::buildActions() {
     // Navigation actions drive both the header arrow buttons and the shortcuts.
     // Two bindings each: Alt+Arrow (browser-style) and Ctrl+[ / Ctrl+] (editor
     // style, like VS Code / Vim jumplists).
-    m_backAction = new QAction(QStringLiteral("←"), this);
+    m_backAction = new QAction(QStringLiteral("⟵"), this);
     m_backAction->setToolTip(tr("Back  (Alt+Left or Ctrl+[)"));
     m_backAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Left),
                                 QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)});
     connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
     addAction(m_backAction);
-    m_forwardAction = new QAction(QStringLiteral("→"), this);
+    m_forwardAction = new QAction(QStringLiteral("⟶"), this);
     m_forwardAction->setToolTip(tr("Forward  (Alt+Right or Ctrl+])"));
     m_forwardAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Right),
                                    QKeySequence(Qt::CTRL | Qt::Key_BracketRight)});
@@ -685,7 +750,9 @@ void MainWindow::refreshTree() {
         auto *node = new QTreeWidgetItem(parent);
         node->setText(0, slash < 0 ? rel : rel.mid(slash + 1));
         node->setData(0, kDirRole, rootDir.filePath(rel));
-        node->setIcon(0, folderIcon());
+        // Collapsed glyph by default; expandAll() below flips visible folders to
+        // the expanded chevron via the itemExpanded signal.
+        node->setIcon(0, chevronIcon(false));
         node->setFlags(node->flags() & ~Qt::ItemIsSelectable);
         folders.insert(rel, node);
         return node;
