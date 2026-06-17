@@ -18,7 +18,9 @@ Markdown note editor built with Qt 6.
 
 ### Downloads
 - **Linux** — `Emerald-1.0.0-x86_64.AppImage` (portable; `chmod +x` and run).
-- **macOS** — `Emerald-1.0.0-Darwin.dmg` (drag to Applications).
+- **macOS** — `Emerald-1.0.0-Darwin.dmg` (drag to Applications). Ad-hoc signed,
+  not notarized: on first launch **right-click the app → Open → Open**. If macOS
+  still blocks it, run `xattr -cr /Applications/Emerald.app` in Terminal.
 - **Windows** — `Emerald-1.0.0-win64.zip` (extract and run `emerald.exe`).
 
 Built automatically by the `Release` GitHub Actions workflow.

@@ -27,10 +27,17 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 | Platform | Download | Notes |
 |---|---|---|
 | 🐧 **Linux** | [`Emerald-x86_64.AppImage`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.0/Emerald-1.0.0-x86_64.AppImage) | `chmod +x` then run |
-| 🍎 **macOS** | [`Emerald.dmg`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.0/Emerald-1.0.0-Darwin.dmg) | unsigned — right-click → **Open** the first time |
+| 🍎 **macOS** | [`Emerald.dmg`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.0/Emerald-1.0.0-Darwin.dmg) | first launch: **right-click → Open → Open** |
 | 🪟 **Windows** | [`Emerald-win64.zip`](https://github.com/MinottiAlessandro/Emerald/releases/download/v1.0.0/Emerald-1.0.0-win64.zip) | extract and run `emerald.exe` |
 
 > Every download bundles its own Qt runtime, so there's nothing else to install. Looking for older versions? See **[all releases](https://github.com/MinottiAlessandro/Emerald/releases)**.
+
+> **macOS note:** the app is ad-hoc signed but not notarized (no paid Apple
+> Developer ID), so the first launch needs **right-click → Open → Open**. If
+> macOS still blocks it, clear the download quarantine in Terminal:
+> ```bash
+> xattr -cr /Applications/Emerald.app
+> ```
 
 ---
 

@@ -110,6 +110,30 @@ if(WIN32 OR APPLE)
   install(SCRIPT "${EMERALD_DEPLOY_SCRIPT}")
 endif()
 
+# macOS: macdeployqt rewrites the Qt library load paths after the linker's
+# automatic ad-hoc signature, which invalidates it. Apple Silicon then refuses
+# to run the bundle and Gatekeeper reports it as "damaged". Re-apply a valid
+# ad-hoc signature on the fully-assembled bundle (this install step runs after
+# the deploy script above), which downgrades the failure to the normal unsigned
+# "unidentified developer" prompt where right-click -> Open works.
+# Proper notarization still needs an Apple Developer ID; this is the free best-effort.
+if(APPLE)
+  install(CODE [[
+    file(GLOB _emerald_app "${CMAKE_INSTALL_PREFIX}/*.app")
+    if(_emerald_app)
+      message(STATUS "Ad-hoc signing ${_emerald_app}")
+      execute_process(
+        COMMAND codesign --force --deep --sign - "${_emerald_app}"
+        RESULT_VARIABLE _codesign_rc)
+      if(NOT _codesign_rc EQUAL 0)
+        message(WARNING "ad-hoc codesign failed (code ${_codesign_rc}); bundle left unsigned")
+      endif()
+    else()
+      message(WARNING "no .app found under ${CMAKE_INSTALL_PREFIX} to sign")
+    endif()
+  ]])
+endif()
+
 # --- Packaging (cpack) ----------------------------------------------------
 # `cpack` after an install produces a distributable archive/installer.
 # Generators: ZIP (Windows), drag-install .dmg (macOS), .tar.gz (Linux).
