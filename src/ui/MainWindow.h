@@ -10,6 +10,7 @@
 class Vault;
 class MarkdownEditor;
 class SearchPopup;
+class Updater;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QLineEdit;
@@ -38,6 +39,7 @@ private:
     void openSettings();
     void loadSettings();
     void openManual();
+    void checkForUpdates();       // query GitHub for a newer release, then update
     void newVault();              // create a fresh vault folder, then open it
     void deleteCurrentNote();     // delete the open note (with confirmation)
     void changeFontSize(int delta); // +1 / -1 step; 0 resets to the default
@@ -91,6 +93,7 @@ private:
     QLineEdit *m_findInput = nullptr;
     QTreeWidget *m_noteTree = nullptr;
     SearchPopup *m_searchPopup = nullptr;
+    Updater *m_updater = nullptr;
     QTimer *m_saveTimer = nullptr;
     QMenu *m_gearMenu = nullptr;
     QAction *m_backAction = nullptr;

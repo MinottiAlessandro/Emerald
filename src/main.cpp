@@ -15,6 +15,7 @@ int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Emerald"));
     QApplication::setOrganizationName(QStringLiteral("Emerald"));
+    QApplication::setApplicationVersion(QStringLiteral(EMERALD_VERSION));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/EmeraldClean.png")));
 
     QFile qss(QStringLiteral(":/emerald.qss"));

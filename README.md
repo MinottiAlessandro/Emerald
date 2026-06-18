@@ -56,7 +56,8 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 
 **Editing & live preview**
 - Headings, **bold**, *italic*, ***both***, `code`, ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists, fenced ` ``` ` code blocks (with language tag), `|` tables and `[[wiki|links]]` all render in place.
-- **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); Enter on an empty item ends it; Tab / Shift+Tab indent and outdent. Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level).
+- **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); Enter on an empty item ends it; Tab / Shift+Tab indent and outdent (a multi-line selection indents every line). Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level).
+- **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
 - **Code folding** on headings and fenced blocks.
 
 **Links & navigation**
@@ -72,7 +73,8 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 
 **Polish**
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
-- **Adjustable editor font** (family + size, persisted); heading sizes scale with it.
+- **Adjustable editor font** (family + size, persisted) and **line spacing**; heading sizes scale with the font.
+- **Self-updating** — **Check for Updates…** pulls the latest release from GitHub (installs in place on Linux AppImage).
 - **Dark theme**, embedded in the binary.
 
 ---

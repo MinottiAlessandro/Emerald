@@ -2,10 +2,12 @@
 
 #include "MarkdownEditor.h"
 #include "SearchPopup.h"
+#include "Updater.h"
 #include "core/Vault.h"
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDropEvent>
@@ -150,6 +152,10 @@ QString manualText() {
         "- **Ctrl+D** — duplicate the current line\n"
         "- **Ctrl+Shift+K** — delete the current line\n"
         "- **Alt+↑** / **Alt+↓** — move the line (or selection) up / down\n"
+        "- **Tab** / **Shift+Tab** — indent / outdent the selected lines (or the "
+        "current list item)\n"
+        "- **Ctrl+Enter** — start a new line below without splitting the current "
+        "one (keeps continuing a list)\n"
         "\n"
         "## Linking notes\n"
         "Type `[[` to autocomplete a link to another note. `[[Emerald Manual]]` "
@@ -175,13 +181,13 @@ QString manualText() {
         "\n"
         "## Settings\n"
         "Open the gear in the bottom-left for **Settings**: the editor font, its "
-        "size and width, the folder new notes are created in, and a Home note to "
-        "open at launch. The same menu has **New Vault…** to start a fresh vault "
-        "and **Delete Note** to remove the open one. New Note is Ctrl+N, Open "
-        "Vault is Ctrl+O, and **Switch Vault…** (Ctrl+Shift+O) jumps between "
-        "vaults sitting in the same folder. Edits save themselves a moment after "
-        "you stop typing — "
-        "Ctrl+S forces a save.\n"
+        "size and width, the line spacing between rows, the folder new notes are "
+        "created in, and a Home note to open at launch. The same menu has **New "
+        "Vault…** to start a fresh vault, **Delete Note** to remove the open one, "
+        "and **Check for Updates…** to fetch and install the latest release. New "
+        "Note is Ctrl+N, Open Vault is Ctrl+O, and **Switch Vault…** "
+        "(Ctrl+Shift+O) jumps between vaults sitting in the same folder. Edits "
+        "save themselves a moment after you stop typing — Ctrl+S forces a save.\n"
         "\n"
         "## Other shortcuts\n"
         "More keys to control the app workflow (on macOS, Ctrl is ⌘):\n"
@@ -483,6 +489,12 @@ void MainWindow::buildUi() {
     gear->setMenu(m_gearMenu);
     frow->addWidget(gear);
     frow->addStretch();
+    // Current version, right-aligned on the gear's row.
+    auto *version = new QLabel(QStringLiteral("v%1").arg(QApplication::applicationVersion()),
+                               footer);
+    version->setObjectName(QStringLiteral("versionLabel"));
+    version->setToolTip(tr("Emerald version"));
+    frow->addWidget(version);
 
     auto *side = new QWidget(this);
     side->setObjectName(QStringLiteral("sidebar"));
@@ -593,6 +605,7 @@ void MainWindow::buildActions() {
     };
     auto *settings = make(tr("Settings…"), {}, &MainWindow::openSettings);
     auto *manual = make(tr("Manual"), {}, &MainWindow::openManual);
+    auto *update = make(tr("Check for Updates…"), {}, &MainWindow::checkForUpdates);
     auto *newVault = make(tr("New Vault…"), {}, &MainWindow::newVault);
     auto *openVault = make(tr("Open Vault…"), QKeySequence(QKeySequence::Open),
                            &MainWindow::chooseVault);
@@ -621,6 +634,7 @@ void MainWindow::buildActions() {
     // Requested order: app → file ops → search → quit, grouped by separators.
     m_gearMenu->addAction(settings);
     m_gearMenu->addAction(manual);
+    m_gearMenu->addAction(update);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(newVault);
     m_gearMenu->addAction(openVault);
@@ -673,6 +687,7 @@ void MainWindow::loadSettings() {
     QSettings s;
     m_centerColumn->setMaximumWidth(
         s.value(QStringLiteral("editorWidth"), 820).toInt());
+    m_editor->setLineSpacing(s.value(QStringLiteral("lineSpacing"), 100).toInt());
     const QByteArray split = s.value(QStringLiteral("splitterState")).toByteArray();
     if (!split.isEmpty())
         m_splitter->restoreState(split);
@@ -706,6 +721,11 @@ void MainWindow::openSettings() {
     widthBox->setSingleStep(20);
     widthBox->setSuffix(tr(" px"));
     widthBox->setValue(m_centerColumn->maximumWidth());
+    auto *spacingBox = new QSpinBox(&dlg);
+    spacingBox->setRange(100, 250);
+    spacingBox->setSingleStep(10);
+    spacingBox->setSuffix(tr(" %"));
+    spacingBox->setValue(s.value(QStringLiteral("lineSpacing"), 100).toInt());
 
     // New-note folder + Home note pickers (need an open vault).
     auto *folderBox = new QComboBox(&dlg);
@@ -732,6 +752,7 @@ void MainWindow::openSettings() {
     form->addRow(tr("Editor font"), fontBox);
     form->addRow(tr("Font size"), sizeBox);
     form->addRow(tr("Editor width"), widthBox);
+    form->addRow(tr("Line spacing"), spacingBox);
     form->addRow(tr("New notes in"), folderBox);
     form->addRow(tr("Home note"), homeBox);
 
@@ -741,27 +762,32 @@ void MainWindow::openSettings() {
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
-    // Live preview of font + width as the user changes the controls.
-    auto preview = [this, fontBox, sizeBox, widthBox] {
+    // Live preview of font + width + line spacing as the user changes controls.
+    auto preview = [this, fontBox, sizeBox, widthBox, spacingBox] {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
         m_centerColumn->setMaximumWidth(widthBox->value());
+        m_editor->setLineSpacing(spacingBox->value());
     };
     connect(fontBox, &QFontComboBox::currentFontChanged, &dlg, preview);
     connect(sizeBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
     connect(widthBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
+    connect(spacingBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
 
     const QFont originalFont = m_editor->font();
     const int originalWidth = m_centerColumn->maximumWidth();
+    const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
     if (dlg.exec() == QDialog::Accepted) {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
         m_centerColumn->setMaximumWidth(widthBox->value());
+        m_editor->setLineSpacing(spacingBox->value());
         s.setValue(QStringLiteral("editorFontFamily"), f.family());
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
         s.setValue(QStringLiteral("editorWidth"), widthBox->value());
+        s.setValue(QStringLiteral("lineSpacing"), spacingBox->value());
         if (m_vault) {
             s.setValue(QStringLiteral("newNoteFolder"), folderBox->currentData());
             s.setValue(QStringLiteral("homeNote"), homeBox->currentData());
@@ -769,6 +795,7 @@ void MainWindow::openSettings() {
     } else {
         m_editor->applyFont(originalFont); // revert the live preview
         m_centerColumn->setMaximumWidth(originalWidth);
+        m_editor->setLineSpacing(originalSpacing);
     }
 }
 
@@ -851,6 +878,12 @@ void MainWindow::openManual() {
         refreshTree();
     }
     openNoteByPath(path);
+}
+
+void MainWindow::checkForUpdates() {
+    if (!m_updater)
+        m_updater = new Updater(this);
+    m_updater->check();
 }
 
 void MainWindow::chooseVault() {
@@ -984,6 +1017,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     m_loading = true;
     const QString body = m_vault->read(path);
     m_editor->setPlainText(body);
+    m_editor->applyLineSpacing(); // setPlainText resets block formats
     m_loading = false;
 
     m_currentPath = path;
@@ -1149,6 +1183,7 @@ void MainWindow::onFileChanged(const QString &path) {
     const int caret = m_editor->textCursor().position();
     m_loading = true;
     m_editor->setPlainText(disk);
+    m_editor->applyLineSpacing(); // setPlainText resets block formats
     m_loading = false;
     m_lastSavedContent = disk;
 

@@ -19,6 +19,7 @@
 #include <QScrollBar>
 #include <QStringListModel>
 #include <QTextBlock>
+#include <QTextBlockFormat>
 #include <QTextLayout>
 #include <QUrl>
 #include <algorithm>
@@ -168,6 +169,22 @@ void MarkdownEditor::applyFont(const QFont &font) {
     document()->setDefaultFont(font);
     if (m_highlighter)
         m_highlighter->setBaseSize(font.pointSizeF());
+}
+
+void MarkdownEditor::setLineSpacing(int percent) {
+    m_lineSpacing = qBound(100, percent, 300);
+    applyLineSpacing();
+}
+
+void MarkdownEditor::applyLineSpacing() {
+    // Line height is a per-block property, so stamp it across the whole document.
+    // New blocks created by typing inherit the previous block's format, so this
+    // only needs re-running after a full-document reset (i.e. loading a note).
+    QTextBlockFormat fmt;
+    fmt.setLineHeight(m_lineSpacing, QTextBlockFormat::ProportionalHeight);
+    QTextCursor cur(document());
+    cur.select(QTextCursor::Document);
+    cur.mergeBlockFormat(fmt);
 }
 
 void MarkdownEditor::jumpToMatch(const QString &text) {
@@ -450,6 +467,52 @@ bool MarkdownEditor::adjustListIndent(bool deeper) {
     return true;
 }
 
+bool MarkdownEditor::indentSelection(bool deeper) {
+    QTextCursor cur = textCursor();
+    if (!cur.hasSelection())
+        return false;
+    const QTextBlock first = document()->findBlock(cur.selectionStart());
+    QTextBlock last = document()->findBlock(cur.selectionEnd());
+    // A selection ending exactly at a line start doesn't really include that
+    // line (whole-line selections land there); back up to the previous block.
+    if (last != first && cur.selectionEnd() == last.position())
+        last = last.previous();
+    if (first == last)
+        return false; // single line — leave it to adjustListIndent / default Tab
+
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    for (QTextBlock b = first; b.isValid(); b = b.next()) {
+        edit.setPosition(b.position());
+        if (deeper) {
+            edit.insertText(QStringLiteral("  ")); // one level = two spaces
+        } else {
+            const QString line = b.text();
+            int n = 0;
+            while (n < 2 && n < line.size() && line[n] == QLatin1Char(' '))
+                ++n;
+            if (n == 0 && !line.isEmpty() && line[0] == QLatin1Char('\t'))
+                n = 1; // also accept a leading tab
+            if (n > 0) {
+                edit.movePosition(QTextCursor::NextCharacter,
+                                  QTextCursor::KeepAnchor, n);
+                edit.removeSelectedText();
+            }
+        }
+        if (b == last)
+            break;
+    }
+    edit.endEditBlock();
+
+    // Re-select the affected lines so a run of Tabs keeps working. The block
+    // handles stay valid across the edits (no blocks were split or merged).
+    QTextCursor sel(document());
+    sel.setPosition(first.position());
+    sel.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+    setTextCursor(sel);
+    return true;
+}
+
 void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     // Ctrl+Del deletes the whole note. QPlainTextEdit would otherwise eat this
     // as "delete word forward" (it claims the shortcut via ShortcutOverride),
@@ -473,6 +536,27 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             break;
         }
     }
+    // Ctrl+Enter: open a new line below without splitting the current one. Move
+    // to the line end first, then reuse the normal Enter logic so a list keeps
+    // continuing (and an empty item still clears itself).
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        (event->modifiers() & Qt::ControlModifier)) {
+        QTextCursor c = textCursor();
+        c.movePosition(QTextCursor::EndOfBlock);
+        setTextCursor(c);
+        if (insideCodeBlock(c.block()) || !continueList())
+            textCursor().insertText(QStringLiteral("\n"));
+        ensureCursorVisible();
+        return;
+    }
+
+    // Tab / Shift+Tab over a multi-line selection indents every selected line.
+    // Works inside code blocks too, so it runs before the code-block guard.
+    if (event->key() == Qt::Key_Tab && indentSelection(true))
+        return;
+    if (event->key() == Qt::Key_Backtab && indentSelection(false))
+        return;
+
     // Inside a fenced code block the text is verbatim: Enter and Tab insert a
     // plain newline / indent instead of continuing a list or folding markup.
     const bool inCode = insideCodeBlock(textCursor().block());
@@ -1284,6 +1368,11 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
         if (geo.top() > event->rect().bottom())
             break;
+        // A heading hidden inside an enclosing fold (e.g. a collapsed child under
+        // a collapsed parent) lays out at zero height on the parent's line; it
+        // must not paint its own arrow/ellipsis there.
+        if (!block.isVisible())
+            continue;
         if (geo.bottom() < event->rect().top() || !headingFoldable(block))
             continue;
         QTextCursor hc(block);

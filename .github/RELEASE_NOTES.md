@@ -1,19 +1,27 @@
-## Emerald 1.1.1
+## Emerald 1.2.0
 
-A small fix-up release polishing links, navigation and folding.
+A feature release: self-updating, multi-line indenting, adjustable line
+spacing, and a clean-up to heading folding.
+
+### New
+- **Check for Updates.** A new **Check for Updates…** entry in the gear menu
+  asks GitHub for the latest release, and — on Linux AppImage — downloads it,
+  swaps it in place, and offers to restart. macOS and Windows open the new
+  download. The current version now shows in the bottom-right, by the gear.
+- **Indent a block with Tab.** Select several lines and press **Tab** /
+  **Shift+Tab** to indent / outdent them all at once (two spaces a level); a
+  single list item still indents the way it always did.
+- **Adjustable line spacing.** Settings gains a **Line spacing** control
+  (100–250%) to open up the gap between rows, with a live preview.
+- **Ctrl+Enter — new line, no split.** Start a fresh line below without
+  splitting the current one. Inside a list it keeps continuing the list (and
+  clears an empty bullet), so it behaves like a normal Enter that never breaks
+  the line you're on.
 
 ### Fixes
-- **Link click area stays on the text.** Clicking in the empty space past the
-  end of a line ending in a `[[link]]` or `[text](url)` no longer follows the
-  link — only the link text itself is clickable.
-- **Alt / Option + ← / → navigate back / forward on macOS.** The Option+Arrow
-  history shortcut used to be swallowed by the editor's word navigation on
-  macOS; it now works on every platform.
-
-### Changed
-- **Tidier heading folding.** Collapsing a heading now leaves the blank line(s)
-  before the next heading visible, so collapsed sections keep their spacing. A
-  heading with nothing but blank lines under it is no longer foldable.
+- **No more doubled fold markers.** Collapsing a child heading and then its
+  parent used to paint two fold arrows and two `…` next to the parent title.
+  A heading hidden inside an enclosing fold no longer draws its own marker.
 
 ### Downloads
 | Platform | File | Notes |

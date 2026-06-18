@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Emerald VERSION 1.1.1 LANGUAGES CXX)
+project(Emerald VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,7 +12,7 @@ endif()
 
 # Core is pulled in by Widgets, but naming it explicitly gives us Qt's
 # deployment API (qt_generate_deploy_app_script).
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 
 # --- Platform icons -------------------------------------------------------
 # Pre-generated and committed (see packaging/macos/make_icns.py and the .ico
@@ -56,12 +56,17 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/MarkdownHighlighter.cpp
   src/ui/SearchPopup.h
   src/ui/SearchPopup.cpp
+  src/ui/Updater.h
+  src/ui/Updater.cpp
   resources/resources.qrc
   ${EMERALD_PLATFORM_SOURCES}
 )
 
 target_include_directories(emerald PRIVATE src)
-target_link_libraries(emerald PRIVATE Qt6::Widgets)
+target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network)
+# Surface the project version to the app (shown in the sidebar footer, used by
+# the update check to compare against the latest GitHub release).
+target_compile_definitions(emerald PRIVATE EMERALD_VERSION="${PROJECT_VERSION}")
 
 if(APPLE)
   set_target_properties(emerald PROPERTIES

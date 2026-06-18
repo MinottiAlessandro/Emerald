@@ -123,6 +123,12 @@ QToolButton#navButton:disabled {
 QToolButton#gearButton::menu-indicator {
     image: none;
 }
+QLabel#versionLabel {
+    background: transparent;
+    color: #4f6555;
+    font-size: 12px;
+    padding-right: 4px;
+}
 
 QWidget#sidebar {
     background: #101113;

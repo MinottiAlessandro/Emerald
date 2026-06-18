@@ -25,6 +25,12 @@ public:
     // Set the editor body font (family + size) and keep heading scaling in sync.
     void applyFont(const QFont &font);
 
+    // Vertical spacing between rows, as a percent of the font's natural line
+    // height (100 = normal). Persisted in settings; re-applied after each note
+    // load via applyLineSpacing().
+    void setLineSpacing(int percent);
+    void applyLineSpacing(); // push the current spacing onto every block
+
     // Select and scroll to the first occurrence of `text` (case-insensitive).
     void jumpToMatch(const QString &text);
 
@@ -63,6 +69,9 @@ private:
     // On Tab/Shift+Tab inside a list item, indent/outdent it by one level.
     // Returns true if it handled the key.
     bool adjustListIndent(bool deeper);
+    // On Tab/Shift+Tab with a selection spanning multiple lines, indent/outdent
+    // every selected line by one level (two spaces). Returns true if handled.
+    bool indentSelection(bool deeper);
     // On Tab inside a pipe table, move to the next cell — growing the table
     // (new column/row) at its edges. Shift+Tab (forward=false) just steps back
     // one cell. Returns true if it handled the key.
@@ -136,4 +145,5 @@ private:
 
     int m_lastCursorBlock = 0;   // to detect leaving a table
     bool m_prettifying = false;  // guard against re-entrant table reformatting
+    int m_lineSpacing = 100;     // row spacing, percent of natural line height
 };
