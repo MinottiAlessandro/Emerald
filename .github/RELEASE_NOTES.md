@@ -1,20 +1,33 @@
-## Emerald 1.2.2
+## Emerald 1.3.0
 
-A fix-up release for heading folding.
+A feature release: every note can now have its own little **mascot**.
+
+### New
+- **Per-note mascots.** Each note can carry a small, procedurally generated
+  creature in the bottom-right corner, drawn entirely with the renderer (no
+  images, no new dependencies) from a seed mixed out of the note's title and
+  text — so it gives the note a memorable visual identity. Around three dozen
+  archetypes span ordinary animals (cat, fox, bear, bunny, owl, penguin, fish,
+  frog…), mythological creatures (dragon, unicorn, phoenix, angel, demon, ghost,
+  fairy, griffin, cyclops…) and objects (robot, mushroom, potion, star, crystal,
+  snowman, cactus…). Hover one to see it gently bob and blink.
+- **Mascot gallery.** Click a mascot — or open it from the gear menu — to see
+  every mascot in the vault laid out in a grid; click one to jump straight to
+  its note. (The gallery is a transient view, nothing is saved.)
+- **Manual or automatic.** Use **Generate Mascot** / **Delete Mascot** in the
+  gear menu (delete is sticky — it won't reappear on its own). Auto-generation
+  once a note passes a character count is available under **Settings → Mascot**
+  and is **off by default**. Mascots are stored per-vault in
+  `.emerald/mascots.json`, so they travel with your notes.
+- **Per-line formatting for multi-line selections.** Select several lines and
+  press Ctrl+B / Ctrl+I — or type a pairing character (`*` `(` `_` `=` `[` `'`
+  `"` `` ` `` `~`) — and each line is formatted on its own: a fully selected
+  line is wrapped end to end, a partially selected one only over the selected
+  span. Press the bold/italic shortcut again to toggle it back off.
 
 ### Fixes
-- **Enter at the start of a collapsed heading keeps it collapsed.** Pressing
-  Enter at the very start of a folded heading now inserts the blank line above
-  without popping the section open.
-- **Steady cursor on the blank lines under a fold.** Increasing the line
-  spacing left a collapsed section occupying a sliver of space, which made the
-  caret on the blank lines below it render only half-drawn. Folded-away lines
-  now take no room, so the caret shows in full.
-- **Typing under a fold no longer swallows your text.** Typing on the visible
-  blank lines beneath a collapsed heading used to pull the new text into the
-  fold and hide it. A fold now keeps the extent it had when you collapsed it;
-  the typed text stays put, and the section only re-measures when you collapse
-  it again.
+- **Smoother edge scrolling.** When the caret reaches the top or bottom of the
+  viewport the editor now scrolls one line at a time instead of jumping.
 
 ### Downloads
 | Platform | File | Notes |
