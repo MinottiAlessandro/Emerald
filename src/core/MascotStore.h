@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 
 // Per-vault persistence of each note's mascot state, saved as JSON in
 // <vault>/.emerald/mascots.json so mascots travel with the vault (copy or sync
@@ -18,6 +19,10 @@ public:
     // Point at a vault root and load its mascots.json (clears state for an
     // empty/missing file). Pass an empty root to detach.
     void load(const QString &vaultRoot);
+
+    // Relative paths of every note that currently has a (live) mascot, sorted
+    // case-insensitively. Used to populate the gallery.
+    QStringList notesWithMascots() const;
 
     // The frozen seed for a note, or 0 if it has no live mascot.
     quint64 seed(const QString &relPath) const;

@@ -1,8 +1,13 @@
 #include "Mascot.h"
 
+#include <QEnterEvent>
+#include <QImage>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QPolygonF>
+#include <QTimer>
 #include <QtMath>
 #include <random>
 
@@ -18,14 +23,16 @@ namespace {
 
 enum Topper { TopNone, TopCatEars, TopBearEars, TopBunnyEars, TopMouseEars,
               TopHornsSmall, TopHornsCurved, TopUnicorn, TopAntlers, TopHalo,
-              TopCrown, TopWizardHat, TopAntennae, TopLeaf, TopFlame, TopTuft };
+              TopCrown, TopWizardHat, TopAntennae, TopLeaf, TopFlame, TopTuft,
+              TopTopHat, TopSpikes };
 enum Back { BackNone, BackBatWings, BackFeatherWings, BackFairyWings, BackCape };
 enum Eyes { EyeDot, EyeSparkle, EyeSleepy, EyeOval, EyeHappy, EyeAngry,
             EyeCyclops, EyeStar, EyeWink };
 enum Mouth { MouthSmile, MouthCat, MouthOpen, MouthFang, MouthBeak, MouthGrin,
              MouthFlat };
 enum BodyShape { BodyRound, BodyTall, BodyWide, BodySlime, BodyGhost,
-                 BodyBottle, BodyStar, BodyGem, BodyMushroom, BodyRobot };
+                 BodyBottle, BodyStar, BodyGem, BodyMushroom, BodyRobot,
+                 BodyOcto, BodyJelly, BodyCactus, BodySnowman };
 enum Tail { TailNone, TailCat, TailBushy, TailDevil, TailFish, TailThin,
             TailFluffy };
 enum Pattern { PatNone, PatSpots, PatStripes, PatScales };
@@ -34,13 +41,15 @@ enum PalMode { PalNormal, PalFiery, PalGhostly, PalMetallic, PalPastel };
 enum Arche { A_Cat, A_Fox, A_Bear, A_Bunny, A_Mouse, A_Frog, A_Owl, A_Penguin,
              A_Fish, A_Deer, A_Dragon, A_Unicorn, A_Demon, A_Angel, A_Phoenix,
              A_Ghost, A_Slime, A_Golem, A_Fairy, A_Griffin, A_Cyclops, A_Robot,
-             A_Mushroom, A_Potion, A_Star, A_Crystal, A_COUNT };
+             A_Mushroom, A_Potion, A_Star, A_Crystal, A_Dino, A_Octopus,
+             A_Jellyfish, A_Snowman, A_Cactus, A_GhostCat, A_Bat, A_Bee,
+             A_COUNT };
 
 struct Traits {
     int body = BodyRound, topper = TopNone, back = BackNone, eyes = EyeDot;
     int mouth = MouthSmile, tail = TailNone, pattern = PatNone, pal = PalNormal;
     bool cheeks = false, feet = true, belly = true, gem = false;
-    bool sparkles = false, whiskers = false;
+    bool sparkles = false, whiskers = false, carrot = false;
     double hue = 0.0;
 };
 
@@ -145,6 +154,34 @@ Traits rollTraits(RNG &g) {
     case A_Crystal:
         t.body = BodyGem; t.eyes = EyeSparkle; t.gem = true; t.sparkles = true;
         t.pal = PalMetallic; t.belly = false; t.feet = false; break;
+    case A_Dino:
+        t.body = g.chance(.5) ? BodyTall : BodyRound; t.topper = TopSpikes;
+        t.mouth = MouthFang; t.tail = TailFish; t.hue = g.uni(0.26, 0.42); break;
+    case A_Octopus:
+        t.body = BodyOcto; t.eyes = EyeSparkle; t.feet = false; t.belly = false;
+        t.hue = g.uni(0.55, 0.95); break;
+    case A_Jellyfish:
+        t.body = BodyJelly; t.eyes = g.chance(.5) ? EyeHappy : EyeDot;
+        t.feet = false; t.belly = false; t.pal = PalGhostly;
+        t.sparkles = g.chance(.4); break;
+    case A_Snowman:
+        t.body = BodySnowman; t.topper = TopTopHat; t.carrot = true;
+        t.mouth = MouthFlat; t.feet = false; t.belly = false; break;
+    case A_Cactus:
+        t.body = BodyCactus; t.eyes = g.chance(.5) ? EyeHappy : EyeDot;
+        t.feet = false; t.belly = false; t.cheeks = g.chance(.5);
+        t.hue = g.uni(0.30, 0.40); break;
+    case A_GhostCat:
+        t.body = BodyGhost; t.topper = TopCatEars; t.eyes = EyeSleepy;
+        t.whiskers = true; t.mouth = MouthCat; t.pal = PalGhostly;
+        t.feet = false; t.belly = false; break;
+    case A_Bat:
+        t.topper = TopCatEars; t.back = BackBatWings; t.mouth = MouthFang;
+        t.hue = g.uni(0.70, 0.82); break;
+    case A_Bee:
+        t.body = g.chance(.5) ? BodyRound : BodyWide; t.topper = TopAntennae;
+        t.back = BackFairyWings; t.pattern = PatStripes;
+        t.hue = g.uni(0.12, 0.16); break;
     }
     return t;
 }
@@ -311,6 +348,95 @@ void drawBody(Ctx &c, const Traits &t) {
         cap.quadTo(c.cx + c.bw / 2, c.bodyTop, c.cx + c.bw / 2, capBot);
         cap.quadTo(c.cx, capBot + 7, c.cx - c.bw / 2, capBot);
         p.drawPath(cap);
+        break;
+    }
+    case BodyOcto: {
+        const int legs = 5;
+        const double baseY = c.bodyTop + c.bh * 0.72;
+        for (int i = 0; i < legs; ++i) {
+            const double x = c.cx - c.bw * 0.36 + i * (c.bw * 0.72 / (legs - 1));
+            QPainterPath leg;
+            leg.moveTo(x - 4, baseY);
+            leg.quadTo(x - 5, c.groundY + 5, x, c.groundY + 2);
+            leg.quadTo(x + 5, c.groundY + 5, x + 4, baseY);
+            p.drawPath(leg);
+        }
+        p.drawEllipse(QRectF(c.cx - c.bw / 2, c.bodyTop, c.bw, c.bh)); // head
+        break;
+    }
+    case BodyJelly: {
+        const double L = c.cx - c.bw / 2, R = c.cx + c.bw / 2;
+        const double T = c.bodyTop, mb = c.bodyTop + c.bh * 0.68;
+        QPainterPath bell;
+        bell.moveTo(L, mb);
+        bell.quadTo(L, T, c.cx, T);
+        bell.quadTo(R, T, R, mb);
+        const int bumps = 4, seg = (R - L) / bumps;
+        for (int i = 0; i < bumps; ++i)
+            bell.quadTo(R - seg * (i + 0.5), mb + 6, R - seg * (i + 1), mb);
+        bell.closeSubpath();
+        p.drawPath(bell);
+        QPen tp(c.pal.edge, 2);
+        tp.setCapStyle(Qt::RoundCap);
+        p.setPen(tp);
+        p.setBrush(Qt::NoBrush);
+        for (int i = 0; i < 5; ++i) {
+            const double x = c.cx - c.bw * 0.30 + i * (c.bw * 0.6 / 4);
+            QPainterPath tt;
+            tt.moveTo(x, mb + 2);
+            tt.quadTo(x + 4, (mb + c.groundY) / 2, x, c.groundY + 4);
+            p.drawPath(tt);
+        }
+        break;
+    }
+    case BodyCactus: {
+        const double colW = c.bw * 0.42;
+        QRectF col(c.cx - colW / 2, c.bodyTop, colW, c.bh);
+        p.drawRoundedRect(col, colW * 0.5, colW * 0.5);
+        auto arm = [&](double sgn) {
+            const double ax = c.cx + sgn * colW * 0.45, ay = c.bcy + 6;
+            QPainterPath a;
+            a.moveTo(ax, ay);
+            a.lineTo(ax + sgn * 13, ay);
+            a.lineTo(ax + sgn * 13, ay - 12);
+            QPen e(c.pal.edge, 11); e.setCapStyle(Qt::RoundCap);
+            QPen f(c.pal.body, 8); f.setCapStyle(Qt::RoundCap);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(e); p.drawPath(a);
+            p.setPen(f); p.drawPath(a);
+        };
+        arm(-1); arm(1);
+        p.setPen(c.edge());
+        p.setBrush(c.pal.body);
+        p.drawRoundedRect(col, colW * 0.5, colW * 0.5); // over arm roots
+        QPen sp(QColor(255, 255, 255, 130), 1);
+        p.setPen(sp);
+        for (int i = 0; i < 5; ++i) {
+            const double y = c.bodyTop + 8 + i * (c.bh - 14) / 4.0;
+            p.drawLine(QPointF(c.cx - 3, y), QPointF(c.cx - 6, y - 2));
+            p.drawLine(QPointF(c.cx + 3, y), QPointF(c.cx + 6, y - 2));
+        }
+        p.setPen(c.edge());
+        p.setBrush(QColor(0xb0, 0x6a, 0x3a)); // terracotta pot
+        p.drawRoundedRect(QRectF(c.cx - colW * 0.75, c.groundY - 9,
+                                 colW * 1.5, 11), 2, 2);
+        break;
+    }
+    case BodySnowman: {
+        const QColor snow(0xf2, 0xf6, 0xfb), snowEdge(0xc4, 0xd4, 0xe4);
+        QPen se(snowEdge, 1.6);
+        se.setJoinStyle(Qt::RoundJoin);
+        p.setPen(se);
+        p.setBrush(snow);
+        const double headR = c.bw * 0.30, botR = c.bw * 0.45;
+        const double botCy = c.groundY - botR;
+        const double headCy = botCy - botR - headR * 0.45;
+        p.drawEllipse(QPointF(c.cx, botCy), botR, botR);
+        p.drawEllipse(QPointF(c.cx, headCy), headR, headR);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x33, 0x33, 0x3a));
+        for (int i = 0; i < 2; ++i)
+            p.drawEllipse(QPointF(c.cx, botCy - 4 + i * 9), 1.6, 1.6);
         break;
     }
     }
@@ -550,6 +676,29 @@ void drawTopper(Ctx &c, const Traits &t) {
                        QPointF(c.cx + i * 4.5, ty - 7));
         break;
     }
+    case TopTopHat: {
+        p.setPen(c.edge());
+        p.setBrush(QColor(0x2a, 0x2a, 0x30));
+        p.drawRoundedRect(QRectF(c.cx - 12, ty - 2, 24, 3.5), 1, 1); // brim
+        p.drawRect(QRectF(c.cx - 8, ty - 16, 16, 15));               // crown
+        p.setPen(Qt::NoPen);
+        p.setBrush(c.pal.accent);
+        p.drawRect(QRectF(c.cx - 8, ty - 6, 16, 3)); // band
+        break;
+    }
+    case TopSpikes:
+        p.setPen(c.edge());
+        p.setBrush(c.pal.belly);
+        for (int i = -1; i <= 1; ++i) {
+            QPainterPath sp;
+            const double x = c.cx + i * 10;
+            sp.moveTo(x - 6, ty + 8);
+            sp.lineTo(x, ty - 10 - (i == 0 ? 2 : 0));
+            sp.lineTo(x + 6, ty + 8);
+            sp.closeSubpath();
+            p.drawPath(sp);
+        }
+        break;
     }
 }
 
@@ -678,7 +827,7 @@ void drawTail(Ctx &c, const Traits &t) {
     }
 }
 
-void drawFace(Ctx &c, const Traits &t) {
+void drawFace(Ctx &c, const Traits &t, bool blink) {
     QPainter &p = c.p;
     const double ey = c.faceCy, dx = c.faceDX;
 
@@ -752,7 +901,24 @@ void drawFace(Ctx &c, const Traits &t) {
         }
     };
 
-    if (t.eyes == EyeCyclops) {
+    auto closedEye = [&](double x) {
+        QPen ep(c.pal.dark, 1.8);
+        ep.setCapStyle(Qt::RoundCap);
+        p.setPen(ep);
+        p.setBrush(Qt::NoBrush);
+        QPainterPath a;
+        a.moveTo(x - 3.5, ey);
+        a.quadTo(x, ey + 3.0, x + 3.5, ey);
+        p.drawPath(a);
+    };
+    if (blink) {
+        if (t.eyes == EyeCyclops)
+            closedEye(c.cx);
+        else {
+            closedEye(c.cx - dx);
+            closedEye(c.cx + dx);
+        }
+    } else if (t.eyes == EyeCyclops) {
         p.setPen(c.edge()); p.setBrush(Qt::white);
         p.drawEllipse(QPointF(c.cx, ey), 7, 7.5);
         p.setPen(Qt::NoPen); p.setBrush(c.pal.dark);
@@ -774,7 +940,14 @@ void drawFace(Ctx &c, const Traits &t) {
 
     // Nose + mouth.
     const double ny = ey + 7.5;
-    if (t.mouth != MouthBeak) {
+    if (t.carrot) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(hsv(0.07, 0.85, 0.95));
+        QPolygonF car;
+        car << QPointF(c.cx - 2, ey + 1) << QPointF(c.cx + 2, ey + 1)
+            << QPointF(c.cx + 1, ey + 10);
+        p.drawPolygon(car);
+    } else if (t.mouth != MouthBeak) {
         p.setPen(Qt::NoPen);
         p.setBrush(t.cheeks ? QColor(255, 130, 150) : c.pal.edge);
         p.drawEllipse(QPointF(c.cx, ny), 2.0, 1.5);
@@ -857,16 +1030,90 @@ void drawExtras(Ctx &c, const Traits &t, RNG &g) {
                          c.bw * 0.32, c.bh * 0.24));
 }
 
+// Roll the seed's traits, lay out geometry + palette, and paint the layered
+// creature into `p` (offset vertically by `bob`, eyes shut when `blink`).
+// Shared by the live widget and the gallery's pixmaps.
+void drawCreature(QPainter &p, quint64 seed, int w, int h, double bob,
+                  bool blink) {
+    if (seed == 0)
+        return;
+    std::mt19937_64 rng(seed);
+    RNG g{rng};
+    const Traits t = rollTraits(g);
+
+    p.setRenderHint(QPainter::Antialiasing);
+    const double pad = 5.0;
+    const double s = qMin((w - 2 * pad) / 100.0, (h - 2 * pad) / 110.0);
+    p.save();
+    p.translate((w - 100 * s) / 2.0, (h - 110 * s) / 2.0 + bob);
+    p.scale(s, s);
+
+    // Body proportions per shape (+ where the face sits on it).
+    double bw = 60, bh = 58;
+    switch (t.body) {
+    case BodyTall:     bw = 52; bh = 66; break;
+    case BodyWide:     bw = 66; bh = 52; break;
+    case BodySlime:    bw = 64; bh = 50; break;
+    case BodyGhost:    bw = 56; bh = 64; break;
+    case BodyBottle:   bw = 50; bh = 64; break;
+    case BodyStar:     bw = 76; bh = 76; break;
+    case BodyGem:      bw = 56; bh = 64; break;
+    case BodyMushroom: bw = 72; bh = 64; break;
+    case BodyRobot:    bw = 58; bh = 56; break;
+    case BodyOcto:     bw = 64; bh = 50; break;
+    case BodyJelly:    bw = 60; bh = 50; break;
+    case BodyCactus:   bw = 60; bh = 64; break;
+    case BodySnowman:  bw = 56; bh = 76; break;
+    default: break;
+    }
+    Ctx c{p, 50.0, 96.0, bw, bh, 0, 0, 0, bw * 0.19};
+    c.bodyTop = c.groundY - bh;
+    c.bcy = c.groundY - bh / 2;
+    c.faceCy = c.bcy - bh * 0.04;
+    c.pal = buildPalette(t.pal, t.hue);
+    if (t.body == BodyStar)   { c.faceCy = c.bodyTop + bh / 2 + 2; c.faceDX = bw * 0.13; }
+    if (t.body == BodyGem)    { c.faceCy = c.bodyTop + bh * 0.55; c.faceDX = bw * 0.15; }
+    if (t.body == BodyBottle) { c.faceCy = c.bodyTop + bh * 0.66; c.faceDX = bw * 0.20; }
+    if (t.body == BodyMushroom){ c.faceCy = c.bodyTop + bh * 0.74; c.faceDX = bw * 0.13; }
+    if (t.body == BodyOcto)   { c.faceCy = c.bodyTop + bh * 0.46; c.faceDX = bw * 0.18; }
+    if (t.body == BodyJelly)  { c.faceCy = c.bodyTop + bh * 0.40; c.faceDX = bw * 0.16; }
+    if (t.body == BodyCactus) { c.faceDX = bw * 0.12; }
+    if (t.body == BodySnowman) {
+        const double headR = bw * 0.30, botR = bw * 0.45;
+        c.faceCy = (c.groundY - botR) - botR - headR * 0.45;
+        c.faceDX = headR * 0.5;
+    }
+
+    // Back-to-front layers.
+    drawBack(c, t);
+    drawTail(c, t);
+    drawBody(c, t);
+    if (t.belly)
+        drawBelly(c);
+    drawPattern(c, t, g);
+    drawTopper(c, t);
+    drawFace(c, t, blink);
+    drawExtras(c, t, g);
+    p.restore();
+}
+
 } // namespace
 
 Mascot::Mascot(QWidget *parent) : QWidget(parent) {
     // The global stylesheet paints every QWidget with the app background; this
     // objectName lets the QSS keep the mascot transparent so only the creature
-    // shows over the editor.
+    // shows.
     setObjectName(QStringLiteral("mascot"));
-    // Decorative only — never steal clicks/scroll from the editor underneath.
-    setAttribute(Qt::WA_TransparentForMouseEvents);
     setFixedSize(132, 152);
+    setCursor(Qt::PointingHandCursor);
+    setToolTip(tr("Open the mascot gallery"));
+    // A gentle idle bob + blink, but only while hovered — no idle CPU at rest.
+    m_idle = new QTimer(this);
+    m_idle->setInterval(33);
+    connect(m_idle, &QTimer::timeout, this, [this] {
+        ++m_tick;
+        update();
+    });
     hide();
 }
 
@@ -889,56 +1136,38 @@ void Mascot::setSeed(quint64 seed) {
     update();
 }
 
+void Mascot::enterEvent(QEnterEvent *) {
+    m_hovered = true;
+    m_tick = 0;
+    m_idle->start();
+}
+
+void Mascot::leaveEvent(QEvent *) {
+    m_hovered = false;
+    m_idle->stop();
+    update(); // settle back to the rest pose
+}
+
+void Mascot::mousePressEvent(QMouseEvent *e) {
+    if (e->button() == Qt::LeftButton)
+        emit clicked();
+}
+
 void Mascot::paintEvent(QPaintEvent *) {
     if (m_seed == 0)
         return;
-
-    std::mt19937_64 rng(m_seed);
-    RNG g{rng};
-    const Traits t = rollTraits(g);
-
+    const double bob = m_hovered ? std::sin(m_tick * 0.22) * 2.5 : 0.0;
+    const bool blink = m_hovered && (m_tick % 78) < 4;
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-    const double pad = 5.0;
-    const double s = qMin((width() - 2 * pad) / 100.0,
-                          (height() - 2 * pad) / 110.0);
-    p.translate((width() - 100 * s) / 2.0, (height() - 110 * s) / 2.0);
-    p.scale(s, s);
+    drawCreature(p, m_seed, width(), height(), bob, blink);
+}
 
-    // Body geometry per shape (+ where the face sits on it).
-    double bw = 60, bh = 58;
-    switch (t.body) {
-    case BodyTall:  bw = 52; bh = 66; break;
-    case BodyWide:  bw = 66; bh = 52; break;
-    case BodySlime: bw = 64; bh = 50; break;
-    case BodyGhost: bw = 56; bh = 64; break;
-    case BodyBottle:bw = 50; bh = 64; break;
-    case BodyStar:  bw = 76; bh = 76; break;
-    case BodyGem:   bw = 56; bh = 64; break;
-    case BodyMushroom: bw = 72; bh = 64; break;
-    case BodyRobot: bw = 58; bh = 56; break;
-    default: break;
+QPixmap Mascot::renderPixmap(quint64 seed, QSize size) {
+    QImage img(size, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    if (seed != 0) {
+        QPainter p(&img);
+        drawCreature(p, seed, size.width(), size.height(), 0.0, false);
     }
-    Ctx c{p, 50.0, 96.0, bw, bh, 0, 0, 0, bw * 0.19};
-    c.bodyTop = c.groundY - bh;
-    c.bcy = c.groundY - bh / 2;
-    c.faceCy = c.bcy - bh * 0.04;
-    c.pal = buildPalette(t.pal, t.hue);
-    if (t.body == BodyStar)  { c.faceCy = c.bodyTop + bh / 2 + 2; c.faceDX = bw * 0.13; }
-    if (t.body == BodyGem)   { c.faceCy = c.bodyTop + bh * 0.55; c.faceDX = bw * 0.15; }
-    if (t.body == BodyBottle){ c.faceCy = c.bodyTop + bh * 0.66; c.faceDX = bw * 0.20; }
-    if (t.body == BodyMushroom) {
-        c.faceCy = c.bodyTop + bh * 0.74; c.faceDX = bw * 0.13;
-    }
-
-    // Back-to-front layers.
-    drawBack(c, t);
-    drawTail(c, t);
-    drawBody(c, t);
-    if (t.belly)
-        drawBelly(c);
-    drawPattern(c, t, g);
-    drawTopper(c, t);
-    drawFace(c, t);
-    drawExtras(c, t, g);
+    return QPixmap::fromImage(img);
 }

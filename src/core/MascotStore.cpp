@@ -36,6 +36,15 @@ void MascotStore::load(const QString &vaultRoot) {
     }
 }
 
+QStringList MascotStore::notesWithMascots() const {
+    QStringList out;
+    for (auto it = m_states.begin(); it != m_states.end(); ++it)
+        if (it.value().seed != 0 && !it.value().suppressed)
+            out << it.key();
+    out.sort(Qt::CaseInsensitive);
+    return out;
+}
+
 quint64 MascotStore::seed(const QString &relPath) const {
     return m_states.value(relPath).seed;
 }

@@ -22,6 +22,7 @@
 #include <QFontComboBox>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGridLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -39,6 +40,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
+#include <QScrollArea>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTimer>
@@ -580,9 +582,10 @@ void MainWindow::buildUi() {
 
     // The per-note mascot sits in the app's bottom-right corner — a child of
     // the editor *pane* (not the editor), so it lives in the margin beside the
-    // centered text column rather than over the text. Mouse-transparent; shown
-    // only when the open note has one.
+    // centered text column rather than over the text. Shown only when the open
+    // note has one; hovering bobs/blinks it, clicking opens the gallery.
     m_mascot = new Mascot(m_centerPane);
+    connect(m_mascot, &Mascot::clicked, this, &MainWindow::openMascotGallery);
 }
 
 void MainWindow::notify(const QString &text, int ms) {
@@ -681,6 +684,57 @@ void MainWindow::updateMascotActions() {
         m_delMascotAction->setEnabled(m_mascot && m_mascot->seed() != 0);
 }
 
+// A transient grid of every mascot in the vault (not persisted anywhere — it's
+// rebuilt from the stored seeds each time). Clicking one opens that note.
+void MainWindow::openMascotGallery() {
+    if (!m_vault)
+        return;
+    const QStringList rels = m_mascotStore.notesWithMascots();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Mascot Gallery"));
+    dlg.resize(560, 540);
+    auto *outer = new QVBoxLayout(&dlg);
+
+    if (rels.isEmpty()) {
+        auto *empty = new QLabel(
+            tr("No mascots yet.\nOpen a note and generate one!"), &dlg);
+        empty->setAlignment(Qt::AlignCenter);
+        outer->addWidget(empty);
+    } else {
+        auto *scroll = new QScrollArea(&dlg);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        auto *grid = new QWidget;
+        auto *gl = new QGridLayout(grid);
+        gl->setSpacing(6);
+        const int cols = 4;
+        const QDir root(m_vault->root());
+        for (int i = 0; i < rels.size(); ++i) {
+            const QString abs = root.filePath(rels.at(i));
+            const QString title = Vault::titleFromPath(abs);
+            auto *cell = new QToolButton(grid);
+            cell->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+            cell->setAutoRaise(true);
+            cell->setIconSize(QSize(120, 132));
+            cell->setIcon(QIcon(
+                Mascot::renderPixmap(m_mascotStore.seed(rels.at(i)),
+                                     QSize(120, 132))));
+            cell->setText(title);
+            cell->setToolTip(title);
+            connect(cell, &QToolButton::clicked, &dlg, [this, &dlg, abs] {
+                dlg.accept();
+                if (QFileInfo::exists(abs))
+                    openNoteByPath(abs);
+            });
+            gl->addWidget(cell, i / cols, i % cols);
+        }
+        scroll->setWidget(grid);
+        outer->addWidget(scroll);
+    }
+    dlg.exec();
+}
+
 void MainWindow::buildActions() {
     m_gearMenu = new QMenu(this);
 
@@ -720,6 +774,7 @@ void MainWindow::buildActions() {
                         &MainWindow::openSearch);
     m_genMascotAction = make(tr("Generate Mascot"), {}, &MainWindow::generateMascot);
     m_delMascotAction = make(tr("Delete Mascot"), {}, &MainWindow::deleteMascot);
+    auto *gallery = make(tr("Mascot Gallery…"), {}, &MainWindow::openMascotGallery);
     auto *quit = new QAction(tr("Quit"), this);
     quit->setShortcut(QKeySequence(QKeySequence::Quit));
     connect(quit, &QAction::triggered, this, &QWidget::close);
@@ -743,6 +798,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(m_genMascotAction);
     m_gearMenu->addAction(m_delMascotAction);
+    m_gearMenu->addAction(gallery);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(quit);
 

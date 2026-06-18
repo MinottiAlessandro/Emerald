@@ -71,6 +71,7 @@ private:
     void refreshMascot();  // show the open note's stored mascot (or hide it)
     void generateMascot(); // create/replace this note's mascot from its content
     void deleteMascot();   // remove it for this note (sticky: auto won't return)
+    void openMascotGallery(); // transient grid of every mascot in the vault
     void maybeAutoGenerateMascot(); // auto-create once past the char threshold
     void updateMascotActions();     // enable/disable the menu entries
     // A note/folder path relative to the vault root (the mascot store's key).
