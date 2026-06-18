@@ -156,6 +156,9 @@ QString manualText() {
         "current list item)\n"
         "- **Ctrl+Enter** — start a new line below without splitting the current "
         "one (keeps continuing a list)\n"
+        "- Select text, then press **(** **[** **\\*** **_** **=** **'** **\"** "
+        "**`** or **~** to wrap the selection in it (brackets close with their "
+        "match)\n"
         "\n"
         "## Linking notes\n"
         "Type `[[` to autocomplete a link to another note. `[[Emerald Manual]]` "
@@ -1017,7 +1020,6 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     m_loading = true;
     const QString body = m_vault->read(path);
     m_editor->setPlainText(body);
-    m_editor->applyLineSpacing(); // setPlainText resets block formats
     m_loading = false;
 
     m_currentPath = path;
@@ -1183,7 +1185,6 @@ void MainWindow::onFileChanged(const QString &path) {
     const int caret = m_editor->textCursor().position();
     m_loading = true;
     m_editor->setPlainText(disk);
-    m_editor->applyLineSpacing(); // setPlainText resets block formats
     m_loading = false;
     m_lastSavedContent = disk;
 

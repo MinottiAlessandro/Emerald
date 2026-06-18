@@ -19,7 +19,7 @@
 #include <QScrollBar>
 #include <QStringListModel>
 #include <QTextBlock>
-#include <QTextBlockFormat>
+#include <QTextDocument>
 #include <QTextLayout>
 #include <QUrl>
 #include <algorithm>
@@ -87,10 +87,40 @@ QString dashCell(int width, int align) {
         return QLatin1Char(':') + QString(width - 1, QLatin1Char('-'));
     return QString(width, QLatin1Char('-'));
 }
+
+// QPlainTextEdit's layout ignores block-format line height and margins, so the
+// only way to open up the gap between rows is to report a taller block. This
+// layout pads each block with a fixed extra height below its text; the editor
+// sets that padding from the spacing percentage and the font's line height.
+class SpacedTextLayout : public QPlainTextDocumentLayout {
+public:
+    explicit SpacedTextLayout(QTextDocument *doc)
+        : QPlainTextDocumentLayout(doc) {}
+    void setExtraLeading(qreal px) { m_extra = qMax(qreal(0), px); }
+    QRectF blockBoundingRect(const QTextBlock &block) const override {
+        QRectF r = QPlainTextDocumentLayout::blockBoundingRect(block);
+        if (m_extra > 0.0)
+            r.setHeight(r.height() + m_extra);
+        return r;
+    }
+
+private:
+    qreal m_extra = 0.0;
+};
 }
 
 MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     setObjectName(QStringLiteral("editor"));
+
+    // Swap in the spacing-aware layout before anything touches document().
+    // QPlainTextEdit keeps any QPlainTextDocumentLayout it's handed, so the
+    // subclass survives setDocument and drives the row spacing (see below).
+    auto *doc = new QTextDocument(this);
+    auto *spaced = new SpacedTextLayout(doc);
+    doc->setDocumentLayout(spaced);
+    setDocument(doc);
+    m_spacedLayout = spaced;
+
     setFrameStyle(QFrame::NoFrame);
     setLineWrapMode(QPlainTextEdit::WidgetWidth);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // text always wraps
@@ -169,6 +199,7 @@ void MarkdownEditor::applyFont(const QFont &font) {
     document()->setDefaultFont(font);
     if (m_highlighter)
         m_highlighter->setBaseSize(font.pointSizeF());
+    applyLineSpacing(); // extra leading is measured in font line-heights
 }
 
 void MarkdownEditor::setLineSpacing(int percent) {
@@ -177,14 +208,16 @@ void MarkdownEditor::setLineSpacing(int percent) {
 }
 
 void MarkdownEditor::applyLineSpacing() {
-    // Line height is a per-block property, so stamp it across the whole document.
-    // New blocks created by typing inherit the previous block's format, so this
-    // only needs re-running after a full-document reset (i.e. loading a note).
-    QTextBlockFormat fmt;
-    fmt.setLineHeight(m_lineSpacing, QTextBlockFormat::ProportionalHeight);
-    QTextCursor cur(document());
-    cur.select(QTextCursor::Document);
-    cur.mergeBlockFormat(fmt);
+    if (!m_spacedLayout)
+        return;
+    // Turn the percentage into pixels of padding per row: 100% adds nothing,
+    // 200% adds a whole extra line height below each block.
+    const qreal lineHeight = QFontMetricsF(font()).lineSpacing();
+    static_cast<SpacedTextLayout *>(m_spacedLayout)
+        ->setExtraLeading(lineHeight * (m_lineSpacing - 100) / 100.0);
+    // The layout adds the padding on demand from blockBoundingRect; nudge the
+    // view to re-run geometry and repaint with the new spacing.
+    document()->markContentsDirty(0, document()->characterCount());
 }
 
 void MarkdownEditor::jumpToMatch(const QString &text) {
@@ -557,6 +590,14 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     if (event->key() == Qt::Key_Backtab && indentSelection(false))
         return;
 
+    // Typing a pairing character with text selected wraps the selection in it
+    // (select a word, press "(" -> "(word)"). Shift is fine — it produces the
+    // character — but Ctrl/Alt/Cmd mean a shortcut, so bail on those.
+    if (!(event->modifiers() &
+          (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) &&
+        surroundSelection(event->text()))
+        return;
+
     // Inside a fenced code block the text is verbatim: Enter and Tab insert a
     // plain newline / indent instead of continuing a list or folding markup.
     const bool inCode = insideCodeBlock(textCursor().block());
@@ -634,6 +675,33 @@ void MarkdownEditor::wrapSelection(const QString &marker) {
     cur.setPosition(cur.position() - out.size());
     cur.setPosition(cur.position() + out.size(), QTextCursor::KeepAnchor);
     setTextCursor(cur);
+}
+
+// Surround the selection with a typed pairing character: select a word and
+// press "(" to get "(word)". Brackets and parens close with their match; the
+// rest (* _ = ' " ` ~) pair with themselves. Returns false — leaving the key
+// to insert normally — when `text` isn't a pairing char or nothing's selected.
+bool MarkdownEditor::surroundSelection(const QString &text) {
+    if (text.size() != 1)
+        return false;
+    const QChar ch = text.at(0);
+    static const QString pairs = QStringLiteral("*(_=['\"`~");
+    if (!pairs.contains(ch))
+        return false;
+    QTextCursor cur = textCursor();
+    if (!cur.hasSelection())
+        return false;
+    const QChar close = ch == QLatin1Char('(')   ? QLatin1Char(')')
+                        : ch == QLatin1Char('[') ? QLatin1Char(']')
+                                                 : ch;
+    const QString inner = cur.selectedText();
+    cur.insertText(QString(ch) + inner + close);
+    // Re-select the original text, now sitting between the new pair.
+    const int afterClose = cur.position();
+    cur.setPosition(afterClose - 1 - inner.size());
+    cur.setPosition(afterClose - 1, QTextCursor::KeepAnchor);
+    setTextCursor(cur);
+    return true;
 }
 
 void MarkdownEditor::selectCurrentLine() {

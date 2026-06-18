@@ -58,6 +58,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 - Headings, **bold**, *italic*, ***both***, `code`, ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists, fenced ` ``` ` code blocks (with language tag), `|` tables and `[[wiki|links]]` all render in place.
 - **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); Enter on an empty item ends it; Tab / Shift+Tab indent and outdent (a multi-line selection indents every line). Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level).
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
+- **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` `` or `~` to surround it (brackets close with their match).
 - **Code folding** on headings and fenced blocks.
 
 **Links & navigation**

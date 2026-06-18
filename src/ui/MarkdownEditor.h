@@ -9,6 +9,7 @@
 
 class MarkdownHighlighter;
 class QCompleter;
+class QPlainTextDocumentLayout;
 class QStringListModel;
 
 // The writing surface: a plain-text editor wired to the live-preview
@@ -26,10 +27,10 @@ public:
     void applyFont(const QFont &font);
 
     // Vertical spacing between rows, as a percent of the font's natural line
-    // height (100 = normal). Persisted in settings; re-applied after each note
-    // load via applyLineSpacing().
+    // height (100 = normal). Persisted in settings. Handled by the document
+    // layout, so it survives note loads on its own.
     void setLineSpacing(int percent);
-    void applyLineSpacing(); // push the current spacing onto every block
+    void applyLineSpacing(); // recompute the per-row padding from font + percent
 
     // Select and scroll to the first occurrence of `text` (case-insensitive).
     void jumpToMatch(const QString &text);
@@ -109,6 +110,9 @@ private:
     // Editor keybindings (line ops + inline formatting). Each acts on the
     // selection when there is one, else the current line.
     void wrapSelection(const QString &marker); // Ctrl+B / Ctrl+I
+    // Surround the selection with a typed pairing char (* ( _ = [ ' " ` ~).
+    // Returns false when `text` isn't such a char or there's no selection.
+    bool surroundSelection(const QString &text);
     void selectCurrentLine();                  // Ctrl+L
     void duplicateLineOrSelection();           // Ctrl+D
     void deleteCurrentLine();                  // Ctrl+Shift+K
@@ -146,4 +150,7 @@ private:
     int m_lastCursorBlock = 0;   // to detect leaving a table
     bool m_prettifying = false;  // guard against re-entrant table reformatting
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
+    // The spacing-aware document layout (owned by the document). Held as the
+    // base type; applyLineSpacing() downcasts to set the per-row padding.
+    QPlainTextDocumentLayout *m_spacedLayout = nullptr;
 };

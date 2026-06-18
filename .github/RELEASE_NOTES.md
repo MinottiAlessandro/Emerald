@@ -1,27 +1,19 @@
-## Emerald 1.2.0
+## Emerald 1.2.1
 
-A feature release: self-updating, multi-line indenting, adjustable line
-spacing, and a clean-up to heading folding.
-
-### New
-- **Check for Updates.** A new **Check for Updates…** entry in the gear menu
-  asks GitHub for the latest release, and — on Linux AppImage — downloads it,
-  swaps it in place, and offers to restart. macOS and Windows open the new
-  download. The current version now shows in the bottom-right, by the gear.
-- **Indent a block with Tab.** Select several lines and press **Tab** /
-  **Shift+Tab** to indent / outdent them all at once (two spaces a level); a
-  single list item still indents the way it always did.
-- **Adjustable line spacing.** Settings gains a **Line spacing** control
-  (100–250%) to open up the gap between rows, with a live preview.
-- **Ctrl+Enter — new line, no split.** Start a fresh line below without
-  splitting the current one. Inside a list it keeps continuing the list (and
-  clears an empty bullet), so it behaves like a normal Enter that never breaks
-  the line you're on.
+A small fix-up release: line spacing actually works now, plus a handy
+wrap-the-selection shortcut.
 
 ### Fixes
-- **No more doubled fold markers.** Collapsing a child heading and then its
-  parent used to paint two fold arrows and two `…` next to the parent title.
-  A heading hidden inside an enclosing fold no longer draws its own marker.
+- **Line spacing now takes effect.** The Settings **Line spacing** control did
+  nothing because `QPlainTextEdit` ignores block line-height; the editor now
+  drives row spacing through its document layout, so 100–250% really opens up
+  the gap between rows (and the choice survives switching notes).
+
+### New
+- **Wrap the selection.** Select some text and press **(** **[** **\*** **_**
+  **=** **'** **"** **`** or **~** to surround it with that character —
+  brackets and parens close with their match, the rest pair with themselves.
+  The wrapped text stays selected so you can wrap it again.
 
 ### Downloads
 | Platform | File | Notes |
