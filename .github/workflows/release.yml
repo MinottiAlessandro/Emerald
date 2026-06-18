@@ -12,7 +12,7 @@ on:
       tag:
         description: 'Tag to build and attach artifacts to (e.g. v1.0.0)'
         required: true
-        default: 'v1.2.1'
+        default: 'v1.2.2'
 
 env:
   QT_VERSION: '6.8.1'

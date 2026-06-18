@@ -1,19 +1,20 @@
-## Emerald 1.2.1
+## Emerald 1.2.2
 
-A small fix-up release: line spacing actually works now, plus a handy
-wrap-the-selection shortcut.
+A fix-up release for heading folding.
 
 ### Fixes
-- **Line spacing now takes effect.** The Settings **Line spacing** control did
-  nothing because `QPlainTextEdit` ignores block line-height; the editor now
-  drives row spacing through its document layout, so 100–250% really opens up
-  the gap between rows (and the choice survives switching notes).
-
-### New
-- **Wrap the selection.** Select some text and press **(** **[** **\*** **_**
-  **=** **'** **"** **`** or **~** to surround it with that character —
-  brackets and parens close with their match, the rest pair with themselves.
-  The wrapped text stays selected so you can wrap it again.
+- **Enter at the start of a collapsed heading keeps it collapsed.** Pressing
+  Enter at the very start of a folded heading now inserts the blank line above
+  without popping the section open.
+- **Steady cursor on the blank lines under a fold.** Increasing the line
+  spacing left a collapsed section occupying a sliver of space, which made the
+  caret on the blank lines below it render only half-drawn. Folded-away lines
+  now take no room, so the caret shows in full.
+- **Typing under a fold no longer swallows your text.** Typing on the visible
+  blank lines beneath a collapsed heading used to pull the new text into the
+  fold and hide it. A fold now keeps the extent it had when you collapsed it;
+  the typed text stays put, and the section only re-measures when you collapse
+  it again.
 
 ### Downloads
 | Platform | File | Notes |

@@ -99,7 +99,9 @@ public:
     void setExtraLeading(qreal px) { m_extra = qMax(qreal(0), px); }
     QRectF blockBoundingRect(const QTextBlock &block) const override {
         QRectF r = QPlainTextDocumentLayout::blockBoundingRect(block);
-        if (m_extra > 0.0)
+        // A folded-away block lays out at zero height; it must not reclaim space
+        // through the row padding, or collapsed sections leave a phantom gap.
+        if (m_extra > 0.0 && block.isVisible())
             r.setHeight(r.height() + m_extra);
         return r;
     }
@@ -175,7 +177,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
         // sync the active (revealed) block here too, or the merged line keeps
         // its markup concealed with no glyph painted (showing nothing at all).
         m_highlighter->setActiveBlock(textCursor().blockNumber());
-        if (!m_applyingFolds && !m_foldedHeadings.isEmpty())
+        if (!m_applyingFolds && !m_folds.isEmpty())
             reapplyFolds();
     });
 
@@ -583,6 +585,34 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
+    // Enter at the very start of a collapsed heading inserts the blank line
+    // above without popping the section open. A plain insert would split the
+    // heading's block, drift its fold handle onto the new empty line, and
+    // reapplyFolds would then drop the fold; instead re-point the fold (and its
+    // captured end) to the heading's new position and re-apply.
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        !(event->modifiers() &
+          (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier |
+           Qt::ShiftModifier))) {
+        QTextCursor c = textCursor();
+        const int fi = foldIndexOf(c.block());
+        if (fi >= 0 && c.atBlockStart() && !c.hasSelection()) {
+            const int headNum = c.block().blockNumber();
+            const int endNum =
+                m_folds[fi].end.isValid() ? m_folds[fi].end.blockNumber() : -1;
+            m_applyingFolds = true; // hold folds steady across the split
+            c.insertText(QStringLiteral("\n"));
+            setTextCursor(c);
+            m_applyingFolds = false;
+            // Everything from the heading down shifted one block lower.
+            m_folds[fi].heading = document()->findBlockByNumber(headNum + 1);
+            if (endNum >= 0)
+                m_folds[fi].end = document()->findBlockByNumber(endNum + 1);
+            reapplyFolds();
+            return;
+        }
+    }
+
     // Tab / Shift+Tab over a multi-line selection indents every selected line.
     // Works inside code blocks too, so it runs before the code-block guard.
     if (event->key() == Qt::Key_Tab && indentSelection(true))
@@ -938,28 +968,28 @@ bool MarkdownEditor::headingFoldable(const QTextBlock &heading) const {
     return foldSectionEnd(heading).isValid(); // foldable only with content below
 }
 
+int MarkdownEditor::foldIndexOf(const QTextBlock &heading) const {
+    for (int i = 0; i < m_folds.size(); ++i)
+        if (m_folds[i].heading == heading)
+            return i;
+    return -1;
+}
+
 bool MarkdownEditor::isFolded(const QTextBlock &heading) const {
-    for (const QTextBlock &b : m_foldedHeadings)
-        if (b == heading)
-            return true;
-    return false;
+    return foldIndexOf(heading) >= 0;
 }
 
 void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
     if (!headingFoldable(heading))
         return;
-    int idx = -1;
-    for (int i = 0; i < m_foldedHeadings.size(); ++i)
-        if (m_foldedHeadings[i] == heading) {
-            idx = i;
-            break;
-        }
+    const int idx = foldIndexOf(heading);
     if (idx >= 0) {
-        m_foldedHeadings.removeAt(idx);
+        m_folds.removeAt(idx);
     } else {
-        // Move the caret out of the section about to be hidden. Only the blocks
-        // up to foldSectionEnd are hidden; trailing blank lines stay visible, so
-        // a caret resting on one of those is fine to leave in place.
+        // Capture the section extent now and hold it: later edits to the visible
+        // trailing blank lines won't grow the fold (see Fold). Move the caret out
+        // of the part about to be hidden; trailing blanks stay visible, so a
+        // caret resting on one of those is fine to leave in place.
         const QTextBlock end = foldSectionEnd(heading);
         const int caret = textCursor().blockNumber();
         for (QTextBlock b = heading.next(); end.isValid() && b.isValid();
@@ -973,7 +1003,7 @@ void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
             if (b == end)
                 break;
         }
-        m_foldedHeadings.append(heading);
+        m_folds.append({heading, end});
     }
     reapplyFolds();
 }
@@ -984,22 +1014,24 @@ void MarkdownEditor::reapplyFolds() {
     m_applyingFolds = true;
 
     // Forget folds whose heading was edited away or deleted.
-    m_foldedHeadings.erase(
-        std::remove_if(m_foldedHeadings.begin(), m_foldedHeadings.end(),
-                       [this](const QTextBlock &b) {
-                           return !b.isValid() || headingLevel(b.text()) == 0;
-                       }),
-        m_foldedHeadings.end());
+    m_folds.erase(std::remove_if(m_folds.begin(), m_folds.end(),
+                                 [this](const Fold &f) {
+                                     return !f.heading.isValid() ||
+                                            headingLevel(f.heading.text()) == 0;
+                                 }),
+                  m_folds.end());
 
     for (QTextBlock b = document()->firstBlock(); b.isValid(); b = b.next())
         if (!b.isVisible())
             b.setVisible(true);
 
-    for (const QTextBlock &h : m_foldedHeadings) {
-        const QTextBlock end = foldSectionEnd(h);
+    for (const Fold &f : m_folds) {
+        // Use the extent captured when the fold was made. If that block was
+        // deleted since, fall back to recomputing so the fold still holds.
+        QTextBlock end = f.end.isValid() ? f.end : foldSectionEnd(f.heading);
         if (!end.isValid())
             continue;
-        for (QTextBlock b = h.next(); b.isValid(); b = b.next()) {
+        for (QTextBlock b = f.heading.next(); b.isValid(); b = b.next()) {
             b.setVisible(false);
             if (b == end)
                 break; // leave the trailing blank lines before the next heading

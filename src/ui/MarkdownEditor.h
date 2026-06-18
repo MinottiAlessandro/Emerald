@@ -126,6 +126,8 @@ private:
     QTextBlock foldSectionEnd(const QTextBlock &heading) const;
     bool headingFoldable(const QTextBlock &heading) const;
     bool isFolded(const QTextBlock &heading) const;
+    // Index of the fold collapsing `heading` in m_folds, or -1.
+    int foldIndexOf(const QTextBlock &heading) const;
     void toggleFoldAt(const QTextBlock &heading);
     void reapplyFolds(); // recompute block visibility from the folded set
 
@@ -144,8 +146,16 @@ private:
     QCompleter *m_completer = nullptr;
     QStringListModel *m_completionModel = nullptr;
 
-    QList<QTextBlock> m_foldedHeadings; // headings whose section is collapsed
-    bool m_applyingFolds = false;       // guard against re-entrant relayout
+    // A collapsed section: the heading plus the last block it hides. The end is
+    // captured when the fold happens and then held fixed, so editing the visible
+    // trailing blank lines below it doesn't pull more text into the fold — the
+    // extent only changes when the section is folded again.
+    struct Fold {
+        QTextBlock heading;
+        QTextBlock end;
+    };
+    QList<Fold> m_folds;          // collapsed sections
+    bool m_applyingFolds = false; // guard against re-entrant relayout
 
     int m_lastCursorBlock = 0;   // to detect leaving a table
     bool m_prettifying = false;  // guard against re-entrant table reformatting
