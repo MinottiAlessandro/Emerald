@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/MascotStore.h"
 #include "core/SearchIndex.h"
 #include <QHash>
 #include <QMainWindow>
@@ -9,6 +10,7 @@
 
 class Vault;
 class MarkdownEditor;
+class Mascot;
 class SearchPopup;
 class Updater;
 class QTreeWidget;
@@ -65,6 +67,14 @@ private:
     void findInFile(bool forward);
     void positionFindBar();
     void positionToast(); // re-center the toast over the editor's bottom edge
+    void positionMascot(); // pin the mascot to the editor's bottom-right corner
+    void refreshMascot();  // show the open note's stored mascot (or hide it)
+    void generateMascot(); // create/replace this note's mascot from its content
+    void deleteMascot();   // remove it for this note (sticky: auto won't return)
+    void maybeAutoGenerateMascot(); // auto-create once past the char threshold
+    void updateMascotActions();     // enable/disable the menu entries
+    // A note/folder path relative to the vault root (the mascot store's key).
+    QString vaultRel(const QString &absPath) const;
     void onTreeItemClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);
@@ -99,6 +109,11 @@ private:
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
     QAction *m_deleteAction = nullptr; // Delete Note (shared by menu + context menu)
+    QAction *m_genMascotAction = nullptr;
+    QAction *m_delMascotAction = nullptr;
+
+    Mascot *m_mascot = nullptr;   // per-note creature in the bottom-right corner
+    MascotStore m_mascotStore;    // its persisted per-vault state
 
     QFileSystemWatcher *m_watcher = nullptr;
     QString m_currentPath;

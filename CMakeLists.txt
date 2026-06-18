@@ -48,10 +48,14 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/SearchIndex.cpp
   src/core/WikiLink.h
   src/core/WikiLink.cpp
+  src/core/MascotStore.h
+  src/core/MascotStore.cpp
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
   src/ui/MarkdownEditor.h
   src/ui/MarkdownEditor.cpp
+  src/ui/Mascot.h
+  src/ui/Mascot.cpp
   src/ui/MarkdownHighlighter.h
   src/ui/MarkdownHighlighter.cpp
   src/ui/SearchPopup.h

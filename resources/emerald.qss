@@ -255,6 +255,13 @@ QLabel#toast {
     font-size: 13px;
 }
 
+/* The per-note mascot paints its own creature with QPainter; the widget itself
+   must stay transparent (overriding the global QWidget background) so only the
+   creature shows, with the editor visible around it. */
+QWidget#mascot {
+    background: transparent;
+}
+
 QScrollBar:vertical {
     background: transparent;
     width: 7px;

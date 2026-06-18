@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "MarkdownEditor.h"
+#include "Mascot.h"
 #include "SearchPopup.h"
 #include "Updater.h"
 #include "core/Vault.h"
@@ -8,6 +9,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDropEvent>
@@ -37,6 +39,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
+#include <QScrollBar>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTimer>
@@ -353,8 +356,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_watcher, &QFileSystemWatcher::fileChanged, this,
             &MainWindow::onFileChanged);
     connect(m_editor, &MarkdownEditor::textChanged, this, [this] {
-        if (!m_loading)
+        if (!m_loading) {
             m_saveTimer->start();
+            maybeAutoGenerateMascot();
+        }
     });
 
     const QString last = QSettings().value(QStringLiteral("lastVault")).toString();
@@ -571,6 +576,12 @@ void MainWindow::buildUi() {
     m_toastTimer = new QTimer(this);
     m_toastTimer->setSingleShot(true);
     connect(m_toastTimer, &QTimer::timeout, m_toast, &QWidget::hide);
+
+    // The per-note mascot floats in the editor's bottom-right corner. It's a
+    // child of the editor (like the toast) so it tracks the editing area, and
+    // mouse-transparent so it never gets in the way. Shown only when the open
+    // note has one.
+    m_mascot = new Mascot(m_editor);
 }
 
 void MainWindow::notify(const QString &text, int ms) {
@@ -590,6 +601,81 @@ void MainWindow::positionToast() {
     const int x = (m_editor->width() - m_toast->width()) / 2;
     const int y = m_editor->height() - m_toast->height() - 18;
     m_toast->move(qMax(8, x), qMax(8, y));
+}
+
+QString MainWindow::vaultRel(const QString &absPath) const {
+    return m_vault ? QDir(m_vault->root()).relativeFilePath(absPath) : absPath;
+}
+
+void MainWindow::positionMascot() {
+    if (!m_mascot)
+        return;
+    // Tuck it into the bottom-right, clear of the vertical scrollbar.
+    QScrollBar *sb = m_editor->verticalScrollBar();
+    const int sbw = (sb && sb->isVisible()) ? sb->width() : 0;
+    const int x = m_editor->width() - m_mascot->width() - sbw - 4;
+    const int y = m_editor->height() - m_mascot->height() - 4;
+    m_mascot->move(qMax(0, x), qMax(0, y));
+}
+
+void MainWindow::refreshMascot() {
+    if (!m_mascot)
+        return;
+    const quint64 seed =
+        m_currentPath.isEmpty() ? 0 : m_mascotStore.seed(vaultRel(m_currentPath));
+    m_mascot->setSeed(seed); // hides itself when 0
+    if (seed) {
+        positionMascot();
+        m_mascot->raise();
+    }
+    updateMascotActions();
+}
+
+void MainWindow::generateMascot() {
+    if (!m_mascot || m_currentPath.isEmpty()) {
+        notify(tr("Open a note to give it a mascot"));
+        return;
+    }
+    const quint64 seed =
+        Mascot::seedFor(m_currentTitle, m_editor->toPlainText());
+    m_mascotStore.setSeed(vaultRel(m_currentPath), seed); // persists, un-suppresses
+    m_mascot->setSeed(seed);
+    positionMascot();
+    m_mascot->raise();
+    updateMascotActions();
+    notify(tr("Mascot generated"));
+}
+
+void MainWindow::deleteMascot() {
+    if (!m_mascot || m_currentPath.isEmpty() || m_mascot->seed() == 0)
+        return;
+    // Sticky: record the deletion so auto-generation won't silently undo it.
+    m_mascotStore.suppress(vaultRel(m_currentPath));
+    m_mascot->setSeed(0); // hides
+    updateMascotActions();
+    notify(tr("Mascot removed"));
+}
+
+void MainWindow::maybeAutoGenerateMascot() {
+    if (!m_mascot || m_currentPath.isEmpty() || m_mascot->seed() != 0)
+        return; // no note, or it already has a (frozen) mascot
+    QSettings s;
+    if (!s.value(QStringLiteral("mascotAuto"), true).toBool())
+        return;
+    if (m_mascotStore.suppressed(vaultRel(m_currentPath)))
+        return; // user deleted it here — only a manual Generate brings it back
+    const int threshold =
+        s.value(QStringLiteral("mascotThreshold"), 100).toInt();
+    if (m_editor->toPlainText().size() < threshold)
+        return;
+    generateMascot(); // crosses the threshold once, then freezes
+}
+
+void MainWindow::updateMascotActions() {
+    if (m_genMascotAction)
+        m_genMascotAction->setEnabled(m_vault && !m_currentPath.isEmpty());
+    if (m_delMascotAction)
+        m_delMascotAction->setEnabled(m_mascot && m_mascot->seed() != 0);
 }
 
 void MainWindow::buildActions() {
@@ -629,6 +715,8 @@ void MainWindow::buildActions() {
     auto *search = make(tr("Search Vault…"),
                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F),
                         &MainWindow::openSearch);
+    m_genMascotAction = make(tr("Generate Mascot"), {}, &MainWindow::generateMascot);
+    m_delMascotAction = make(tr("Delete Mascot"), {}, &MainWindow::deleteMascot);
     auto *quit = new QAction(tr("Quit"), this);
     quit->setShortcut(QKeySequence(QKeySequence::Quit));
     connect(quit, &QAction::triggered, this, &QWidget::close);
@@ -649,6 +737,9 @@ void MainWindow::buildActions() {
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(findHere);
     m_gearMenu->addAction(search);
+    m_gearMenu->addSeparator();
+    m_gearMenu->addAction(m_genMascotAction);
+    m_gearMenu->addAction(m_delMascotAction);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(quit);
 
@@ -730,6 +821,19 @@ void MainWindow::openSettings() {
     spacingBox->setSuffix(tr(" %"));
     spacingBox->setValue(s.value(QStringLiteral("lineSpacing"), 100).toInt());
 
+    // Mascots: auto-generate once a note crosses a character count.
+    auto *mascotAutoBox = new QCheckBox(tr("Generate one automatically"), &dlg);
+    mascotAutoBox->setChecked(s.value(QStringLiteral("mascotAuto"), true).toBool());
+    auto *mascotThreshBox = new QSpinBox(&dlg);
+    mascotThreshBox->setRange(0, 100000);
+    mascotThreshBox->setSingleStep(50);
+    mascotThreshBox->setSuffix(tr(" chars"));
+    mascotThreshBox->setValue(
+        s.value(QStringLiteral("mascotThreshold"), 100).toInt());
+    mascotThreshBox->setEnabled(mascotAutoBox->isChecked());
+    connect(mascotAutoBox, &QCheckBox::toggled, mascotThreshBox,
+            &QWidget::setEnabled);
+
     // New-note folder + Home note pickers (need an open vault).
     auto *folderBox = new QComboBox(&dlg);
     auto *homeBox = new QComboBox(&dlg);
@@ -758,6 +862,8 @@ void MainWindow::openSettings() {
     form->addRow(tr("Line spacing"), spacingBox);
     form->addRow(tr("New notes in"), folderBox);
     form->addRow(tr("Home note"), homeBox);
+    form->addRow(tr("Mascot"), mascotAutoBox);
+    form->addRow(tr("Mascot after"), mascotThreshBox);
 
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -791,6 +897,8 @@ void MainWindow::openSettings() {
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
         s.setValue(QStringLiteral("editorWidth"), widthBox->value());
         s.setValue(QStringLiteral("lineSpacing"), spacingBox->value());
+        s.setValue(QStringLiteral("mascotAuto"), mascotAutoBox->isChecked());
+        s.setValue(QStringLiteral("mascotThreshold"), mascotThreshBox->value());
         if (m_vault) {
             s.setValue(QStringLiteral("newNoteFolder"), folderBox->currentData());
             s.setValue(QStringLiteral("homeNote"), homeBox->currentData());
@@ -925,6 +1033,7 @@ void MainWindow::openVault(const QString &path) {
     m_vault = new Vault(path);
     m_vault->scan();
     m_searchIndex.rebuild(*m_vault);
+    m_mascotStore.load(path); // before openInitialNote, which shows a mascot
 
     m_currentPath.clear();
     m_currentTitle.clear();
@@ -942,6 +1051,7 @@ void MainWindow::openVault(const QString &path) {
     QSettings().setValue(QStringLiteral("lastVault"), path);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
     openInitialNote();
+    refreshMascot(); // hide a stale mascot if the new vault opened no note
 }
 
 void MainWindow::openInitialNote() {
@@ -1045,6 +1155,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     m_editor->setTextCursor(c);
     m_editor->centerCursor(); // restored caret lands mid-view, with context
     m_editor->setFocus();
+    refreshMascot(); // show this note's stored creature, if any
 }
 
 void MainWindow::renameCurrent(const QString &rawTitle) {
@@ -1085,6 +1196,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
             p = newPath;
     if (m_cursorPositions.contains(oldPath))
         m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
+    m_mascotStore.rename(vaultRel(oldPath), vaultRel(newPath));
     m_searchIndex.rebuild(*m_vault); // paths and link text changed vault-wide
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
@@ -1326,6 +1438,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             positionFindBar();
         if (m_toast && m_toast->isVisible())
             positionToast();
+        if (m_mascot && m_mascot->isVisible())
+            positionMascot();
     } else if (watched == m_splitHandle) {
         // A click (press + release without a drag) toggles the sidebar; a real
         // drag is left to the splitter.
@@ -1420,6 +1534,10 @@ void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
         s.remove(QStringLiteral("homeNote"));
     if (isFolder && (nf == rel || nf.startsWith(rel + QLatin1Char('/'))))
         s.remove(QStringLiteral("newNoteFolder"));
+    if (isFolder)
+        m_mascotStore.removeFolder(rel);
+    else
+        m_mascotStore.remove(rel);
 }
 
 // After a deletion: rescan, and if the open note was removed (on its own or
@@ -1558,6 +1676,7 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
             remap(p);
         if (m_cursorPositions.contains(srcPath))
             m_cursorPositions[newPath] = m_cursorPositions.take(srcPath);
+        m_mascotStore.rename(vaultRel(srcPath), vaultRel(newPath)); // prefix-aware
         ++moved;
     }
     if (moved == 0) {
