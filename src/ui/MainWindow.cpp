@@ -666,7 +666,7 @@ void MainWindow::maybeAutoGenerateMascot() {
     if (!m_mascot || m_currentPath.isEmpty() || m_mascot->seed() != 0)
         return; // no note, or it already has a (frozen) mascot
     QSettings s;
-    if (!s.value(QStringLiteral("mascotAuto"), true).toBool())
+    if (!s.value(QStringLiteral("mascotAuto"), false).toBool())
         return;
     if (m_mascotStore.suppressed(vaultRel(m_currentPath)))
         return; // user deleted it here — only a manual Generate brings it back
@@ -882,7 +882,7 @@ void MainWindow::openSettings() {
 
     // Mascots: auto-generate once a note crosses a character count.
     auto *mascotAutoBox = new QCheckBox(tr("Generate one automatically"), &dlg);
-    mascotAutoBox->setChecked(s.value(QStringLiteral("mascotAuto"), true).toBool());
+    mascotAutoBox->setChecked(s.value(QStringLiteral("mascotAuto"), false).toBool());
     auto *mascotThreshBox = new QSpinBox(&dlg);
     mascotThreshBox->setRange(0, 100000);
     mascotThreshBox->setSingleStep(50);
