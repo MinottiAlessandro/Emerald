@@ -113,6 +113,12 @@ private:
     // Surround the selection with a typed pairing char (* ( _ = [ ' " ` ~).
     // Returns false when `text` isn't such a char or there's no selection.
     bool surroundSelection(const QString &text);
+    // Format a selection that spans more than one line: each line's selected
+    // segment is wrapped in open..close on its own (full line -> whole line,
+    // partial -> just the selected part). With `toggle`, an already-wrapped
+    // run is unwrapped instead. Returns false if the selection is single-line.
+    bool wrapSelectionByLine(const QString &open, const QString &close,
+                             bool toggle);
     void selectCurrentLine();                  // Ctrl+L
     void duplicateLineOrSelection();           // Ctrl+D
     void deleteCurrentLine();                  // Ctrl+Shift+K

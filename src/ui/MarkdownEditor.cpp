@@ -711,6 +711,9 @@ void MarkdownEditor::wrapSelection(const QString &marker) {
         setTextCursor(cur);
         return;
     }
+    // A selection across several lines formats each line on its own.
+    if (wrapSelectionByLine(marker, marker, /*toggle=*/true))
+        return;
     const QString text = cur.selectedText();
     const int n = marker.size();
     const bool wrapped =
@@ -741,6 +744,9 @@ bool MarkdownEditor::surroundSelection(const QString &text) {
     const QChar close = ch == QLatin1Char('(')   ? QLatin1Char(')')
                         : ch == QLatin1Char('[') ? QLatin1Char(']')
                                                  : ch;
+    // Across several lines, pair up each line's selected segment on its own.
+    if (wrapSelectionByLine(QString(ch), QString(close), /*toggle=*/false))
+        return true;
     const QString inner = cur.selectedText();
     cur.insertText(QString(ch) + inner + close);
     // Re-select the original text, now sitting between the new pair.
@@ -748,6 +754,84 @@ bool MarkdownEditor::surroundSelection(const QString &text) {
     cur.setPosition(afterClose - 1 - inner.size());
     cur.setPosition(afterClose - 1, QTextCursor::KeepAnchor);
     setTextCursor(cur);
+    return true;
+}
+
+// Per-line formatting for a multi-line selection. Each selected line gets the
+// markers around its selected segment only: a fully selected line is wrapped
+// end to end, a partially selected one just over the selected span. Whitespace
+// at a segment's edges is left outside the markers (so they hug real text), and
+// blank/whitespace-only segments are skipped. Returns false when the selection
+// stays within a single line, leaving the caller's whole-selection path to run.
+bool MarkdownEditor::wrapSelectionByLine(const QString &open,
+                                         const QString &close, bool toggle) {
+    QTextCursor cur = textCursor();
+    if (!cur.hasSelection())
+        return false;
+    const int selStart = cur.selectionStart();
+    const int selEnd = cur.selectionEnd();
+    QTextDocument *doc = document();
+    if (doc->findBlock(selStart).blockNumber() ==
+        doc->findBlock(selEnd).blockNumber())
+        return false; // single line: let the caller wrap the whole selection
+
+    // The selected, whitespace-trimmed span on each touched line.
+    struct Seg {
+        int start;
+        int end;
+    };
+    QList<Seg> segs;
+    for (QTextBlock b = doc->findBlock(selStart);
+         b.isValid() && b.position() <= selEnd; b = b.next()) {
+        const int lineStart = b.position();
+        const int lineEnd = lineStart + b.length() - 1; // exclude the newline
+        int s = qMax(selStart, lineStart);
+        int e = qMin(selEnd, lineEnd);
+        const QString line = b.text();
+        while (s < e && line.at(s - lineStart).isSpace())
+            ++s;
+        while (e > s && line.at(e - 1 - lineStart).isSpace())
+            --e;
+        if (s < e)
+            segs.append({s, e});
+    }
+    if (segs.isEmpty())
+        return false; // nothing but blank lines selected — fall back
+
+    // For a toggle, only strip markers when every segment already carries them.
+    const int no = open.size(), nc = close.size();
+    bool allWrapped = toggle;
+    for (int i = 0; toggle && i < segs.size(); ++i) {
+        QTextCursor t(doc);
+        t.setPosition(segs.at(i).start);
+        t.setPosition(segs.at(i).end, QTextCursor::KeepAnchor);
+        const QString s = t.selectedText();
+        if (s.size() < no + nc || !s.startsWith(open) || !s.endsWith(close)) {
+            allWrapped = false;
+            break;
+        }
+    }
+
+    cur.beginEditBlock();
+    // Edit back to front so each segment's positions stay valid as we go.
+    for (int i = segs.size() - 1; i >= 0; --i) {
+        QTextCursor t(doc);
+        t.setPosition(segs.at(i).start);
+        t.setPosition(segs.at(i).end, QTextCursor::KeepAnchor);
+        const QString inner = t.selectedText();
+        t.insertText(allWrapped ? inner.mid(no, inner.size() - no - nc)
+                                : open + inner + close);
+    }
+    cur.endEditBlock();
+
+    // Re-select the whole affected run so a repeat press toggles it back. Every
+    // segment shifts by the same delta, so the new bounds are exact.
+    const int delta = allWrapped ? -(no + nc) : (no + nc);
+    QTextCursor sel(doc);
+    sel.setPosition(segs.first().start);
+    sel.setPosition(segs.last().end + delta * segs.size(),
+                    QTextCursor::KeepAnchor);
+    setTextCursor(sel);
     return true;
 }
 
