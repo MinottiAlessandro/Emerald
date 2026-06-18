@@ -159,6 +159,7 @@ private:
 
     int m_lastCursorBlock = 0;   // to detect leaving a table
     bool m_prettifying = false;  // guard against re-entrant table reformatting
+    bool m_adjustingScroll = false; // guard the over-scroll range extension
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
     // The spacing-aware document layout (owned by the document). Held as the
     // base type; applyLineSpacing() downcasts to set the per-row padding.

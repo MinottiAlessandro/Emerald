@@ -1043,7 +1043,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     const int last = record ? 0 : m_cursorPositions.value(path, 0);
     c.setPosition(qBound(0, last, m_editor->document()->characterCount() - 1));
     m_editor->setTextCursor(c);
-    m_editor->ensureCursorVisible();
+    m_editor->centerCursor(); // restored caret lands mid-view, with context
     m_editor->setFocus();
 }
 

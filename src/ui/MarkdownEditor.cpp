@@ -128,8 +128,24 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // text always wraps
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
-    // Allow scrolling past the end so the last line can rise to the top.
-    setCenterOnScroll(true);
+    // Caret navigation scrolls one line at a time at the viewport edges:
+    // centering (setCenterOnScroll) would instead lurch the view half a page
+    // whenever the caret crossed an edge. We still want the over-scroll that
+    // lets the last line rise to the top of the screen — the *other* thing
+    // centerOnScroll gave us — so re-create just that by extending the vertical
+    // scroll range one page past the document's end. (The base maximum equals
+    // lastLine - pageStep, so max + pageStep - 1 lets the top of the viewport
+    // reach the final line.)
+    setCenterOnScroll(false);
+    connect(verticalScrollBar(), &QAbstractSlider::rangeChanged, this,
+            [this](int, int max) {
+                if (m_adjustingScroll || max <= 0)
+                    return;
+                m_adjustingScroll = true; // setMaximum re-emits rangeChanged
+                verticalScrollBar()->setMaximum(
+                    max + verticalScrollBar()->pageStep() - 1);
+                m_adjustingScroll = false;
+            });
 
     // Prefer Inter if installed, but fall back to fonts that exist so the first
     // text layout doesn't pay for a failed font lookup.
@@ -226,7 +242,8 @@ void MarkdownEditor::jumpToMatch(const QString &text) {
     if (text.isEmpty())
         return;
     moveCursor(QTextCursor::Start);
-    find(text); // selects the match and scrolls it into view, if found
+    if (find(text)) // selects the match, if found
+        centerCursor(); // land it mid-view so there's context around the match
 }
 
 QString MarkdownEditor::wikiContextPrefix(bool *inContext) const {
@@ -1269,11 +1286,11 @@ void MarkdownEditor::moveToTableCell(const QTextBlock &block, int cellIdx) {
 }
 
 void MarkdownEditor::resizeEvent(QResizeEvent *event) {
-    // Remember which block tops the viewport before the base relayout. With
-    // setCenterOnScroll the document can scroll past its end, and a width
-    // change rewraps every line; left alone, the preserved scrollbar value
-    // would point at unrelated content and the view would lurch (most
-    // noticeably near the end of the file).
+    // Remember which block tops the viewport before the base relayout. The
+    // document can scroll past its end (see the over-scroll range set up in the
+    // constructor), and a width change rewraps every line; left alone, the
+    // preserved scrollbar value would point at unrelated content and the view
+    // would lurch (most noticeably near the end of the file).
     const int anchor = firstVisibleBlock().blockNumber();
 
     QPlainTextEdit::resizeEvent(event);
