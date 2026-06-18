@@ -93,6 +93,7 @@ private:
 
     MarkdownEditor *m_editor = nullptr;
     QWidget *m_centerColumn = nullptr; // width-capped title + body column
+    QWidget *m_centerPane = nullptr;   // editor-side pane; the mascot's parent
     QSplitter *m_splitter = nullptr;   // collapsible sidebar | editor
     QWidget *m_splitHandle = nullptr;  // its drag handle (click to toggle)
     QPoint m_handlePressPos;

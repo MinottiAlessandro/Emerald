@@ -39,7 +39,6 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
-#include <QScrollBar>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTimer>
@@ -424,6 +423,8 @@ void MainWindow::buildUi() {
     m_centerColumn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     auto *center = new QWidget(this);
+    m_centerPane = center;
+    center->installEventFilter(this); // re-pin the mascot when the pane resizes
     auto *row = new QHBoxLayout(center);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(0);
@@ -577,11 +578,11 @@ void MainWindow::buildUi() {
     m_toastTimer->setSingleShot(true);
     connect(m_toastTimer, &QTimer::timeout, m_toast, &QWidget::hide);
 
-    // The per-note mascot floats in the editor's bottom-right corner. It's a
-    // child of the editor (like the toast) so it tracks the editing area, and
-    // mouse-transparent so it never gets in the way. Shown only when the open
-    // note has one.
-    m_mascot = new Mascot(m_editor);
+    // The per-note mascot sits in the app's bottom-right corner — a child of
+    // the editor *pane* (not the editor), so it lives in the margin beside the
+    // centered text column rather than over the text. Mouse-transparent; shown
+    // only when the open note has one.
+    m_mascot = new Mascot(m_centerPane);
 }
 
 void MainWindow::notify(const QString &text, int ms) {
@@ -610,11 +611,13 @@ QString MainWindow::vaultRel(const QString &absPath) const {
 void MainWindow::positionMascot() {
     if (!m_mascot)
         return;
-    // Tuck it into the bottom-right, clear of the vertical scrollbar.
-    QScrollBar *sb = m_editor->verticalScrollBar();
-    const int sbw = (sb && sb->isVisible()) ? sb->width() : 0;
-    const int x = m_editor->width() - m_mascot->width() - sbw - 4;
-    const int y = m_editor->height() - m_mascot->height() - 4;
+    // Pin to the pane's bottom-right: the margin beside the centered text
+    // column, so it sits in the app's corner rather than over the text.
+    QWidget *pane = m_mascot->parentWidget();
+    if (!pane)
+        return;
+    const int x = pane->width() - m_mascot->width() - 12;
+    const int y = pane->height() - m_mascot->height() - 12;
     m_mascot->move(qMax(0, x), qMax(0, y));
 }
 
@@ -1438,6 +1441,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             positionFindBar();
         if (m_toast && m_toast->isVisible())
             positionToast();
+    } else if (watched == m_centerPane && event->type() == QEvent::Resize) {
         if (m_mascot && m_mascot->isVisible())
             positionMascot();
     } else if (watched == m_splitHandle) {
