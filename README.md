@@ -48,6 +48,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 - ✨ **Live preview, in place.** Markdown renders as you type; the syntax markers melt away on every line except the one you're editing.
 - 🔗 **Real `[[wiki-links]]`** with fuzzy autocomplete, auto-creation, and rename-aware backlink rewriting.
 - 🔍 **Instant full-text search** over the whole vault, backed by an in-memory inverted index.
+- 🐾 **A mascot per note.** Each note can grow its own little procedurally drawn creature in the corner — a memorable face to recall it by.
 - 🪶 **One dependency (Qt 6), tiny footprint.** Built to stay small, fast, and maintainable.
 
 ---
@@ -71,6 +72,10 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 - **Folder-tree sidebar** with drag-and-drop; right-click to create notes or sub-folders anywhere.
 - **Telescope-style search popup** — ranked results, type to filter, ↑/↓ to move, Enter jumps to the first match.
 - **Debounced autosave** plus **external-edit detection** — Emerald reloads notes changed outside the app.
+
+**Mascots**
+- **A creature per note** — an optional, procedurally drawn mascot in the bottom-right corner, seeded from the note's title and text (rendered live, no image files). Around three dozen archetypes spanning ordinary animals, mythological creatures, and objects. Hover for a gentle blink and bob.
+- **Gallery & control** — click a mascot for a vault-wide **gallery** (click any creature to jump to its note). **Generate** / **Delete** from the gear menu (delete is sticky); auto-generation once a note passes a character count is opt-in under **Settings → Mascot**. Stored per-vault in `.emerald/mascots.json`, so they travel with your notes.
 
 **Polish**
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
