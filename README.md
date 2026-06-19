@@ -48,6 +48,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 - ✨ **Live preview, in place.** Markdown renders as you type; the syntax markers melt away on every line except the one you're editing.
 - 🔗 **Real `[[wiki-links]]`** with fuzzy autocomplete, auto-creation, and rename-aware backlink rewriting.
 - 🔍 **Instant full-text search** over the whole vault, backed by an in-memory inverted index.
+- 🧮 **Math, built in.** Inline `$…$` and display `$$…$$` LaTeX render live — fractions, roots, matrices, accents — with no extra dependencies.
 - 🐾 **A mascot per note.** Each note can grow its own little procedurally drawn creature in the corner — a memorable face to recall it by.
 - 🪶 **One dependency (Qt 6), tiny footprint.** Built to stay small, fast, and maintainable.
 
@@ -59,8 +60,13 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 - Headings, **bold**, *italic*, ***both***, `code`, ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists, fenced ` ``` ` code blocks (with language tag), `|` tables and `[[wiki|links]]` all render in place.
 - **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); Enter on an empty item ends it; Tab / Shift+Tab indent and outdent (a multi-line selection indents every line). Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level).
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
-- **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` `` or `~` to surround it (brackets close with their match).
+- **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).
 - **Code folding** on headings and fenced blocks.
+
+**Math** *(no dependencies — a small built-in TeX-subset typesetter)*
+- **Inline `$…$`** and **display `$$…$$`** render live in place; a `$$` block can span several lines (open/close on their own lines or carrying content), and the raw source reappears whenever the caret or selection is inside it. Bare dollars (`$5 and $12`) stay literal.
+- **Fractions** `\frac` `\dfrac` `\tfrac`, **roots** `\sqrt`, super/subscripts with **stacked limits** on big operators (`\sum` `\prod` `\int` `\bigcup` …) in display mode, and `\binom`.
+- **Accents** (`\hat \bar \vec \tilde \dot \ddot \widehat \overline`), **grown delimiters** `\left( … \right]`, **`\text` / `\textbf` / `\operatorname`**, **matrices** (`pmatrix` `bmatrix` `vmatrix` …), ~150 symbol commands (Greek, operators, relations, arrows), and full Unicode (emoji, CJK).
 
 **Links & navigation**
 - `[[Note]]` links are clickable (plain click once rendered, Ctrl+click on the line you're editing) and auto-create their target. `[[Note|alias]]` shows just the alias. Typing `[[` pops a fuzzy autocomplete of existing titles.
@@ -75,7 +81,8 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 
 **Mascots**
 - **A creature per note** — an optional, procedurally drawn mascot in the bottom-right corner, seeded from the note's title and text (rendered live, no image files). Around three dozen archetypes spanning ordinary animals, mythological creatures, and objects. Hover for a gentle blink and bob.
-- **Gallery & control** — click a mascot for a vault-wide **gallery** (click any creature to jump to its note). **Generate** / **Delete** from the gear menu (delete is sticky); auto-generation once a note passes a character count is opt-in under **Settings → Mascot**. Stored per-vault in `.emerald/mascots.json`, so they travel with your notes.
+- **Gallery & control** — click a mascot for a vault-wide **gallery** (click any creature to jump to its note). **Generate** / **Delete** from the gear menu; auto-generation once a note passes a character count is opt-in under **Settings → Mascot**.
+- **Stored in the note itself** — the seed lives in a hidden first line (`<!-- mascot: … -->`), invisible in any other Markdown viewer, so mascots travel with your notes and leave no separate metadata behind. Press **↑** at the top of a note to reveal the line; edit or delete the seed by hand and the creature follows.
 
 **Polish**
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
@@ -159,7 +166,8 @@ The `core/` layer is GUI-free, so the vault and link logic can be tested without
 
 - [x] Cross-platform support (Linux · macOS · Windows)
 - [x] Per-platform packaging & automated releases
-- [ ] LaTeX math (`$$`) and Mermaid diagrams
+- [x] LaTeX math (inline `$…$` and display `$$…$$`)
+- [ ] Mermaid diagrams
 - [ ] Tags
 - [ ] Graphic bullet glyphs / inline images
 

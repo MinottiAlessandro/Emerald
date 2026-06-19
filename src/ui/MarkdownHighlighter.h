@@ -17,11 +17,15 @@ class MarkdownHighlighter : public QSyntaxHighlighter {
 public:
     explicit MarkdownHighlighter(QTextDocument *document);
 
-    // The block (paragraph) currently holding the cursor. Markers in this
-    // block are shown; markers elsewhere are concealed. The editor calls this
-    // on cursor moves *and* on content changes — some edits (e.g. Ctrl+Backspace
-    // joining two lines) relocate the caret without a cursorPositionChanged.
-    void setActiveBlock(int blockNumber);
+    // The block (paragraph) currently holding the cursor (and, when text is
+    // selected, the anchor's block — pass it so a math formula spanning the
+    // selection reveals its raw source instead of rendering under the
+    // highlight). Markers in the caret's block are shown, concealed elsewhere.
+    // The editor calls this on cursor moves *and* on content changes — some
+    // edits (e.g. Ctrl+Backspace joining two lines) relocate the caret without a
+    // cursorPositionChanged. `anchorBlock < 0` means "no selection" (anchor =
+    // caret).
+    void setActiveBlock(int caretBlock, int anchorBlock = -1);
 
     // The base point size headings scale from; call when the editor font size
     // changes so heading sizes track it.
@@ -31,7 +35,12 @@ protected:
     void highlightBlock(const QString &text) override;
 
 private:
-    enum BlockState { StateNormal = 0, StateCode = 1 };
+    // StateMath marks a line that is inside a multi-line $$…$$ block and whose
+    // block continues onto the next line (the opening line and any middle
+    // lines). The closing line is StateNormal (like a code block's closing
+    // fence), so a region is "StateMath… then a normal line". The editor reads
+    // these states to paint the formula and to know which lines to leave alone.
+    enum BlockState { StateNormal = 0, StateCode = 1, StateMath = 2 };
 
     QTextCharFormat conceal() const; // tiny + transparent
     void applyInline(const QRegularExpression &re, const QString &text,
@@ -45,11 +54,29 @@ private:
     // the raw text editable, like the wiki-link handling above.
     void applyInternetLinks(const QString &text, QList<bool> &consumed,
                             bool reveal);
+    // Inline math $…$: on the active line dim the $ and tint the raw body so it
+    // stays editable; off it, hide the source but reserve the formula's rendered
+    // width (the editor paints the formula over the gap in paintEvent).
+    void applyMath(const QString &text, QList<bool> &consumed, bool reveal);
     // Dim a marker off the active line, reveal it (dimmed) on it. Marks the
     // span consumed either way.
     void markup(int start, int len, QList<bool> &consumed, bool reveal);
+    // Hide a display-math line and grow its height to fit `body`'s rendered
+    // formula, so the editor can paint it in the reserved space. Shared by the
+    // single-line $$…$$ branch and the multi-line $$ fence's first body line.
+    void reserveDisplayHeight(int len, const QString &body);
+    // True when the cursor sits anywhere inside the $$…$$ fenced region that
+    // `block` belongs to, so the whole region shows raw source for editing.
+    // `openingHere` means `block` is itself the opening fence.
+    bool caretInMathRegion(const QTextBlock &block, bool openingHere) const;
+    // Rehighlight every line of the math region containing `blockNumber` (or
+    // just that line if it's not in one) so a whole region reveals/conceals as
+    // the caret crosses its boundary.
+    void rehighlightAround(int blockNumber);
 
     int m_activeBlock = 0; // block number of the cursor's line
+    int m_selFirst = 0;    // first/last block of the selection (== m_activeBlock
+    int m_selLast = 0;     // when there's no selection); math reveals if touched
     double m_baseSize = 12.0;
 
     QTextCharFormat m_heading;
@@ -70,6 +97,8 @@ private:
     QTextCharFormat m_tableHeader; // monospace + bold header cells
     QTextCharFormat m_tablePipe;   // dimmed column separators
     QTextCharFormat m_marker; // dimmed markers, shown on the active line
+    QTextCharFormat m_mascot; // a recognised mascot seed line (first line only)
+    QTextCharFormat m_math;   // inline $…$ formula body
 
     QRegularExpression m_reHeading;
     QRegularExpression m_reFence;

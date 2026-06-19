@@ -35,12 +35,27 @@ public:
     // Select and scroll to the first occurrence of `text` (case-insensitive).
     void jumpToMatch(const QString &text);
 
+    // The note's mascot seed, stored as a hidden header line at the top of the
+    // document (see MascotSeed). 0 when the note has no mascot.
+    quint64 mascotSeed() const;
+    // Write/replace (seed != 0) or remove (seed == 0) the mascot header line.
+    void setMascotSeed(quint64 seed);
+    // The body text with any leading mascot header line removed (for hashing /
+    // indexing — the header line isn't note content).
+    QString bodyText() const;
+    // The first document position the caret may land on: just past a hidden
+    // mascot header line, or 0 when there isn't one.
+    int firstContentPosition() const;
+
 signals:
     void linkClicked(const QString &target);
     void navigateBack();
     void navigateForward();
     void noticeRequested(const QString &text); // transient feedback (e.g. "Copied")
     void deleteNoteRequested(); // Ctrl+Del: delete the open note, not a word
+    // The mascot seed changed — on load, on Generate/Delete, or when the user
+    // hand-edits the revealed header line. 0 means the note now has no mascot.
+    void mascotSeedChanged(quint64 seed);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -142,6 +157,12 @@ private:
     // caret leaves the table.
     void prettifyTableAt(int blockNumber);
 
+    // Mascot header line (block 0). mascotBlock() is the first block when it is
+    // a header line, else invalid; updateMascotLineState() keeps it hidden
+    // unless the caret rests on it and emits mascotSeedChanged on any change.
+    QTextBlock mascotBlock() const;
+    void updateMascotLineState();
+
     // Completion: the partial title typed after the nearest unclosed "[[" on
     // the current line, or empty with *inContext=false when not inside a link.
     QString wikiContextPrefix(bool *inContext) const;
@@ -167,6 +188,7 @@ private:
     bool m_prettifying = false;  // guard against re-entrant table reformatting
     bool m_adjustingScroll = false; // guard the over-scroll range extension
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
+    quint64 m_mascotSeed = 0;    // last seen mascot seed, to detect changes
     // The spacing-aware document layout (owned by the document). Held as the
     // base type; applyLineSpacing() downcasts to set the per-row padding.
     QPlainTextDocumentLayout *m_spacedLayout = nullptr;

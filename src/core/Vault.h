@@ -38,7 +38,7 @@ public:
     // on success (false if it exists or the name is invalid).
     bool createFolder(const QString &dir, const QString &name);
 
-    // Delete a note file or a folder (recursively, contents included). Returns
+    // Move a note file or a folder (contents included) to the OS trash. Returns
     // true on success. Call scan() afterwards to refresh the listing.
     bool remove(const QString &path);
 

@@ -1,6 +1,8 @@
 #include "MarkdownEditor.h"
 
 #include "MarkdownHighlighter.h"
+#include "MathRender.h"
+#include "core/MascotSeed.h"
 #include "core/WikiLink.h"
 
 #include <QAbstractItemView>
@@ -165,8 +167,12 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     m_highlighter = new MarkdownHighlighter(document());
 
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
-        m_highlighter->setActiveBlock(textCursor().blockNumber());
+        const QTextCursor tc = textCursor();
+        m_highlighter->setActiveBlock(
+            tc.blockNumber(),
+            document()->findBlock(tc.anchor()).blockNumber());
         viewport()->update(); // repaint bullets as the active line moves
+        updateMascotLineState(); // reveal/hide the header line as the caret moves
 
         const int cur = textCursor().blockNumber();
         if (!m_prettifying && cur != m_lastCursorBlock) {
@@ -192,9 +198,15 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
         // cursorPositionChanged — notably Ctrl+Backspace joining two lines. Re-
         // sync the active (revealed) block here too, or the merged line keeps
         // its markup concealed with no glyph painted (showing nothing at all).
-        m_highlighter->setActiveBlock(textCursor().blockNumber());
+        // Pass the anchor as well so this never collapses a live selection's
+        // span (a $$ block stays revealed while selected).
+        const QTextCursor tc = textCursor();
+        m_highlighter->setActiveBlock(
+            tc.blockNumber(),
+            document()->findBlock(tc.anchor()).blockNumber());
         if (!m_applyingFolds && !m_folds.isEmpty())
             reapplyFolds();
+        updateMascotLineState(); // keep the header hidden and the seed in sync
     });
 
     m_completionModel = new QStringListModel(this);
@@ -244,6 +256,71 @@ void MarkdownEditor::jumpToMatch(const QString &text) {
     moveCursor(QTextCursor::Start);
     if (find(text)) // selects the match, if found
         centerCursor(); // land it mid-view so there's context around the match
+}
+
+QTextBlock MarkdownEditor::mascotBlock() const {
+    const QTextBlock first = document()->firstBlock();
+    return (first.isValid() && MascotSeed::fromLine(first.text()) != 0)
+               ? first
+               : QTextBlock();
+}
+
+quint64 MarkdownEditor::mascotSeed() const {
+    return MascotSeed::fromLine(document()->firstBlock().text());
+}
+
+int MarkdownEditor::firstContentPosition() const {
+    const QTextBlock mb = mascotBlock();
+    if (mb.isValid() && mb.next().isValid())
+        return mb.next().position();
+    return 0;
+}
+
+QString MarkdownEditor::bodyText() const {
+    return MascotSeed::strip(toPlainText());
+}
+
+void MarkdownEditor::setMascotSeed(quint64 seed) {
+    const QTextBlock mb = mascotBlock();
+    QTextCursor c(document());
+    c.beginEditBlock();
+    if (seed == 0) {
+        if (mb.isValid()) { // drop the header line and its trailing newline
+            c.movePosition(QTextCursor::Start);
+            c.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor);
+            c.removeSelectedText();
+        }
+    } else if (mb.isValid()) { // replace the existing header line's text
+        c.setPosition(mb.position());
+        c.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        c.insertText(MascotSeed::line(seed));
+    } else { // insert a fresh header line above all existing content
+        c.movePosition(QTextCursor::Start);
+        c.insertText(MascotSeed::line(seed) + QLatin1Char('\n'));
+    }
+    c.endEditBlock();
+    updateMascotLineState(); // hide the line + emit mascotSeedChanged
+}
+
+void MarkdownEditor::updateMascotLineState() {
+    QTextBlock mb = mascotBlock();
+
+    // Keep the header line hidden unless the caret rests on it (revealed via Up
+    // at the top of the file). Toggling visibility needs a full relayout.
+    if (mb.isValid()) {
+        const bool onIt = textCursor().blockNumber() == 0;
+        if (mb.isVisible() != onIt) {
+            mb.setVisible(onIt);
+            document()->markContentsDirty(0, document()->characterCount());
+            viewport()->update();
+        }
+    }
+
+    const quint64 seed = mb.isValid() ? MascotSeed::fromLine(mb.text()) : 0;
+    if (seed != m_mascotSeed) {
+        m_mascotSeed = seed;
+        emit mascotSeedChanged(seed);
+    }
 }
 
 QString MarkdownEditor::wikiContextPrefix(bool *inContext) const {
@@ -588,6 +665,29 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             break;
         }
     }
+
+    // Up at the very top of the body reveals the hidden mascot header line so it
+    // can be read or edited. Moving the caret onto it un-hides it (see
+    // updateMascotLineState); pressing Down again re-hides it.
+    if (event->key() == Qt::Key_Up && !m_completer->popup()->isVisible() &&
+        !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier |
+                                Qt::AltModifier | Qt::MetaModifier))) {
+        const QTextBlock mb = mascotBlock();
+        const QTextCursor c = textCursor();
+        if (mb.isValid() && !mb.isVisible() && !c.hasSelection() &&
+            c.block() == mb.next()) {
+            const QTextLine line =
+                c.block().layout()->lineForTextPosition(c.positionInBlock());
+            if (!line.isValid() || line.lineNumber() == 0) {
+                QTextCursor m(mb);
+                m.movePosition(QTextCursor::EndOfBlock);
+                setTextCursor(m); // un-hides block 0 via updateMascotLineState
+                ensureCursorVisible();
+                return;
+            }
+        }
+    }
+
     // Ctrl+Enter: open a new line below without splitting the current one. Move
     // to the line end first, then reuse the normal Enter logic so a list keeps
     // continuing (and an empty item still clears itself).
@@ -735,7 +835,7 @@ bool MarkdownEditor::surroundSelection(const QString &text) {
     if (text.size() != 1)
         return false;
     const QChar ch = text.at(0);
-    static const QString pairs = QStringLiteral("*(_=['\"`~");
+    static const QString pairs = QStringLiteral("*(_=['\"`~$");
     if (!pairs.contains(ch))
         return false;
     QTextCursor cur = textCursor();
@@ -744,8 +844,11 @@ bool MarkdownEditor::surroundSelection(const QString &text) {
     const QChar close = ch == QLatin1Char('(')   ? QLatin1Char(')')
                         : ch == QLatin1Char('[') ? QLatin1Char(']')
                                                  : ch;
-    // Across several lines, pair up each line's selected segment on its own.
-    if (wrapSelectionByLine(QString(ch), QString(close), /*toggle=*/false))
+    // Across several lines, pair up each line's selected segment on its own —
+    // except math: a $…$ spanning the whole selection (one opening, one closing
+    // $) is what's wanted, not a $…$ per line.
+    if (ch != QLatin1Char('$') &&
+        wrapSelectionByLine(QString(ch), QString(close), /*toggle=*/false))
         return true;
     const QString inner = cur.selectedText();
     cur.insertText(QString(ch) + inner + close);
@@ -1537,6 +1640,119 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             p.setBrush(color);
             p.drawRect(QRectF(c.x() - r, c.y() - r, diameter, diameter));
             break;
+        }
+    }
+
+    // Math: paint each formula over the space the highlighter reserved for it.
+    // The cursor's own line shows the raw source instead, so skip it (and code
+    // blocks, where $ is literal). A whole-line $$…$$ renders as a centred
+    // display block; otherwise each inline $…$ is drawn on the text baseline.
+    {
+        const QColor mathColor(0x6f, 0xcf, 0xc0);
+        // The editor background, painted behind a display formula before drawing
+        // it: the highlighter hides the source with a transparent format, but
+        // colour emoji ignore the foreground colour and bleed through, so mask
+        // the reserved area first.
+        const QColor mathBg(0x17, 0x18, 0x1b);
+        const QFont inlineFont = MathRender::mathFont(font(), false);
+        const QFont displayFont = MathRender::mathFont(font(), true);
+        // A formula whose line(s) the selection touches shows raw source (the
+        // highlighter reveals it), so skip painting it — matching that span, not
+        // just the caret's line, keeps the rendered formula from sitting under
+        // the selection highlight.
+        const QTextCursor sel = textCursor();
+        const int selFirst =
+            document()->findBlock(sel.selectionStart()).blockNumber();
+        const int selLast =
+            document()->findBlock(sel.selectionEnd()).blockNumber();
+
+        // Multi-line $$ blocks first: the highlighter marks the opening and
+        // middle lines StateMath (2); the closing line is the next normal one.
+        // The body parts of each line joined form one formula, painted centred
+        // over the whole region. Skip a region the selection touches — its lines
+        // show raw source for editing.
+        bool inMath = false;
+        QRectF regionGeo;
+        QStringList body;
+        int openNum = 0;
+        for (QTextBlock b = document()->firstBlock(); b.isValid();
+             b = b.next()) {
+            const bool mathy = b.userState() == 2; // StateMath: open / middle
+            const QRectF geo =
+                blockBoundingGeometry(b).translated(contentOffset());
+            auto flush = [&](int closeNum) {
+                const bool busy = selLast >= openNum && selFirst <= closeNum;
+                if (!busy && !body.isEmpty() &&
+                    regionGeo.intersects(event->rect())) {
+                    p.fillRect(regionGeo, mathBg);
+                    MathRender::paint(p, regionGeo, body.join(QLatin1Char(' ')),
+                                      displayFont, mathColor,
+                                      MathRender::Align::Display);
+                }
+            };
+            if (mathy && !inMath) { // opening line
+                inMath = true;
+                regionGeo = geo;
+                body.clear();
+                body << MathRender::bodyAfterOpen(b.text());
+                openNum = b.blockNumber();
+            } else if (mathy && inMath) { // middle line
+                regionGeo = regionGeo.united(geo);
+                body << b.text();
+            } else if (!mathy && inMath) { // closing line
+                regionGeo = regionGeo.united(geo);
+                body << MathRender::bodyBeforeClose(b.text());
+                flush(b.blockNumber());
+                inMath = false;
+            }
+        }
+        if (inMath) { // a block left open at end of document
+            const bool busy = selLast >= openNum;
+            if (!busy && !body.isEmpty() && regionGeo.intersects(event->rect())) {
+                p.fillRect(regionGeo, mathBg);
+                MathRender::paint(p, regionGeo, body.join(QLatin1Char(' ')),
+                                  displayFont, mathColor,
+                                  MathRender::Align::Display);
+            }
+        }
+
+        for (QTextBlock block = firstVisibleBlock(); block.isValid();
+             block = block.next()) {
+            if (!block.isVisible())
+                continue;
+            const QRectF geo =
+                blockBoundingGeometry(block).translated(contentOffset());
+            if (geo.top() > event->rect().bottom())
+                break;
+            const int bn = block.blockNumber();
+            if (geo.bottom() < event->rect().top() ||
+                (bn >= selFirst && bn <= selLast) || insideCodeBlock(block) ||
+                block.userState() == 2) // part of a multi-line $$ region (above)
+                continue;
+            const QString btext = block.text();
+
+            const auto disp = MathRender::displayPattern().match(btext);
+            if (disp.hasMatch()) {
+                p.fillRect(geo, mathBg);
+                MathRender::paint(p, geo, disp.captured(1), displayFont,
+                                  mathColor, MathRender::Align::Display);
+                continue;
+            }
+
+            for (const auto &sp : MathRender::spans(btext)) {
+                QTextCursor c0(block);
+                c0.setPosition(block.position() + sp.start);
+                QTextCursor c1(block);
+                c1.setPosition(block.position() + sp.start + sp.length);
+                const QRectF r0 = cursorRect(c0);
+                const QRectF r1 = cursorRect(c1);
+                // Skip a formula that wraps across lines (rare inline).
+                if (r1.top() != r0.top() || r1.left() <= r0.left())
+                    continue;
+                const QRectF rect(r0.left(), r0.top(), r1.left() - r0.left(),
+                                  r0.height());
+                MathRender::paint(p, rect, sp.body, inlineFont, mathColor);
+            }
         }
     }
 

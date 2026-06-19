@@ -1,5 +1,6 @@
 #include "SearchIndex.h"
 
+#include "MascotSeed.h"
 #include "Vault.h"
 #include <QRegularExpression>
 #include <algorithm>
@@ -60,7 +61,9 @@ void SearchIndex::rebuild(const Vault &vault) {
     m_termsDirty = true;
     for (const Note &n : vault.notes()) {
         const int id = m_nextId++;
-        m_docs.insert(id, Doc{n.path, n.title, vault.read(n.path), {}});
+        // Drop a leading mascot header line so it doesn't pollute the index.
+        m_docs.insert(id,
+                      Doc{n.path, n.title, MascotSeed::strip(vault.read(n.path)), {}});
         m_byPath.insert(n.path, id);
         indexDoc(id);
     }
@@ -70,16 +73,17 @@ void SearchIndex::updateNote(const QString &path, const QString &title,
                              const QString &content) {
     auto it = m_byPath.find(path);
     int id;
+    const QString body = MascotSeed::strip(content); // ignore the header line
     if (it != m_byPath.end()) {
         id = it.value();
         unindexDoc(id);
         Doc &doc = m_docs[id];
         doc.title = title;
-        doc.content = content;
+        doc.content = body;
         doc.terms.clear();
     } else {
         id = m_nextId++;
-        m_docs.insert(id, Doc{path, title, content, {}});
+        m_docs.insert(id, Doc{path, title, body, {}});
         m_byPath.insert(path, id);
     }
     indexDoc(id);

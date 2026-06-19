@@ -194,9 +194,12 @@ bool Vault::remove(const QString &path) {
     const QFileInfo fi(path);
     if (!fi.exists())
         return false;
-    if (fi.isDir())
-        return QDir(path).removeRecursively();
-    return QFile::remove(path);
+    // Move to the OS trash (recoverable) rather than deleting outright — this
+    // handles both a single note and a whole folder with its contents. Returns
+    // false when the platform offers no trash for that location; the caller then
+    // reports the failure and leaves the file in place (safer than a silent,
+    // unrecoverable delete).
+    return QFile::moveToTrash(path);
 }
 
 QString Vault::movePath(const QString &srcPath, const QString &destDir) {

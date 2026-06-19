@@ -4,6 +4,7 @@
 #include "Mascot.h"
 #include "SearchPopup.h"
 #include "Updater.h"
+#include "core/MascotSeed.h"
 #include "core/Vault.h"
 
 #include <QAbstractItemView>
@@ -16,9 +17,12 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFontComboBox>
 #include <QFormLayout>
 #include <QFrame>
@@ -36,6 +40,7 @@
 #include <QSplitter>
 #include <QStringList>
 #include <QHash>
+#include <QSet>
 #include <QIcon>
 #include <QMessageBox>
 #include <QPainter>
@@ -339,6 +344,16 @@ QString vaultStartDir() {
     }
     return QDir::homePath();
 }
+
+// The mascot seed encoded in a note file's first line, or 0. Reads only the
+// first line so the gallery can scan a whole vault cheaply.
+quint64 mascotSeedInFile(const QString &path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return 0;
+    const QByteArray first = f.readLine(256); // the header line is short
+    return MascotSeed::fromLine(QString::fromUtf8(first).trimmed());
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -407,7 +422,7 @@ void MainWindow::buildUi() {
     // Enter on the title drops the caret onto the first body line, ready to type.
     connect(m_titleEdit, &QLineEdit::returnPressed, this, [this] {
         QTextCursor c = m_editor->textCursor();
-        c.movePosition(QTextCursor::Start);
+        c.setPosition(m_editor->firstContentPosition()); // skip a hidden header line
         m_editor->setTextCursor(c);
         m_editor->setFocus();
     });
@@ -586,6 +601,11 @@ void MainWindow::buildUi() {
     // note has one; hovering bobs/blinks it, clicking opens the gallery.
     m_mascot = new Mascot(m_centerPane);
     connect(m_mascot, &Mascot::clicked, this, &MainWindow::openMascotGallery);
+    // The seed lives inline in the note; the editor reports it on load and
+    // whenever the user edits or generates it, so the corner creature stays in
+    // step with the file.
+    connect(m_editor, &MarkdownEditor::mascotSeedChanged, this,
+            &MainWindow::onMascotSeedChanged);
 }
 
 void MainWindow::notify(const QString &text, int ms) {
@@ -607,10 +627,6 @@ void MainWindow::positionToast() {
     m_toast->move(qMax(8, x), qMax(8, y));
 }
 
-QString MainWindow::vaultRel(const QString &absPath) const {
-    return m_vault ? QDir(m_vault->root()).relativeFilePath(absPath) : absPath;
-}
-
 void MainWindow::positionMascot() {
     if (!m_mascot)
         return;
@@ -625,63 +641,68 @@ void MainWindow::positionMascot() {
 }
 
 void MainWindow::refreshMascot() {
+    // The editor is the source of truth (the seed lives in the note's first
+    // line); mirror whatever it currently holds.
+    onMascotSeedChanged(m_editor ? m_editor->mascotSeed() : 0);
+}
+
+void MainWindow::onMascotSeedChanged(quint64 seed) {
     if (!m_mascot)
         return;
-    const quint64 seed =
-        m_currentPath.isEmpty() ? 0 : m_mascotStore.seed(vaultRel(m_currentPath));
     m_mascot->setSeed(seed); // hides itself when 0
     if (seed) {
         positionMascot();
         m_mascot->raise();
+        // On first launch the pane has no final size yet (notably on macOS), so
+        // the immediate pin lands in the corner and sticks until a resize. Re-
+        // pin once the event loop has run the first real layout.
+        QTimer::singleShot(0, this, [this] {
+            if (m_mascot && m_mascot->seed()) {
+                positionMascot();
+                m_mascot->raise();
+            }
+        });
     }
     updateMascotActions();
 }
 
 void MainWindow::generateMascot() {
-    if (!m_mascot || m_currentPath.isEmpty()) {
+    if (!m_vault || m_currentPath.isEmpty()) {
         notify(tr("Open a note to give it a mascot"));
         return;
     }
-    const quint64 seed =
-        Mascot::seedFor(m_currentTitle, m_editor->toPlainText());
-    m_mascotStore.setSeed(vaultRel(m_currentPath), seed); // persists, un-suppresses
-    m_mascot->setSeed(seed);
-    positionMascot();
-    m_mascot->raise();
-    updateMascotActions();
+    // The seed is hashed from the note's content (sans any existing header line)
+    // and written back into the file's first line, which drives the creature.
+    const quint64 seed = Mascot::seedFor(m_currentTitle, m_editor->bodyText());
+    m_editor->setMascotSeed(seed); // emits mascotSeedChanged -> updates the corner
     notify(tr("Mascot generated"));
 }
 
 void MainWindow::deleteMascot() {
-    if (!m_mascot || m_currentPath.isEmpty() || m_mascot->seed() == 0)
+    if (!m_vault || m_currentPath.isEmpty() || m_editor->mascotSeed() == 0)
         return;
-    // Sticky: record the deletion so auto-generation won't silently undo it.
-    m_mascotStore.suppress(vaultRel(m_currentPath));
-    m_mascot->setSeed(0); // hides
-    updateMascotActions();
+    m_editor->setMascotSeed(0); // removes the header line; hides the creature
     notify(tr("Mascot removed"));
 }
 
 void MainWindow::maybeAutoGenerateMascot() {
-    if (!m_mascot || m_currentPath.isEmpty() || m_mascot->seed() != 0)
-        return; // no note, or it already has a (frozen) mascot
+    if (!m_vault || m_currentPath.isEmpty() || m_editor->mascotSeed() != 0)
+        return; // no note, or it already has a mascot
     QSettings s;
     if (!s.value(QStringLiteral("mascotAuto"), false).toBool())
         return;
-    if (m_mascotStore.suppressed(vaultRel(m_currentPath)))
-        return; // user deleted it here — only a manual Generate brings it back
     const int threshold =
         s.value(QStringLiteral("mascotThreshold"), 100).toInt();
-    if (m_editor->toPlainText().size() < threshold)
+    if (m_editor->bodyText().size() < threshold)
         return;
-    generateMascot(); // crosses the threshold once, then freezes
+    generateMascot(); // crosses the threshold once
 }
 
 void MainWindow::updateMascotActions() {
     if (m_genMascotAction)
         m_genMascotAction->setEnabled(m_vault && !m_currentPath.isEmpty());
     if (m_delMascotAction)
-        m_delMascotAction->setEnabled(m_mascot && m_mascot->seed() != 0);
+        m_delMascotAction->setEnabled(m_editor && m_editor->mascotSeed() != 0);
 }
 
 // A transient grid of every mascot in the vault (not persisted anywhere — it's
@@ -689,14 +710,27 @@ void MainWindow::updateMascotActions() {
 void MainWindow::openMascotGallery() {
     if (!m_vault)
         return;
-    const QStringList rels = m_mascotStore.notesWithMascots();
+    saveCurrent(); // flush the open note so its first line reflects edits
+
+    // Gather every note whose file starts with a mascot header line. No metadata
+    // store — each seed lives in its own note, read straight off disk.
+    struct Entry { QString path, title; quint64 seed; };
+    QVector<Entry> entries;
+    for (const Note &n : m_vault->notes()) {
+        const quint64 seed = mascotSeedInFile(n.path);
+        if (seed)
+            entries.push_back({n.path, n.title, seed});
+    }
+    std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b) {
+        return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
+    });
 
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Mascot Gallery"));
     dlg.resize(560, 540);
     auto *outer = new QVBoxLayout(&dlg);
 
-    if (rels.isEmpty()) {
+    if (entries.isEmpty()) {
         auto *empty = new QLabel(
             tr("No mascots yet.\nOpen a note and generate one!"), &dlg);
         empty->setAlignment(Qt::AlignCenter);
@@ -709,19 +743,17 @@ void MainWindow::openMascotGallery() {
         auto *gl = new QGridLayout(grid);
         gl->setSpacing(6);
         const int cols = 4;
-        const QDir root(m_vault->root());
-        for (int i = 0; i < rels.size(); ++i) {
-            const QString abs = root.filePath(rels.at(i));
-            const QString title = Vault::titleFromPath(abs);
+        for (int i = 0; i < entries.size(); ++i) {
+            const Entry &e = entries.at(i);
             auto *cell = new QToolButton(grid);
             cell->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
             cell->setAutoRaise(true);
             cell->setIconSize(QSize(120, 132));
-            cell->setIcon(QIcon(
-                Mascot::renderPixmap(m_mascotStore.seed(rels.at(i)),
-                                     QSize(120, 132))));
-            cell->setText(title);
-            cell->setToolTip(title);
+            cell->setIcon(
+                QIcon(Mascot::renderPixmap(e.seed, QSize(120, 132))));
+            cell->setText(e.title);
+            cell->setToolTip(e.title);
+            const QString abs = e.path;
             connect(cell, &QToolButton::clicked, &dlg, [this, &dlg, abs] {
                 dlg.accept();
                 if (QFileInfo::exists(abs))
@@ -1090,9 +1122,9 @@ void MainWindow::openVault(const QString &path) {
     saveCurrent();
     delete m_vault;
     m_vault = new Vault(path);
+    migrateLegacyMascots(path); // fold any legacy .emerald/mascots.json into notes
     m_vault->scan();
     m_searchIndex.rebuild(*m_vault);
-    m_mascotStore.load(path); // before openInitialNote, which shows a mascot
 
     m_currentPath.clear();
     m_currentTitle.clear();
@@ -1106,11 +1138,46 @@ void MainWindow::openVault(const QString &path) {
     m_titleEdit->clear();
     m_titleEdit->blockSignals(false);
 
-    refreshTree();
+    refreshTree(false); // a freshly opened vault starts fully collapsed
     QSettings().setValue(QStringLiteral("lastVault"), path);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
     openInitialNote();
     refreshMascot(); // hide a stale mascot if the new vault opened no note
+}
+
+// One-time upgrade from the old per-vault store: read each saved seed and write
+// it into the matching note's inline header line (if it doesn't already have
+// one), then delete the JSON so no app metadata is left behind in the vault.
+void MainWindow::migrateLegacyMascots(const QString &vaultRoot) {
+    const QString jsonPath =
+        QDir(vaultRoot).filePath(QStringLiteral(".emerald/mascots.json"));
+    QFile f(jsonPath);
+    if (!f.open(QIODevice::ReadOnly))
+        return; // nothing to migrate
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+
+    const QJsonObject mascots = root.value(QStringLiteral("mascots")).toObject();
+    const QDir rootDir(vaultRoot);
+    for (auto it = mascots.begin(); it != mascots.end(); ++it) {
+        const quint64 seed =
+            it.value().toObject().value(QStringLiteral("seed")).toString().toULongLong();
+        if (seed == 0)
+            continue; // suppressed entries simply drop (no metadata to keep)
+        const QString notePath = rootDir.filePath(it.key());
+        if (!QFileInfo::exists(notePath))
+            continue;
+        const QString content = m_vault->read(notePath);
+        const int nl = content.indexOf(QLatin1Char('\n'));
+        const QString first = nl < 0 ? content : content.left(nl);
+        if (MascotSeed::fromLine(first) != 0)
+            continue; // already has an inline header line
+        m_vault->write(notePath,
+                       MascotSeed::line(seed) + QLatin1Char('\n') + content);
+    }
+
+    QFile::remove(jsonPath);
+    QDir(vaultRoot).rmdir(QStringLiteral(".emerald")); // only if now empty
 }
 
 void MainWindow::openInitialNote() {
@@ -1132,7 +1199,18 @@ void MainWindow::openInitialNote() {
         openNoteByPath(last);
 }
 
-void MainWindow::refreshTree() {
+void MainWindow::refreshTree(bool preserveExpansion) {
+    // Remember which folders are open so a rebuild (after a rename/move/new note)
+    // doesn't collapse the tree the user expanded. A freshly opened vault passes
+    // preserveExpansion=false, so it always starts fully collapsed.
+    QSet<QString> expanded;
+    if (preserveExpansion)
+        for (QTreeWidgetItemIterator it(m_noteTree); *it; ++it) {
+            const QString dir = (*it)->data(0, kDirRole).toString();
+            if (!dir.isEmpty() && (*it)->isExpanded())
+                expanded.insert(dir);
+        }
+
     m_noteTree->clear();
     if (!m_vault)
         return;
@@ -1172,7 +1250,11 @@ void MainWindow::refreshTree() {
         leaf->setData(0, kPathRole, n.path);
         titles << n.title;
     }
-    m_noteTree->expandAll();
+    // Re-open the folders that were open before (none for a fresh vault, so it
+    // stays fully collapsed). The chevron icons follow via the itemExpanded signal.
+    for (auto it = folders.constBegin(); it != folders.constEnd(); ++it)
+        if (expanded.contains(it.value()->data(0, kDirRole).toString()))
+            it.value()->setExpanded(true);
     m_editor->setCompletions(titles);
     selectInTree(m_currentPath);
 }
@@ -1207,14 +1289,18 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
 
     // Restore the caret only when arriving via the back/forward arrows
     // (record == false); a manual open (tree click, link, launch) lands on the
-    // first line. Either way the editor is focused, ready to type.
+    // first line. Either way the editor is focused, ready to type. The minimum
+    // position skips a hidden mascot header line so the caret never starts on it.
     QTextCursor c = m_editor->textCursor();
-    const int last = record ? 0 : m_cursorPositions.value(path, 0);
-    c.setPosition(qBound(0, last, m_editor->document()->characterCount() - 1));
+    const int minPos = m_editor->firstContentPosition();
+    const int last =
+        record ? minPos : qMax(minPos, m_cursorPositions.value(path, minPos));
+    c.setPosition(qBound(
+        minPos, last, qMax(minPos, m_editor->document()->characterCount() - 1)));
     m_editor->setTextCursor(c);
     m_editor->centerCursor(); // restored caret lands mid-view, with context
     m_editor->setFocus();
-    refreshMascot(); // show this note's stored creature, if any
+    refreshMascot(); // mirror this note's inline seed (the editor parsed it on load)
 }
 
 void MainWindow::renameCurrent(const QString &rawTitle) {
@@ -1255,7 +1341,6 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
             p = newPath;
     if (m_cursorPositions.contains(oldPath))
         m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
-    m_mascotStore.rename(vaultRel(oldPath), vaultRel(newPath));
     m_searchIndex.rebuild(*m_vault); // paths and link text changed vault-wide
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
@@ -1594,10 +1679,6 @@ void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
         s.remove(QStringLiteral("homeNote"));
     if (isFolder && (nf == rel || nf.startsWith(rel + QLatin1Char('/'))))
         s.remove(QStringLiteral("newNoteFolder"));
-    if (isFolder)
-        m_mascotStore.removeFolder(rel);
-    else
-        m_mascotStore.remove(rel);
 }
 
 // After a deletion: rescan, and if the open note was removed (on its own or
@@ -1662,12 +1743,15 @@ void MainWindow::deleteEntries(const QStringList &pathsIn) {
             isFolder ? QFileInfo(p).fileName() : Vault::titleFromPath(p);
         question =
             isFolder
-                ? tr("Delete the folder “%1” and everything inside it?").arg(name)
-                : tr("Delete the note “%1”?").arg(name);
+                ? tr("Move the folder “%1” and everything inside it to the trash?")
+                      .arg(name)
+                : tr("Move the note “%1” to the trash?").arg(name);
     } else {
-        question = tr("Delete the %1 selected items?").arg(paths.size());
+        question =
+            tr("Move the %1 selected items to the trash?").arg(paths.size());
     }
-    if (QMessageBox::question(this, tr("Delete"), question) != QMessageBox::Yes)
+    if (QMessageBox::question(this, tr("Move to Trash"), question) !=
+        QMessageBox::Yes)
         return;
 
     int removed = 0;
@@ -1686,17 +1770,18 @@ void MainWindow::deleteEntries(const QStringList &pathsIn) {
         ++removed;
     }
     if (removed == 0) {
-        notify(tr("Couldn't delete it"), 3000);
+        notify(tr("Couldn't move it to the trash"), 3000);
         return;
     }
 
     reconcileAfterDeletion();
     if (!failed.isEmpty())
-        notify(tr("Couldn't delete %1").arg(failed.join(QStringLiteral(", "))),
+        notify(tr("Couldn't move %1 to the trash")
+                   .arg(failed.join(QStringLiteral(", "))),
                4000);
     else
-        notify(removed == 1 ? tr("Deleted “%1”").arg(lastName)
-                            : tr("Deleted %1 items").arg(removed),
+        notify(removed == 1 ? tr("Moved “%1” to the trash").arg(lastName)
+                            : tr("Moved %1 items to the trash").arg(removed),
                3000);
 }
 
@@ -1736,7 +1821,6 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
             remap(p);
         if (m_cursorPositions.contains(srcPath))
             m_cursorPositions[newPath] = m_cursorPositions.take(srcPath);
-        m_mascotStore.rename(vaultRel(srcPath), vaultRel(newPath)); // prefix-aware
         ++moved;
     }
     if (moved == 0) {

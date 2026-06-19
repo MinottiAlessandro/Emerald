@@ -1,6 +1,5 @@
 #pragma once
 
-#include "core/MascotStore.h"
 #include "core/SearchIndex.h"
 #include <QHash>
 #include <QMainWindow>
@@ -51,7 +50,13 @@ private:
     void openVaultSwitcher(); // quick picker for sibling vaults (Ctrl+Shift+O)
     void openVault(const QString &path);
     void openInitialNote(); // open Home or the last-edited note on launch
-    void refreshTree();
+    // Rebuild the sidebar from the vault. Folder expansion is preserved across
+    // rebuilds (so a rename/move/new-note doesn't collapse the tree); a fresh
+    // vault passes false so it always opens fully collapsed.
+    void refreshTree(bool preserveExpansion = true);
+    // One-time upgrade: fold any legacy <vault>/.emerald/mascots.json seeds into
+    // each note's inline header line, then remove the file (and empty folder).
+    void migrateLegacyMascots(const QString &vaultRoot);
     void openNoteByPath(const QString &path, bool record = true);
     void saveCurrent();
     void newNote();
@@ -68,14 +73,13 @@ private:
     void positionFindBar();
     void positionToast(); // re-center the toast over the editor's bottom edge
     void positionMascot(); // pin the mascot to the editor's bottom-right corner
-    void refreshMascot();  // show the open note's stored mascot (or hide it)
+    void refreshMascot();  // sync the corner mascot to the open note's seed
+    void onMascotSeedChanged(quint64 seed); // editor reported a new/edited seed
     void generateMascot(); // create/replace this note's mascot from its content
-    void deleteMascot();   // remove it for this note (sticky: auto won't return)
+    void deleteMascot();   // remove this note's mascot (clears the header line)
     void openMascotGallery(); // transient grid of every mascot in the vault
     void maybeAutoGenerateMascot(); // auto-create once past the char threshold
     void updateMascotActions();     // enable/disable the menu entries
-    // A note/folder path relative to the vault root (the mascot store's key).
-    QString vaultRel(const QString &absPath) const;
     void onTreeItemClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);
@@ -115,7 +119,6 @@ private:
     QAction *m_delMascotAction = nullptr;
 
     Mascot *m_mascot = nullptr;   // per-note creature in the bottom-right corner
-    MascotStore m_mascotStore;    // its persisted per-vault state
 
     QFileSystemWatcher *m_watcher = nullptr;
     QString m_currentPath;

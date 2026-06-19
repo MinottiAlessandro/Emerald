@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Emerald VERSION 1.3.0 LANGUAGES CXX)
+project(Emerald VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -48,8 +48,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/SearchIndex.cpp
   src/core/WikiLink.h
   src/core/WikiLink.cpp
-  src/core/MascotStore.h
-  src/core/MascotStore.cpp
+  src/core/MascotSeed.h
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
   src/ui/MarkdownEditor.h
@@ -58,6 +57,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/Mascot.cpp
   src/ui/MarkdownHighlighter.h
   src/ui/MarkdownHighlighter.cpp
+  src/ui/MathRender.h
+  src/ui/MathRender.cpp
   src/ui/SearchPopup.h
   src/ui/SearchPopup.cpp
   src/ui/Updater.h
