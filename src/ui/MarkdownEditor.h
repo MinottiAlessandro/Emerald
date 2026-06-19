@@ -79,8 +79,10 @@ private:
     // Should a click at `pos` follow a link? True on Ctrl+click, or a plain
     // click on a rendered link that lives off the active (cursor) line.
     bool followsLink(const QPoint &pos, Qt::KeyboardModifiers mods) const;
-    // On Enter at the end of a list item or blockquote, continue it (or clear
-    // an empty one). Returns true if it handled the key.
+    // On Enter in a list item or blockquote, continue it: append a fresh marker
+    // at the line end, or split mid-item so the text after the caret moves onto
+    // a new marked item. An empty item clears itself (ends the list). Returns
+    // true if it handled the key.
     bool continueList();
     // On Tab/Shift+Tab inside a list item, indent/outdent it by one level.
     // Returns true if it handled the key.
@@ -92,6 +94,13 @@ private:
     // (new column/row) at its edges. Shift+Tab (forward=false) just steps back
     // one cell. Returns true if it handled the key.
     bool handleTableTab(bool forward = true);
+    // On Enter on a table header that has no separator row yet, insert the
+    // `| --- |` separator (and an empty data row if none follows) and move the
+    // caret to the first data cell. Returns true if it handled the key.
+    bool handleTableHeaderEnter();
+    // On Enter on the last row of a table, leave the grid: open an empty line
+    // below it. Returns true if it handled the key.
+    bool handleTableExitEnter();
     // Place the caret in cell `cellIdx` of a table row, selecting its content.
     void moveToTableCell(const QTextBlock &block, int cellIdx);
     // The rendered task line whose checkbox sits under `pos`, or an invalid

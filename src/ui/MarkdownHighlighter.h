@@ -42,10 +42,36 @@ private:
     // these states to paint the formula and to know which lines to leave alone.
     enum BlockState { StateNormal = 0, StateCode = 1, StateMath = 2 };
 
+    // Inline emphasis that *accumulates*: a character can be bold and italic and
+    // struck and highlighted at once (nested markers like ==a ~~b *c **d***~~==).
+    // SDone is the completed-task strikethrough, seeded over the task's label so
+    // a styled word on a ticked checkbox stays struck through (the style stacks
+    // on top instead of overwriting the strike).
+    enum InlineStyle {
+        SBold = 1,
+        SItalic = 2,
+        SStrike = 4,
+        SHighlight = 8,
+        SDone = 16
+    };
+
     QTextCharFormat conceal() const; // tiny + transparent
     void applyInline(const QRegularExpression &re, const QString &text,
                      QList<bool> &consumed, const QTextCharFormat &contentFmt,
                      bool reveal);
+    // Parse **bold**, *italic* / _italic_, ~~strike~~ and ==highlight== as
+    // overlappable, nestable spans: build a per-character style mask, then apply
+    // a single merged format per run so the styles stack instead of one winning.
+    // Markers are concealed off the active line (dimmed on it), like applyInline.
+    // `seedStyle` (e.g. SDone) is OR'd into the mask of every char in
+    // [seedStart, seedEnd) before parsing, so a pre-existing run style (a done
+    // task's strikethrough) stacks with any emphasis inside it.
+    void applyEmphasis(const QString &text, QList<bool> &consumed, bool reveal,
+                       int seedStyle = 0, int seedStart = 0, int seedEnd = 0);
+    // The merged char format for a set of InlineStyle flags (foreground
+    // precedence: highlight > strike > bold/italic; background only from
+    // highlight; bold/italic/strikeout accumulate).
+    QTextCharFormat emphasisFormat(int mask) const;
     // Wiki links need bespoke handling so [[Note|alias]] hides "Note|" and
     // shows only "alias" when the cursor is elsewhere.
     void applyWikiLinks(const QString &text, QList<bool> &consumed, bool reveal);
@@ -81,8 +107,6 @@ private:
 
     QTextCharFormat m_heading;
     QTextCharFormat m_bold;
-    QTextCharFormat m_italic;
-    QTextCharFormat m_boldItalic;
     QTextCharFormat m_code;
     QTextCharFormat m_codeBlock;
     QTextCharFormat m_codeLang;
@@ -106,15 +130,7 @@ private:
     QRegularExpression m_reRule;
     QRegularExpression m_reTask;
     QRegularExpression m_reList;
-    QRegularExpression m_reBoldItalic;   // ***x***
-    QRegularExpression m_reBoldUnder;    // **_x_**
-    QRegularExpression m_reUnderBold;    // _**x**_
-    QRegularExpression m_reBold;
-    QRegularExpression m_reItalicStar;
-    QRegularExpression m_reItalicUnder;
     QRegularExpression m_reCode;
-    QRegularExpression m_reStrike;
-    QRegularExpression m_reHighlight;
     QRegularExpression m_reTableSep;
     QRegularExpression m_reLink;         // [text](url)
 };

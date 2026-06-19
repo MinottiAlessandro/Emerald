@@ -67,6 +67,10 @@ private:
     void selectInTree(const QString &path);
     void openSearch();
     void openQuickOpen();
+    void insertTemplate(); // open the template picker (Ctrl+T)
+    // Insert the chosen template at the caret (or at the body start when the
+    // caret isn't in the body), expanding {{date}} / {{time}} / {{title}}.
+    void onTemplateChosen(const QString &path);
     void notify(const QString &text, int ms = 3000); // transient toast message
     void openFindInFile();
     void findInFile(bool forward);
@@ -91,6 +95,9 @@ private:
     void navigateBack();
     void navigateForward();
     void pushHistory(const QString &path);
+    // Drop history entries whose file no longer exists (e.g. deleted notes),
+    // keeping the index on the current note when it survived.
+    void pruneHistory();
     void updateNavActions();
 
     Vault *m_vault = nullptr;

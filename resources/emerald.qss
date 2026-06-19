@@ -82,8 +82,11 @@ QTreeView::branch:selected {
 }
 
 /* Sidebar header (title + nav arrows) and footer (gear) */
-QWidget#sideHeader, QWidget#sideFooter {
+QWidget#sideFooter {
     background: #101113;
+}
+QWidget#sideHeader {
+    background: #1c3a2c;
 }
 QLabel#sideTitle {
     /* Transparent so it shows the sidebar header's colour, not the generic

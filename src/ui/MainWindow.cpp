@@ -13,10 +13,12 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDropEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -35,6 +37,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
@@ -78,6 +81,49 @@ QStringList topLevelPaths(const QStringList &paths) {
     return roots;
 }
 
+// Translate the subset of Moment.js date/time tokens the templates feature
+// documents into Qt's QDateTime format. The numeric tokens differ only in case
+// between the two: Moment writes the year as Y and the day-of-month as D, where
+// Qt uses y and d. Month (M), hour (H/h), minute (m) and second (s) already
+// match, so a plain case-fold of Y→y and D→d covers YYYY-MM-DD, HH:mm and the
+// like. A format already written in Qt's lowercase style passes through intact.
+QString momentToQtDateFormat(QString fmt) {
+    fmt.replace(QLatin1Char('Y'), QLatin1Char('y'));
+    fmt.replace(QLatin1Char('D'), QLatin1Char('d'));
+    return fmt;
+}
+
+// Replace {{date}}, {{time}} and {{title}} (each optionally "{{date:FORMAT}}")
+// with their values. date/time take a Moment.js-style format string after a
+// colon; with none they default to YYYY-MM-DD and HH:mm. title ignores any
+// format. Matching is case-insensitive ({{Date}} works too).
+QString expandTemplateTokens(const QString &content, const QString &title) {
+    static const QRegularExpression re(
+        QStringLiteral("\\{\\{\\s*(date|time|title)\\s*(?::([^}]*))?\\s*\\}\\}"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QDateTime now = QDateTime::currentDateTime();
+    QString out;
+    int last = 0;
+    auto it = re.globalMatch(content);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        out += content.mid(last, m.capturedStart(0) - last);
+        const QString name = m.captured(1).toLower();
+        const QString fmt = m.captured(2).trimmed();
+        if (name == QStringLiteral("title"))
+            out += title;
+        else if (name == QStringLiteral("date"))
+            out += now.toString(fmt.isEmpty() ? QStringLiteral("yyyy-MM-dd")
+                                              : momentToQtDateFormat(fmt));
+        else // time
+            out += now.toString(fmt.isEmpty() ? QStringLiteral("HH:mm")
+                                              : momentToQtDateFormat(fmt));
+        last = m.capturedEnd(0);
+    }
+    out += content.mid(last);
+    return out;
+}
+
 QString manualText() {
     return QStringLiteral(
         "Welcome to **Emerald** — a tiny, fast, Obsidian-style note app. This "
@@ -94,6 +140,11 @@ QString manualText() {
         "- ~~strikethrough~~ — wrap text in `~~tildes~~`\n"
         "- ==highlight== — wrap text in `==double equals==`\n"
         "- `inline code` — wrap text in single backticks\n"
+        "\n"
+        "These styles stack: nest them to layer more on, e.g. "
+        "`==dog ~~cat *horse **elephant***~~==` highlights everything, strikes "
+        "“cat horse elephant”, italicises “horse elephant”, and bolds "
+        "“elephant”.\n"
         "\n"
         "## Headings\n"
         "Start a line with one to six `#` marks; the more marks, the smaller the "
@@ -133,20 +184,41 @@ QString manualText() {
         "```\n"
         "\n"
         "## Tables\n"
-        "Type a pipe table and Emerald lines the columns up when you click away. "
-        "Colons in the separator row set the alignment — `:--` left, `:-:` "
-        "centre, `--:` right.\n"
+        "Type a pipe table and Emerald lines the columns up as you go — on every "
+        "Tab and when you click away. Colons in the separator row set the "
+        "alignment — `:--` left, `:-:` centre, `--:` right.\n"
+        "\n"
+        "Press **Enter** on a header row (the first line, before there's a "
+        "`---` separator) and Emerald adds the separator and a first data row for "
+        "you, dropping the caret in the first cell.\n"
         "\n"
         "Press **Tab** inside a table to jump to the next cell (**Shift+Tab** "
         "goes back). Tab on the last header cell adds a column; on the separator "
         "row it starts a new data row; on the last cell of the last row it adds a "
-        "row — so you can build a whole table without leaving the keyboard.\n"
+        "row — so you can build a whole table without leaving the keyboard. "
+        "**Enter** on the last row leaves the table, on a fresh line below.\n"
         "\n"
         "| Feature      | Shortcut     |\n"
         "| :----------- | -----------: |\n"
         "| Find in note | Ctrl+F       |\n"
         "| Search vault | Ctrl+Shift+F |\n"
         "| Go to note   | Ctrl+P       |\n"
+        "\n"
+        "## Templates\n"
+        "Pick a **Templates folder** inside your vault under **Settings**, then "
+        "press **Ctrl+T** (or **Insert Template…** in the gear menu) to choose a "
+        "template — every note under that folder, sub-folders included, is "
+        "offered in a quick picker like *Go to note*. The template's text is "
+        "dropped in at your cursor.\n"
+        "\n"
+        "Templates can carry placeholders that fill themselves in on insert:\n"
+        "\n"
+        "- `{{title}}` — the current note's title\n"
+        "- `{{date}}` — today's date (default `YYYY-MM-DD`)\n"
+        "- `{{time}}` — the current time (default `HH:mm`)\n"
+        "\n"
+        "Give `{{date}}` or `{{time}}` a format after a colon to change it, e.g. "
+        "`{{date:YYYY/MM/DD}}` or `{{time:HH:mm:ss}}`.\n"
         "\n"
         "## Horizontal rule\n"
         "Three or more dashes on a line of their own draw a divider:\n"
@@ -562,6 +634,8 @@ void MainWindow::buildUi() {
             });
     connect(m_searchPopup, &SearchPopup::openVaultRequested, this,
             &MainWindow::openVault);
+    connect(m_searchPopup, &SearchPopup::templateRequested, this,
+            &MainWindow::onTemplateChosen);
 
     // In-note find bar, floating at the top-right of the editor.
     m_findBar = new QFrame(m_editor);
@@ -794,6 +868,9 @@ void MainWindow::buildActions() {
                          &MainWindow::newNote);
     auto *goTo = make(tr("Go to Note…"), QKeySequence(Qt::CTRL | Qt::Key_P),
                       &MainWindow::openQuickOpen);
+    auto *insertTpl = make(tr("Insert Template…"),
+                           QKeySequence(Qt::CTRL | Qt::Key_T),
+                           &MainWindow::insertTemplate);
     auto *save = make(tr("Save"), QKeySequence(QKeySequence::Save),
                       &MainWindow::saveCurrent);
     m_deleteAction = make(tr("Delete Note"),
@@ -822,6 +899,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(switchVault);
     m_gearMenu->addAction(newNote);
     m_gearMenu->addAction(goTo);
+    m_gearMenu->addAction(insertTpl);
     m_gearMenu->addAction(save);
     m_gearMenu->addAction(m_deleteAction);
     m_gearMenu->addSeparator();
@@ -928,12 +1006,16 @@ void MainWindow::openSettings() {
     // New-note folder + Home note pickers (need an open vault).
     auto *folderBox = new QComboBox(&dlg);
     auto *homeBox = new QComboBox(&dlg);
+    auto *templatesBox = new QComboBox(&dlg);
     folderBox->addItem(tr("(Vault root)"), QString());
     homeBox->addItem(tr("(None)"), QString());
+    templatesBox->addItem(tr("(None)"), QString());
     if (m_vault) {
         const QDir root(m_vault->root());
-        for (const QString &rel : m_vault->folders())
+        for (const QString &rel : m_vault->folders()) {
             folderBox->addItem(rel, rel);
+            templatesBox->addItem(rel, rel);
+        }
         for (const Note &n : m_vault->notes())
             homeBox->addItem(n.title, root.relativeFilePath(n.path));
         const int fi = folderBox->findData(s.value(QStringLiteral("newNoteFolder")));
@@ -942,9 +1024,14 @@ void MainWindow::openSettings() {
         const int hi = homeBox->findData(s.value(QStringLiteral("homeNote")));
         if (hi >= 0)
             homeBox->setCurrentIndex(hi);
+        const int ti =
+            templatesBox->findData(s.value(QStringLiteral("templatesFolder")));
+        if (ti >= 0)
+            templatesBox->setCurrentIndex(ti);
     } else {
         folderBox->setEnabled(false);
         homeBox->setEnabled(false);
+        templatesBox->setEnabled(false);
     }
 
     form->addRow(tr("Editor font"), fontBox);
@@ -953,6 +1040,7 @@ void MainWindow::openSettings() {
     form->addRow(tr("Line spacing"), spacingBox);
     form->addRow(tr("New notes in"), folderBox);
     form->addRow(tr("Home note"), homeBox);
+    form->addRow(tr("Templates folder"), templatesBox);
     form->addRow(tr("Mascot"), mascotAutoBox);
     form->addRow(tr("Mascot after"), mascotThreshBox);
 
@@ -993,6 +1081,8 @@ void MainWindow::openSettings() {
         if (m_vault) {
             s.setValue(QStringLiteral("newNoteFolder"), folderBox->currentData());
             s.setValue(QStringLiteral("homeNote"), homeBox->currentData());
+            s.setValue(QStringLiteral("templatesFolder"),
+                       templatesBox->currentData());
         }
     } else {
         m_editor->applyFont(originalFont); // revert the live preview
@@ -1262,6 +1352,13 @@ void MainWindow::refreshTree(bool preserveExpansion) {
 void MainWindow::openNoteByPath(const QString &path, bool record) {
     if (!m_vault || path.isEmpty())
         return;
+    if (!QFileInfo::exists(path)) {
+        // A stale target (e.g. a note deleted outside the app but still in the
+        // nav history): drop dangling entries and bail, rather than read an
+        // empty buffer and silently re-create the file on the next save.
+        pruneHistory();
+        return;
+    }
     // Remember where the caret sat in the note we're leaving, so returning to
     // it (e.g. via the backlink history) lands back at the same spot.
     if (!m_currentPath.isEmpty() && m_currentPath != path)
@@ -1505,6 +1602,23 @@ void MainWindow::pushHistory(const QString &path) {
     m_histIndex = m_history.size() - 1;
 }
 
+void MainWindow::pruneHistory() {
+    // The note the index currently points at; we keep the index on it if it
+    // survives the prune (so deleting a *different* note doesn't move our spot).
+    const QString current = (m_histIndex >= 0 && m_histIndex < m_history.size())
+                                ? m_history.at(m_histIndex)
+                                : QString();
+    m_history.erase(
+        std::remove_if(m_history.begin(), m_history.end(),
+                       [](const QString &p) { return !QFileInfo::exists(p); }),
+        m_history.end());
+    m_histIndex = current.isEmpty() ? m_history.size() - 1
+                                    : m_history.lastIndexOf(current);
+    if (m_histIndex < 0)
+        m_histIndex = m_history.size() - 1;
+    updateNavActions();
+}
+
 void MainWindow::updateNavActions() {
     if (m_backAction)
         m_backAction->setEnabled(m_histIndex > 0);
@@ -1531,6 +1645,49 @@ void MainWindow::openSearch() {
 void MainWindow::openQuickOpen() {
     if (m_vault)
         m_searchPopup->showCentered(true); // titles only
+}
+
+void MainWindow::insertTemplate() {
+    if (!m_vault)
+        return;
+    const QString rel =
+        QSettings().value(QStringLiteral("templatesFolder")).toString();
+    if (rel.isEmpty()) {
+        notify(tr("Set a templates folder in Settings first."), 3000);
+        return;
+    }
+    const QString dir = QDir(m_vault->root()).filePath(rel);
+    if (!QDir(dir).exists()) {
+        notify(tr("Templates folder not found: %1").arg(rel), 3000);
+        return;
+    }
+    // Every .md under the folder (subfolders included) is a template.
+    QStringList files;
+    QDirIterator it(dir, {QStringLiteral("*.md")}, QDir::Files,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext())
+        files << it.next();
+    files.sort(Qt::CaseInsensitive);
+    if (files.isEmpty()) {
+        notify(tr("No templates in %1").arg(rel), 3000);
+        return;
+    }
+    m_searchPopup->showTemplates(files);
+}
+
+void MainWindow::onTemplateChosen(const QString &path) {
+    if (!m_vault || path.isEmpty())
+        return;
+    const QString body =
+        expandTemplateTokens(m_vault->read(path), m_currentTitle);
+    // Insert at the caret, but never inside the hidden mascot header line — drop
+    // to the body's first position there (the spec's "beginning of file").
+    QTextCursor c = m_editor->textCursor();
+    if (c.position() < m_editor->firstContentPosition())
+        c.setPosition(m_editor->firstContentPosition());
+    c.insertText(body);
+    m_editor->setTextCursor(c);
+    m_editor->setFocus();
 }
 
 void MainWindow::openFindInFile() {
@@ -1689,6 +1846,10 @@ void MainWindow::reconcileAfterDeletion() {
     m_vault->scan();
     m_searchIndex.rebuild(*m_vault);
     if (!currentGone) {
+        // A *different* note (or a folder of them) was deleted — its path may
+        // still sit in the nav history; drop it so Back/Forward can't reach a
+        // now-deleted note (and re-create it on the next save).
+        pruneHistory();
         refreshTree();
         return;
     }
@@ -1705,12 +1866,7 @@ void MainWindow::reconcileAfterDeletion() {
     m_titleEdit->clear();
     m_titleEdit->blockSignals(false);
 
-    m_history.erase(
-        std::remove_if(m_history.begin(), m_history.end(),
-                       [](const QString &p) { return !QFileInfo::exists(p); }),
-        m_history.end());
-    m_histIndex = m_history.size() - 1;
-    updateNavActions();
+    pruneHistory();
     refreshTree();
 
     // Show the Home note, else the most recent still-open note, else blank.

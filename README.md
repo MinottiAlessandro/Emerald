@@ -58,7 +58,9 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 
 **Editing & live preview**
 - Headings, **bold**, *italic*, ***both***, `code`, ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists, fenced ` ``` ` code blocks (with language tag), `|` tables and `[[wiki|links]]` all render in place.
-- **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); Enter on an empty item ends it; Tab / Shift+Tab indent and outdent (a multi-line selection indents every line). Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level).
+- **Overlapping emphasis** — bold / italic / strike / highlight nest and stack, so `==dog ~~cat *horse **elephant***~~==` layers all four styles incrementally.
+- **Pipe tables** — Enter on a header row auto-adds the `---` separator and a first data row (caret lands in the first cell); Tab walks/grows the grid and re-aligns the columns on every press; Enter on the last row leaves the table.
+- **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); pressing Enter mid-item splits the line, carrying the text after the caret onto a new marked item; Enter on an empty item ends it; Tab / Shift+Tab indent and outdent (a multi-line selection indents every line). Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level).
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
 - **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).
 - **Code folding** on headings and fenced blocks.
@@ -77,6 +79,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 **Vault & search**
 - **Folder-tree sidebar** with drag-and-drop; right-click to create notes or sub-folders anywhere.
 - **Telescope-style search popup** — ranked results, type to filter, ↑/↓ to move, Enter jumps to the first match.
+- **Templates** — point **Settings → Templates folder** at a folder in the vault, then **Insert Template…** (`Ctrl+T`) opens a quick picker of every note under it (sub-folders included) and drops the chosen one in at the caret. Templates can carry `{{date}}`, `{{time}}` and `{{title}}` placeholders — each filled in on insert; `{{date}}`/`{{time}}` take an optional Moment.js-style format after a colon (e.g. `{{date:YYYY/MM/DD}}`, `{{time:HH:mm:ss}}`).
 - **Debounced autosave** plus **external-edit detection** — Emerald reloads notes changed outside the app.
 
 **Mascots**
@@ -102,6 +105,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 | Switch vault | `Ctrl+Shift+O` |
 | New note | `Ctrl+N` |
 | Go to note (quick open) | `Ctrl+P` |
+| Insert template | `Ctrl+T` |
 | Save now | `Ctrl+S` |
 | Delete note | `Ctrl+Delete` |
 | Find in note | `Ctrl+F` |

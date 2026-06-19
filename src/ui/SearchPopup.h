@@ -23,9 +23,14 @@ public:
     // by name as you type, and emit openVaultRequested() for the chosen one.
     void showVaults(const QStringList &dirs);
 
+    // A template picker: show the given template files (full paths), filter by
+    // name as you type, and emit templateRequested() for the chosen one.
+    void showTemplates(const QStringList &files);
+
 signals:
     void openRequested(const QString &path, const QString &query);
     void openVaultRequested(const QString &path);
+    void templateRequested(const QString &path);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -40,6 +45,8 @@ private:
     QLineEdit *m_input = nullptr;
     QListWidget *m_results = nullptr;
     bool m_titlesOnly = false;
-    bool m_vaultMode = false;  // listing vault folders instead of notes
-    QStringList m_vaultDirs;   // candidate vault folder paths (full)
+    bool m_vaultMode = false;     // listing vault folders instead of notes
+    bool m_templateMode = false;  // listing template files instead of notes
+    QStringList m_vaultDirs;      // candidate vault folder paths (full)
+    QStringList m_templateFiles;  // candidate template file paths (full)
 };

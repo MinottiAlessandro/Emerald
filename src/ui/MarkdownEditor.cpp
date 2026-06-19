@@ -508,12 +508,11 @@ void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
 
 bool MarkdownEditor::continueList() {
     QTextCursor cur = textCursor();
-    // Only continue when the caret is at the end of the line; pressing Enter
-    // mid-line just splits it as usual.
-    if (cur.hasSelection() || !cur.atBlockEnd())
+    if (cur.hasSelection())
         return false;
 
     const QString line = cur.block().text();
+    const int caret = cur.positionInBlock();
     auto endConstruct = [&] { // drop the marker, stay on the now-empty line
         cur.movePosition(QTextCursor::StartOfBlock);
         cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
@@ -524,6 +523,10 @@ bool MarkdownEditor::continueList() {
     static const QRegularExpression listRe(QStringLiteral(
         "^(\\s*)(?:([-*+])|(\\d+)([.)]))\\s+(\\[[ xX]\\]\\s+)?(.*)$"));
     if (const auto m = listRe.match(line); m.hasMatch()) {
+        // Enter inside the indent/marker (before the content) just splits the
+        // line normally — don't manufacture a marker there.
+        if (caret < m.capturedStart(6))
+            return false;
         if (m.captured(6).isEmpty()) { // empty item ends the list
             endConstruct();
             return true;
@@ -536,6 +539,8 @@ bool MarkdownEditor::continueList() {
                       m.captured(4) + QLatin1Char(' '); // next ordinal
         if (!m.captured(5).isEmpty())
             prefix += QStringLiteral("[ ] "); // continued task starts unchecked
+        // At the line end this appends a fresh item; mid-item it splits the line,
+        // carrying the text after the caret down onto the new (marked) item.
         cur.insertText(QStringLiteral("\n") + prefix);
         setTextCursor(cur);
         return true;
@@ -545,6 +550,8 @@ bool MarkdownEditor::continueList() {
     static const QRegularExpression quoteRe(
         QStringLiteral("^(\\s*)(>+)\\s?(.*)$"));
     if (const auto q = quoteRe.match(line); q.hasMatch()) {
+        if (caret < q.capturedStart(3))
+            return false;
         if (q.captured(3).isEmpty()) {
             endConstruct();
             return true;
@@ -749,6 +756,16 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     // plain newline / indent instead of continuing a list or folding markup.
     const bool inCode = insideCodeBlock(textCursor().block());
     if (!inCode) {
+        if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+            !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+            handleTableHeaderEnter()) {
+            return;
+        }
+        if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+            !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+            handleTableExitEnter()) {
+            return;
+        }
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
             !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
             continueList()) {
@@ -1306,6 +1323,76 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
     m_prettifying = false;
 }
 
+// Enter on a freshly-typed table header (a pipe row that is the first row and
+// has no separator yet) builds the `| --- |` separator beneath it — plus an
+// empty data row when none follows — and drops the caret in the first data
+// cell. Returns false (Enter behaves normally) for any other line.
+bool MarkdownEditor::handleTableHeaderEnter() {
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        return false;
+    const QTextBlock block = cur.block();
+    if (!isTableRow(block.text()) || isSeparatorRow(block.text()))
+        return false;
+    // Must be the first row of the table — the header.
+    if (block.previous().isValid() && isTableRow(block.previous().text()))
+        return false;
+    // ...and the table must not already carry a separator anywhere below it.
+    for (QTextBlock b = block.next(); b.isValid() && isTableRow(b.text());
+         b = b.next())
+        if (isSeparatorRow(b.text()))
+            return false;
+
+    const int cols = qMax(1, int(splitRow(block.text()).size()));
+    const QTextBlock below = block.next();
+    const bool hasDataBelow = below.isValid() && isTableRow(below.text());
+
+    QString sep = QStringLiteral("|");
+    QString empty = QStringLiteral("|");
+    for (int i = 0; i < cols; ++i) {
+        sep += QStringLiteral(" --- |");
+        empty += QStringLiteral("  |");
+    }
+    QString insert = QStringLiteral("\n") + sep;
+    if (!hasDataBelow)
+        insert += QStringLiteral("\n") + empty;
+
+    const int headerNo = block.blockNumber();
+    QTextCursor edit(block);
+    edit.movePosition(QTextCursor::EndOfBlock);
+    m_prettifying = true; // suppress the leave-table reformat mid-edit
+    edit.insertText(insert);
+    m_prettifying = false;
+    prettifyTableAt(headerNo); // align header + separator (+ new row)
+
+    // First cell of the data row (the new one, or the row that followed).
+    const QTextBlock data = document()->findBlockByNumber(headerNo + 2);
+    if (data.isValid())
+        moveToTableCell(data, 0);
+    return true;
+}
+
+// Enter on the last row of a table leaves the grid: open a fresh, empty line
+// just below it and put the caret there. Returns false for any other line so
+// Enter behaves normally. (The header-without-separator case is handled first
+// by handleTableHeaderEnter, so a one-row table builds itself before this.)
+bool MarkdownEditor::handleTableExitEnter() {
+    QTextCursor cur = textCursor();
+    if (cur.hasSelection())
+        return false;
+    const QTextBlock block = cur.block();
+    if (!isTableRow(block.text()))
+        return false;
+    const QTextBlock next = block.next();
+    if (next.isValid() && isTableRow(next.text()))
+        return false; // not the last row of the table
+    QTextCursor c(block);
+    c.movePosition(QTextCursor::EndOfBlock);
+    c.insertText(QStringLiteral("\n"));
+    setTextCursor(c);
+    return true;
+}
+
 // Tab inside a pipe table grows/navigates the grid:
 //  - header row, last cell → append a new column (a cell in every row)
 //  - separator row          → build a fresh data row below, go to its first cell
@@ -1366,6 +1453,7 @@ bool MarkdownEditor::handleTableTab(bool forward) {
             backRow = prev;
             backCell = qMax(0, int(rows[prev].size()) - 1);
         }
+        prettifyTableAt(firstNo); // keep the grid aligned (no-op if it already is)
         const QTextBlock dest = document()->findBlockByNumber(firstNo + backRow);
         if (dest.isValid())
             moveToTableCell(dest, backCell);
@@ -1435,9 +1523,12 @@ bool MarkdownEditor::handleTableTab(bool forward) {
         edit.insertText(lines.join(QLatin1Char('\n')));
         edit.endEditBlock();
         m_prettifying = false;
-        prettifyTableAt(firstNo); // align the rebuilt grid
     }
 
+    // Re-align on every Tab so the grid tightens up as cells are filled. It's
+    // cheap: prettifyTableAt rebuilds the rows in memory and only touches the
+    // document when the alignment actually changed (else it returns at once).
+    prettifyTableAt(firstNo);
     const QTextBlock dest = document()->findBlockByNumber(firstNo + targetRow);
     if (dest.isValid())
         moveToTableCell(dest, targetCell);

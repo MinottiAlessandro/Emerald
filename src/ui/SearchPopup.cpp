@@ -46,6 +46,7 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
 
 void SearchPopup::showCentered(bool titlesOnly) {
     m_vaultMode = false;
+    m_templateMode = false;
     m_titlesOnly = titlesOnly;
     m_input->setPlaceholderText(titlesOnly ? tr("Go to note…")
                                            : tr("Search notes…"));
@@ -59,10 +60,24 @@ void SearchPopup::showCentered(bool titlesOnly) {
 
 void SearchPopup::showVaults(const QStringList &dirs) {
     m_vaultMode = true;
+    m_templateMode = false;
     m_vaultDirs = dirs;
     m_input->setPlaceholderText(tr("Switch vault…"));
     m_input->clear();
     refresh(QString()); // empty filter shows every vault straight away
+    reposition();
+    show();
+    raise();
+    m_input->setFocus();
+}
+
+void SearchPopup::showTemplates(const QStringList &files) {
+    m_vaultMode = false;
+    m_templateMode = true;
+    m_templateFiles = files;
+    m_input->setPlaceholderText(tr("Insert template…"));
+    m_input->clear();
+    refresh(QString()); // empty filter lists every template straight away
     reposition();
     show();
     raise();
@@ -81,6 +96,21 @@ void SearchPopup::reposition() {
 
 void SearchPopup::refresh(const QString &text) {
     m_results->clear();
+    if (m_templateMode) {
+        const QString needle = text.trimmed();
+        for (const QString &file : m_templateFiles) {
+            const QString name = QFileInfo(file).completeBaseName();
+            if (needle.isEmpty() || name.contains(needle, Qt::CaseInsensitive)) {
+                auto *item = new QListWidgetItem(name, m_results);
+                item->setData(kPathRole, file);
+            }
+        }
+        if (m_results->count())
+            m_results->setCurrentRow(0);
+        adjustSize();
+        reposition();
+        return;
+    }
     if (m_vaultMode) {
         const QString needle = text.trimmed();
         for (const QString &dir : m_vaultDirs) {
@@ -124,6 +154,8 @@ void SearchPopup::accept() {
         return;
     if (m_vaultMode)
         emit openVaultRequested(path);
+    else if (m_templateMode)
+        emit templateRequested(path);
     else
         emit openRequested(path, m_input->text());
     hide();

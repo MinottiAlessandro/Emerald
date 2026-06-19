@@ -48,13 +48,6 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_bold.setForeground(QColor("#d7eee2"));
     m_bold.setFontWeight(QFont::Bold);
 
-    m_italic.setForeground(QColor("#d7eee2"));
-    m_italic.setFontItalic(true);
-
-    m_boldItalic.setForeground(QColor("#d7eee2"));
-    m_boldItalic.setFontWeight(QFont::Bold);
-    m_boldItalic.setFontItalic(true);
-
     m_code.setForeground(QColor("#7ee0b0"));
     applyMono(m_code);
     m_code.setBackground(QColor("#16241c"));
@@ -118,16 +111,7 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
         QStringLiteral("^(\\s*[-*+]\\s+\\[)([ xX])(\\]\\s+)(.*)$"));
     m_reList       = QRegularExpression(
         QStringLiteral("^(\\s*)([-*+]|\\d+[.)])(\\s+)"));
-    m_reBoldItalic = QRegularExpression(QStringLiteral("\\*\\*\\*([^*]+)\\*\\*\\*"));
-    m_reBoldUnder  = QRegularExpression(QStringLiteral("\\*\\*_([^_]+)_\\*\\*"));
-    m_reUnderBold  = QRegularExpression(QStringLiteral("_\\*\\*([^*]+)\\*\\*_"));
     m_reCode       = QRegularExpression(QStringLiteral("`([^`]+)`"));
-    m_reBold       = QRegularExpression(QStringLiteral("\\*\\*([^*]+)\\*\\*"));
-    m_reStrike     = QRegularExpression(QStringLiteral("~~([^~]+)~~"));
-    m_reHighlight  = QRegularExpression(QStringLiteral("==([^=]+)=="));
-    m_reItalicStar = QRegularExpression(QStringLiteral("\\*([^*]+)\\*"));
-    m_reItalicUnder =
-        QRegularExpression(QStringLiteral("(?<!\\w)_([^_]+)_(?!\\w)"));
     m_reTableSep =
         QRegularExpression(QStringLiteral("^\\s*\\|?[\\s:|-]*-[\\s:|-]*\\|?\\s*$"));
     m_reLink =
@@ -315,6 +299,157 @@ void MarkdownHighlighter::applyInline(const QRegularExpression &re,
 
         for (int i = start; i < end; ++i)
             consumed[i] = true;
+    }
+}
+
+QTextCharFormat MarkdownHighlighter::emphasisFormat(int mask) const {
+    QTextCharFormat f;
+    if (mask & SBold)
+        f.setFontWeight(QFont::Bold);
+    if (mask & SItalic)
+        f.setFontItalic(true);
+    if (mask & (SStrike | SDone))
+        f.setFontStrikeOut(true);
+    // Foreground precedence (most specific wins): highlight reads dark-on-green,
+    // else a completed-task's dim, else strike's dim, else the emphasis accent.
+    // Background only from highlight.
+    if (mask & SHighlight) {
+        f.setForeground(m_highlight.foreground());
+        f.setBackground(m_highlight.background());
+    } else if (mask & SDone) {
+        f.setForeground(m_taskDone.foreground());
+    } else if (mask & SStrike) {
+        f.setForeground(m_strike.foreground());
+    } else if (mask & (SBold | SItalic)) {
+        f.setForeground(m_bold.foreground()); // == m_italic's accent green
+    }
+    return f;
+}
+
+void MarkdownHighlighter::applyEmphasis(const QString &text,
+                                        QList<bool> &consumed, bool reveal,
+                                        int seedStyle, int seedStart,
+                                        int seedEnd) {
+    const int n = text.size();
+    QList<int> mask(n, 0);     // accumulated InlineStyle flags per character
+    QList<bool> delim(n, false); // delimiter chars to conceal/dim
+
+    // Seed a pre-existing style over a range (a done task's strikethrough) so
+    // emphasis inside it stacks rather than overwrites.
+    if (seedStyle)
+        for (int i = qMax(0, seedStart); i < seedEnd && i < n; ++i)
+            mask[i] |= seedStyle;
+
+    auto addStyle = [&](int s, int e, int style) {
+        for (int i = qMax(0, s); i < e && i < n; ++i)
+            mask[i] |= style;
+    };
+    auto markDelim = [&](int s, int e) {
+        for (int i = qMax(0, s); i < e && i < n; ++i)
+            delim[i] = true;
+    };
+
+    // Two-char delimiters (== highlight, ~~ strike): simple open/close toggle.
+    // Same-type nesting isn't supported (rare); different types nest freely
+    // because every pass only *adds* to the mask.
+    auto pairTwoChar = [&](QChar c, int style) {
+        int open = -1;
+        for (int i = 0; i + 1 < n;) {
+            if (!consumed[i] && !consumed[i + 1] && text[i] == c &&
+                text[i + 1] == c) {
+                if (open < 0) {
+                    open = i;
+                } else {
+                    addStyle(open + 2, i, style);
+                    markDelim(open, open + 2);
+                    markDelim(i, i + 2);
+                    open = -1;
+                }
+                i += 2;
+            } else {
+                ++i;
+            }
+        }
+    };
+    pairTwoChar(QLatin1Char('='), SHighlight);
+    pairTwoChar(QLatin1Char('~'), SStrike);
+
+    // Asterisk / underscore runs. A run of length L offers L/2 "strong" (bold)
+    // units and L%2 "emphasis" (italic) units; each kind pairs on its own stack.
+    // Underscore obeys the intraword rule (no emphasis inside a word, so
+    // snake_case stays literal). Markers conceal only once a pair completes.
+    struct Open {
+        int contentStart;
+        int delimStart;
+        int delimEnd;
+    };
+    auto matchRuns = [&](QChar c, bool wordRule) {
+        QList<Open> boldStack, italStack;
+        for (int i = 0; i < n;) {
+            if (consumed[i] || text[i] != c) {
+                ++i;
+                continue;
+            }
+            int j = i;
+            while (j < n && text[j] == c && !consumed[j])
+                ++j;
+            const int len = j - i;
+            const QChar before = i > 0 ? text[i - 1] : QLatin1Char(' ');
+            const QChar after = j < n ? text[j] : QLatin1Char(' ');
+            const bool canOpen = !wordRule || !before.isLetterOrNumber();
+            const bool canClose = !wordRule || !after.isLetterOrNumber();
+            int bold = len / 2, ital = len % 2;
+            if (canClose) {
+                while (bold > 0 && !boldStack.isEmpty()) {
+                    const Open o = boldStack.takeLast();
+                    addStyle(o.contentStart, i, SBold);
+                    markDelim(o.delimStart, o.delimEnd);
+                    markDelim(i, j);
+                    --bold;
+                }
+                while (ital > 0 && !italStack.isEmpty()) {
+                    const Open o = italStack.takeLast();
+                    addStyle(o.contentStart, i, SItalic);
+                    markDelim(o.delimStart, o.delimEnd);
+                    markDelim(i, j);
+                    --ital;
+                }
+            }
+            if (canOpen) {
+                for (int k = 0; k < bold; ++k)
+                    boldStack.append({j, i, j});
+                for (int k = 0; k < ital; ++k)
+                    italStack.append({j, i, j});
+            }
+            i = j;
+        }
+    };
+    matchRuns(QLatin1Char('*'), false);
+    matchRuns(QLatin1Char('_'), true);
+
+    // Apply: delimiters get the marker format (dimmed when revealed, hidden
+    // otherwise); styled content gets a single merged format. Coalesce equal
+    // adjacent characters into one setFormat call.
+    const QTextCharFormat markerFmt = reveal ? m_marker : conceal();
+    for (int i = 0; i < n;) {
+        if (delim[i]) {
+            int j = i;
+            while (j < n && delim[j])
+                ++j;
+            setFormat(i, j - i, markerFmt);
+            for (int k = i; k < j; ++k)
+                consumed[k] = true;
+            i = j;
+        } else if (mask[i] && !consumed[i]) {
+            const int m = mask[i];
+            int j = i;
+            while (j < n && !delim[j] && !consumed[j] && mask[j] == m)
+                ++j;
+            setFormat(i, j - i, emphasisFormat(m));
+            i = j;
+        } else {
+            ++i;
+        }
     }
 }
 
@@ -544,6 +679,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     setCurrentBlockState(StateNormal);
 
     QList<bool> consumed(text.size(), false);
+    int doneStart = -1, doneEnd = -1; // a completed task's label, struck below
 
     // Headings own the whole line.
     const auto h = m_reHeading.match(text);
@@ -636,8 +772,13 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         }
         for (int i = 0; i < markerEnd && i < consumed.size(); ++i)
             consumed[i] = true;
-        if (done)
-            setFormat(task.capturedStart(4), task.capturedLength(4), m_taskDone);
+        if (done) {
+            // Strike the label through the emphasis pass (seeded SDone) so any
+            // bold/italic/highlight on a word inside stacks with the strike
+            // instead of overwriting it.
+            doneStart = task.capturedStart(4);
+            doneEnd = task.capturedEnd(4);
+        }
     } else {
         // Plain bullet / ordered list marker.
         const auto list = m_reList.match(text);
@@ -660,22 +801,16 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         }
     }
 
-    // Inline rules. Order matters: code first (its content must not be
-    // re-parsed), then the bold+italic combos before plain bold/italic, then
-    // strike, highlight, italics, and finally links.
+    // Inline rules. The "exclusive" constructs run first and mark their spans
+    // consumed so emphasis never re-parses inside them: code (verbatim), math
+    // (its '_'/'*' aren't emphasis), and both link kinds (a URL may hold '_'/'*',
+    // and [[wiki|targets]] aren't emphasis). Emphasis runs last over whatever's
+    // left, and unlike the others it *accumulates* (bold+italic+strike+highlight
+    // can all land on the same character).
     applyInline(m_reCode, text, consumed, m_code, reveal);
-    // Math before bold/italic so a formula's '_' subscripts and '*' aren't
-    // mistaken for emphasis; after code so $ inside `code` stays literal.
     applyMath(text, consumed, mathReveal);
-    // Before bold/italic so a URL containing '_' or '*' isn't chewed up by them.
     applyInternetLinks(text, consumed, reveal);
-    applyInline(m_reBoldItalic, text, consumed, m_boldItalic, reveal);
-    applyInline(m_reBoldUnder, text, consumed, m_boldItalic, reveal);
-    applyInline(m_reUnderBold, text, consumed, m_boldItalic, reveal);
-    applyInline(m_reBold, text, consumed, m_bold, reveal);
-    applyInline(m_reStrike, text, consumed, m_strike, reveal);
-    applyInline(m_reHighlight, text, consumed, m_highlight, reveal);
-    applyInline(m_reItalicStar, text, consumed, m_italic, reveal);
-    applyInline(m_reItalicUnder, text, consumed, m_italic, reveal);
     applyWikiLinks(text, consumed, reveal);
+    applyEmphasis(text, consumed, reveal,
+                  doneStart >= 0 ? SDone : 0, doneStart, doneEnd);
 }
