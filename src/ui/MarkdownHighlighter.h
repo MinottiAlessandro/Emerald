@@ -95,6 +95,11 @@ private:
     // `block` belongs to, so the whole region shows raw source for editing.
     // `openingHere` means `block` is itself the opening fence.
     bool caretInMathRegion(const QTextBlock &block, bool openingHere) const;
+    // True when the cursor (or selection) sits anywhere inside the ```…```
+    // fenced code region that `block` belongs to, so *both* the opening and the
+    // closing fence reveal together while editing inside the block.
+    // `openingHere` means `block` is itself the opening fence.
+    bool caretInCodeRegion(const QTextBlock &block, bool openingHere) const;
     // Rehighlight every line of the math region containing `blockNumber` (or
     // just that line if it's not in one) so a whole region reveals/conceals as
     // the caret crosses its boundary.

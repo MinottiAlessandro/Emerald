@@ -107,13 +107,22 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 | Go to note (quick open) | `Ctrl+P` |
 | Insert template | `Ctrl+T` |
 | Save now | `Ctrl+S` |
-| Delete note | `Ctrl+Delete` |
+| Rename note | `F2` |
+| Delete note | `Ctrl+Shift+Backspace` |
 | Find in note | `Ctrl+F` |
 | Search vault | `Ctrl+Shift+F` |
-| Back / Forward | `Alt+←` / `Alt+→`  ·  `Ctrl+[` / `Ctrl+]` |
+| Settings | `Ctrl+,` |
+| Back / Forward | `Alt+←` / `Alt+→` |
+| Bold / Italic | `Ctrl+B` / `Ctrl+I` |
+| Insert link | `Ctrl+K` |
+| Heading level 1–6 (press again to clear) | `Ctrl+1` … `Ctrl+6` |
+| Select line | `Ctrl+L` |
+| Move line up / down | `Alt+↑` / `Alt+↓` |
 | Indent / outdent list item | `Tab` / `Shift+Tab` |
 | Font size up / down / reset | `Ctrl++` / `Ctrl+-` / `Ctrl+0` |
 | Quit | `Ctrl+Q` |
+
+> `Ctrl+Delete` stays the usual delete-word-forward; Delete note is the deliberate `Ctrl+Shift+Backspace`.
 
 ---
 

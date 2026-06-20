@@ -10,6 +10,7 @@
 #include <QClipboard>
 #include <QCompleter>
 #include <QDesktopServices>
+#include <QFont>
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -149,13 +150,19 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
                 m_adjustingScroll = false;
             });
 
-    // Prefer Inter if installed, but fall back to fonts that exist so the first
-    // text layout doesn't pay for a failed font lookup.
+    // Default to the platform's UI monospace face (the CSS "ui-monospace"
+    // idea): SF Mono / Menlo on macOS, Cascadia / Consolas on Windows, the
+    // common mono faces on Linux, with the generic "monospace" alias last so a
+    // fixed-width font is always found. The Monospace style hint lets the font
+    // system pick a sensible substitute when none of the named families exist.
     QFont font;
-    font.setFamilies({QStringLiteral("Inter"), QStringLiteral("Liberation Sans"),
-                      QStringLiteral("sans-serif")});
+    font.setFamilies({QStringLiteral("SF Mono"), QStringLiteral("Menlo"),
+                      QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas"),
+                      QStringLiteral("DejaVu Sans Mono"),
+                      QStringLiteral("Liberation Mono"),
+                      QStringLiteral("monospace")});
     font.setPointSize(12);
-    font.setStyleHint(QFont::SansSerif);
+    font.setStyleHint(QFont::Monospace);
     setFont(font);
     document()->setDefaultFont(font);
     document()->setDocumentMargin(16);
@@ -191,6 +198,19 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
             }
         }
         m_lastCursorBlock = textCursor().blockNumber();
+    });
+    // A selection can change without the caret position moving (e.g. extending
+    // the anchor while the caret end stays put), and code / $$ blocks reveal
+    // their raw source while a selection covers them — so refresh the
+    // highlighter's active span on selection changes too, not just caret moves.
+    // setActiveBlock early-returns when nothing actually changed, so the overlap
+    // with cursorPositionChanged costs nothing.
+    connect(this, &QPlainTextEdit::selectionChanged, this, [this] {
+        const QTextCursor tc = textCursor();
+        m_highlighter->setActiveBlock(
+            tc.blockNumber(),
+            document()->findBlock(tc.anchor()).blockNumber());
+        viewport()->update();
     });
     // Keep folded sections hidden as the document is edited.
     connect(document(), &QTextDocument::contentsChanged, this, [this] {
@@ -650,14 +670,6 @@ bool MarkdownEditor::indentSelection(bool deeper) {
 }
 
 void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
-    // Ctrl+Del deletes the whole note. QPlainTextEdit would otherwise eat this
-    // as "delete word forward" (it claims the shortcut via ShortcutOverride),
-    // so intercept it here where the editor has focus and hand it to the window.
-    if (event->modifiers() == Qt::ControlModifier &&
-        event->key() == Qt::Key_Delete) {
-        emit deleteNoteRequested();
-        return;
-    }
     if (m_completer->popup()->isVisible()) {
         // These keys belong to the popup while it is open.
         switch (event->key()) {
@@ -752,6 +764,29 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         surroundSelection(event->text()))
         return;
 
+    // Typing the third backtick of a fence (the line becomes "```") auto-creates
+    // the matching closing ``` on the line below and leaves the caret on the
+    // opening fence, so a language can be typed (Enter then drops into the body).
+    // Only
+    // fires on a line that is exactly "``" with the caret at its end and not
+    // already inside a code block (so closing a block by hand still works).
+    if (event->text() == QStringLiteral("`") &&
+        !(event->modifiers() &
+          (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+        QTextCursor c = textCursor();
+        if (!c.hasSelection() && c.atBlockEnd() &&
+            c.block().text() == QStringLiteral("``") &&
+            !insideCodeBlock(c.block())) {
+            c.beginEditBlock();
+            c.insertText(QStringLiteral("`\n```")); // finish open + closing fence
+            c.movePosition(QTextCursor::Up);         // back to the opening fence,
+            c.movePosition(QTextCursor::EndOfBlock); // caret there to type a language
+            c.endEditBlock();
+            setTextCursor(c);
+            return;
+        }
+    }
+
     // Inside a fenced code block the text is verbatim: Enter and Tab insert a
     // plain newline / indent instead of continuing a list or folding markup.
     const bool inCode = insideCodeBlock(textCursor().block());
@@ -788,14 +823,17 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         switch (event->key()) {
         case Qt::Key_B: wrapSelection(QStringLiteral("**")); return; // bold
         case Qt::Key_I: wrapSelection(QStringLiteral("*")); return;  // italic
+        case Qt::Key_K: insertLink(); return;                        // [text](…)
         case Qt::Key_L: selectCurrentLine(); return;
-        case Qt::Key_D: duplicateLineOrSelection(); return;
+        case Qt::Key_1:
+        case Qt::Key_2:
+        case Qt::Key_3:
+        case Qt::Key_4:
+        case Qt::Key_5:
+        case Qt::Key_6:
+            setHeadingLevel(event->key() - Qt::Key_0); return; // # … ###### heading
         default: break;
         }
-    } else if (mods == (Qt::ControlModifier | Qt::ShiftModifier) &&
-               event->key() == Qt::Key_K) {
-        deleteCurrentLine();
-        return;
     } else if (mods == Qt::AltModifier &&
                (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
         moveLines(event->key() == Qt::Key_Up);
@@ -965,47 +1003,33 @@ void MarkdownEditor::selectCurrentLine() {
     setTextCursor(cur);
 }
 
-void MarkdownEditor::duplicateLineOrSelection() {
+void MarkdownEditor::insertLink() {
     QTextCursor cur = textCursor();
     if (cur.hasSelection()) {
-        const QString sel = cur.selectedText();
-        const int end = cur.selectionEnd();
-        cur.setPosition(end);
-        cur.insertText(sel); // a second copy right after the selection
-        setTextCursor(cur);
-        return;
+        // Wrap the selection as a Markdown link and drop the caret between the
+        // parens, ready for the URL: "text" -> "[text](‸)".
+        cur.insertText(QStringLiteral("[") + cur.selectedText() +
+                       QStringLiteral("]()"));
+        cur.movePosition(QTextCursor::PreviousCharacter);
+    } else {
+        // No selection: empty link skeleton, caret inside the [] for the text.
+        cur.insertText(QStringLiteral("[]()"));
+        cur.movePosition(QTextCursor::PreviousCharacter, QTextCursor::MoveAnchor, 3);
     }
-    const QString line = cur.block().text();
-    const int col = cur.positionInBlock();
-    cur.movePosition(QTextCursor::EndOfBlock);
-    cur.insertText(QStringLiteral("\n") + line);
-    // Keep the caret on the new (lower) copy, at the same column.
-    cur.movePosition(QTextCursor::StartOfBlock);
-    cur.movePosition(QTextCursor::Right, QTextCursor::MoveAnchor,
-                     qMin(col, line.size()));
     setTextCursor(cur);
 }
 
-void MarkdownEditor::deleteCurrentLine() {
-    const QTextBlock blk = textCursor().block();
-    QTextCursor cur = textCursor();
-    cur.beginEditBlock();
-    if (blk.next().isValid()) {
-        // Not the last line: take this line plus its trailing newline.
-        cur.setPosition(blk.position());
-        cur.setPosition(blk.next().position(), QTextCursor::KeepAnchor);
-    } else if (blk.previous().isValid()) {
-        // Last line: take the preceding newline too, so no blank line is left.
-        cur.setPosition(blk.previous().position() + blk.previous().length() - 1);
-        cur.setPosition(blk.position() + blk.length() - 1, QTextCursor::KeepAnchor);
-    } else {
-        // The only line: just clear its text.
-        cur.setPosition(blk.position());
-        cur.setPosition(blk.position() + blk.length() - 1, QTextCursor::KeepAnchor);
-    }
-    cur.removeSelectedText();
-    cur.endEditBlock();
-    setTextCursor(cur);
+void MarkdownEditor::setHeadingLevel(int level) {
+    const QTextBlock block = textCursor().block();
+    const int current = headingLevel(block.text()); // 0 when not a heading
+    const int strip = current > 0 ? current + 1 : 0; // existing "###" + its space
+    // Pressing the level a line already has clears the heading (toggle off).
+    const int target = current == level ? 0 : level;
+    QTextCursor c(block);
+    c.movePosition(QTextCursor::StartOfBlock);
+    c.setPosition(block.position() + strip, QTextCursor::KeepAnchor);
+    c.insertText(target > 0 ? QString(target, QLatin1Char('#')) + QLatin1Char(' ')
+                            : QString());
 }
 
 // Move the current line (or every line the selection touches) up or down by one,
@@ -1075,7 +1099,14 @@ void MarkdownEditor::forEachCodeBlock(
     static const QRegularExpression fenceRe(
         QStringLiteral("^\\s*(?:```|~~~)\\s*(\\S*)"));
 
-    const int caret = textCursor().blockNumber();
+    // The block counts as "being edited" — show the raw ``` source, not the
+    // rendered header bar — when the caret or a selection touches it. This is the
+    // same test the highlighter uses to reveal the fences
+    // (MarkdownHighlighter::caretInCodeRegion), so selecting the whole block (or
+    // across it) shows raw markup on both sides instead of a half-rendered mix.
+    const QTextCursor tc = textCursor();
+    const int selFirst = document()->findBlock(tc.selectionStart()).blockNumber();
+    const int selLast = document()->findBlock(tc.selectionEnd()).blockNumber();
     bool inCode = false;
     qreal headerTop = 0, headerBottom = 0;
     int openNum = 0;
@@ -1090,10 +1121,10 @@ void MarkdownEditor::forEachCodeBlock(
                             cb.header.center().y() - s / 2, s, s);
         cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang;
         cb.code = code.join(QLatin1Char('\n'));
-        // The caret sitting anywhere from the opening to the closing fence means
-        // the block is being edited; callers then show raw markup instead of the
+        // The caret or selection touching the block (see selFirst/selLast above)
+        // means it's being edited; callers then show raw markup instead of the
         // header bar (which would overlap the now-visible ``` fence).
-        cb.active = caret >= openNum && caret <= closeNum;
+        cb.active = selLast >= openNum && selFirst <= closeNum;
         fn(cb);
     };
 
@@ -1318,6 +1349,28 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
     if (cur.selectedText().replace(QChar(0x2029), QLatin1Char('\n')) ==
         out.join(QLatin1Char('\n')))
         return; // already aligned
+
+    // Don't auto-align a table whose widest row would soft-wrap onto a new
+    // line: padding every column to its widest cell only makes the longest row
+    // longer, and once a row wraps the column grid no longer lines up — the
+    // formatting "breaks". In that case leave the rows exactly as typed. Cells
+    // paint in a fixed-width font, so measure with one to match what's drawn.
+    const double avail =
+        viewport()->width() - 2.0 * document()->documentMargin();
+    if (avail > 0) {
+        QFont mono = document()->defaultFont();
+        mono.setFamilies({QStringLiteral("Menlo"), QStringLiteral("Consolas"),
+                          QStringLiteral("DejaVu Sans Mono"),
+                          QStringLiteral("monospace")});
+        mono.setStyleHint(QFont::Monospace);
+        const QFontMetricsF fm(mono);
+        double widest = 0;
+        for (const QString &l : out)
+            widest = qMax(widest, fm.horizontalAdvance(l));
+        if (widest > avail)
+            return; // a row would wrap — leave the table unformatted
+    }
+
     m_prettifying = true;
     cur.insertText(out.join(QLatin1Char('\n')));
     m_prettifying = false;

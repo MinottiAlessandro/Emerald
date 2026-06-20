@@ -102,8 +102,13 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            if [ -f .github/RELEASE_NOTES.md ]; then
-              gh release create "$TAG" --title "Emerald $TAG" --notes-file .github/RELEASE_NOTES.md
+            # Per-tag notes live in .github/release-notes/<tag>.md so each release
+            # gets its own write-up. (A single shared file silently reused itself
+            # across 1.3.0 → 1.4.1, giving them all identical notes.) Fall back to
+            # GitHub's auto-generated notes when a tag has no file yet.
+            NOTES=".github/release-notes/${TAG}.md"
+            if [ -f "$NOTES" ]; then
+              gh release create "$TAG" --title "Emerald $TAG" --notes-file "$NOTES"
             else
               gh release create "$TAG" --title "Emerald $TAG" --generate-notes
             fi

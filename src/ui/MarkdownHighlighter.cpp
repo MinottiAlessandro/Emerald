@@ -52,14 +52,18 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     applyMono(m_code);
     m_code.setBackground(QColor("#16241c"));
 
+    // No background on the fenced-code formats: the editor already paints the
+    // block's dark body as one rounded rect (MarkdownEditor::paintEvent's `full`
+    // rect, drawn in every state). A per-line background here would be a second
+    // fill of the same colour stacked on top — redundant, it squares off the
+    // rounded corners, and where it meets the green header it can leave a
+    // hairline seam under GPU/fractional-scale compositing.
     m_codeBlock.setForeground(QColor("#a9c8b8"));
     applyMono(m_codeBlock);
-    m_codeBlock.setBackground(QColor("#13201a"));
 
     m_codeLang.setForeground(QColor("#7ee0b0"));
     applyMono(m_codeLang);
     m_codeLang.setFontItalic(true);
-    m_codeLang.setBackground(QColor("#13201a"));
 
     m_strike.setForeground(QColor("#5e7d6d"));
     m_strike.setFontStrikeOut(true);
@@ -135,19 +139,54 @@ void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
     // the region the caret left and the one it entered — not just the two lines.
     rehighlightAround(oldCaret);
     rehighlightAround(caretBlock);
-    // Math also reveals when the selection covers it, so rehighlight every math
-    // line in the union of the old and new selection spans (the lines whose
-    // reveal state can have flipped). Plain lines are untouched — only the
-    // caret's line reveals its markup, as before.
+    // Math and fenced code blocks both reveal their raw source when the
+    // selection covers them, so rehighlight every math/code line in the union of
+    // the old and new selection spans (the lines whose reveal state can have
+    // flipped). Plain lines are untouched — only the caret's line reveals its
+    // markup, as before.
     QTextDocument *doc = document();
     if (!doc)
         return;
-    for (int n = qMin(oldFirst, newFirst); n <= qMax(oldLast, newLast); ++n) {
+    // A $$ math block and a ``` code block carry their state on the opening +
+    // body lines (StateMath / StateCode), with the closing line StateNormal.
+    auto regional = [](const QTextBlock &x) {
+        return x.userState() == StateMath || x.userState() == StateCode;
+    };
+    for (int n = qMin(oldFirst, newFirst); n <= qMax(oldLast, newLast);) {
         const QTextBlock b = doc->findBlockByNumber(n);
         if (!b.isValid())
-            continue;
-        if (b.userState() == StateMath || b.text().contains(QLatin1Char('$')))
-            rehighlightBlock(b);
+            break;
+        QTextBlock first, last;
+        bool inRegion = false;
+        if (regional(b)) { // opening or body line
+            first = last = b;
+            while (first.previous().isValid() && regional(first.previous()))
+                first = first.previous();
+            while (last.next().isValid() && regional(last))
+                last = last.next(); // ends on the closing line
+            inRegion = true;
+        } else if (b.previous().isValid() && regional(b.previous())) {
+            first = b.previous(); // b is the closing line
+            last = b;
+            while (first.previous().isValid() && regional(first.previous()))
+                first = first.previous();
+            inRegion = true;
+        }
+        if (inRegion) {
+            // Rehighlight the entire region so BOTH delimiters flip together,
+            // even when one lies outside the changed span (e.g. selecting from
+            // inside a block outward, then collapsing the selection).
+            for (QTextBlock x = first; x.isValid(); x = x.next()) {
+                rehighlightBlock(x);
+                if (x == last)
+                    break;
+            }
+            n = last.blockNumber() + 1;
+        } else {
+            if (b.text().contains(QLatin1Char('$'))) // single-line inline $…$
+                rehighlightBlock(b);
+            ++n;
+        }
     }
 }
 
@@ -158,20 +197,28 @@ void MarkdownHighlighter::rehighlightAround(int blockNumber) {
     QTextBlock b = doc->findBlockByNumber(blockNumber);
     if (!b.isValid())
         return;
-    auto mathy = [](const QTextBlock &x) { return x.userState() == StateMath; };
+    // Both a $$ math block and a ``` fenced code block reveal/conceal their
+    // delimiters as a whole region (the code block now shows both fences while
+    // the caret is anywhere inside it), so when the caret enters or leaves one,
+    // rehighlight every line of the region — not just the line it sat on. The
+    // two states have the same shape: the opening + middle/body lines carry the
+    // state, the closing line is StateNormal.
+    auto regional = [](const QTextBlock &x) {
+        return x.userState() == StateMath || x.userState() == StateCode;
+    };
     QTextBlock first, last;
     bool inRegion = false;
-    if (mathy(b)) { // opening line or a middle line of a block
+    if (regional(b)) { // opening line or a middle/body line of a block
         first = last = b;
-        while (first.previous().isValid() && mathy(first.previous()))
+        while (first.previous().isValid() && regional(first.previous()))
             first = first.previous();
-        while (last.next().isValid() && mathy(last))
-            last = last.next(); // ends on the closing line (first non-mathy)
+        while (last.next().isValid() && regional(last))
+            last = last.next(); // ends on the closing line (first non-regional)
         inRegion = true;
-    } else if (b.previous().isValid() && mathy(b.previous())) {
+    } else if (b.previous().isValid() && regional(b.previous())) {
         last = b; // b is the closing line
         first = b.previous();
-        while (first.previous().isValid() && mathy(first.previous()))
+        while (first.previous().isValid() && regional(first.previous()))
             first = first.previous();
         inRegion = true;
     }
@@ -259,6 +306,48 @@ bool MarkdownHighlighter::caretInMathRegion(const QTextBlock &block,
             }
     }
     // Reveal when the caret sits in the region or the selection overlaps it.
+    return m_selLast >= openNum && m_selFirst <= closeNum;
+}
+
+bool MarkdownHighlighter::caretInCodeRegion(const QTextBlock &block,
+                                            bool openingHere) const {
+    auto isFence = [this](const QTextBlock &b) {
+        return m_reFence.match(b.text()).hasMatch();
+    };
+    int openNum, closeNum;
+    if (openingHere) {
+        // Region runs from this opening fence down to the next fence (or, for an
+        // unterminated block, to the end of the document).
+        openNum = closeNum = block.blockNumber();
+        for (QTextBlock b = block.next(); b.isValid(); b = b.next()) {
+            closeNum = b.blockNumber();
+            if (isFence(b))
+                break;
+        }
+    } else {
+        // A body or closing line: the opening fence is the nearest fence above.
+        openNum = -1;
+        for (QTextBlock b = block.previous(); b.isValid(); b = b.previous())
+            if (isFence(b)) {
+                openNum = b.blockNumber();
+                break;
+            }
+        if (openNum < 0)
+            return false;
+        closeNum = block.blockNumber();
+        if (!isFence(block)) // a body line: the closing fence is below it
+            for (QTextBlock b = block.next(); b.isValid(); b = b.next()) {
+                closeNum = b.blockNumber();
+                if (isFence(b))
+                    break;
+            }
+    }
+    // Reveal both fences whenever the caret or the selection touches the region,
+    // so selecting the whole block (or any part of it) shows the raw ``` source
+    // instead of the rendered box. setActiveBlock rehighlights every code-region
+    // line in the changed selection span, and the editor's rendered-box painter
+    // (MarkdownEditor::forEachCodeBlock) uses this same selection test, so the
+    // two stay in sync (no "raw fence + rendered box at once").
     return m_selLast >= openNum && m_selFirst <= closeNum;
 }
 
@@ -594,7 +683,10 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         // Inside a code block: render verbatim, no inline parsing.
         setFormat(0, text.size(), m_codeBlock);
         if (fenceHere) {                       // closing fence
-            if (reveal)
+            // Reveal the closing fence whenever the caret is anywhere inside the
+            // block (not only on this line), so both fences show together while
+            // editing the code.
+            if (caretInCodeRegion(currentBlock(), false))
                 setFormat(0, text.size(), m_marker);
             else
                 setFormat(fence.capturedStart(1), fence.capturedLength(1),
@@ -606,7 +698,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
     if (fenceHere) {                            // opening fence ```lang
-        if (reveal) {
+        if (caretInCodeRegion(currentBlock(), true)) {
             setFormat(0, text.size(), m_codeBlock);
             if (fence.capturedLength(2) > 0)   // language tag
                 setFormat(fence.capturedStart(2), fence.capturedLength(2),

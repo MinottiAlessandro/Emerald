@@ -229,9 +229,10 @@ QString manualText() {
         "Handy keys while writing (on macOS, Ctrl is ⌘):\n"
         "\n"
         "- **Ctrl+B** / **Ctrl+I** — bold / italic the selection\n"
+        "- **Ctrl+K** — wrap the selection as a link `[text](…)`\n"
+        "- **Ctrl+1** … **Ctrl+6** — set the line's heading level (press the "
+        "same level again to clear it)\n"
         "- **Ctrl+L** — select the whole line\n"
-        "- **Ctrl+D** — duplicate the current line\n"
-        "- **Ctrl+Shift+K** — delete the current line\n"
         "- **Alt+↑** / **Alt+↓** — move the line (or selection) up / down\n"
         "- **Tab** / **Shift+Tab** — indent / outdent the selected lines (or the "
         "current list item)\n"
@@ -254,8 +255,7 @@ QString manualText() {
         "- **Sidebar** — notes live in a folder tree. Right-click to create or "
         "delete notes and folders, drag to move them, Shift/Ctrl-click to select "
         "several at once, and single-click a folder to fold it.\n"
-        "- **History** — the back / forward arrows (Alt+Left / Alt+Right, "
-        "Ctrl+[ / Ctrl+], "
+        "- **History** — the back / forward arrows (Alt+Left / Alt+Right "
         "or the mouse side buttons) walk back and forward through the notes "
         "you've opened.\n"
         "- **Find in note** — Ctrl+F opens a find bar; Enter and Shift+Enter step "
@@ -267,27 +267,31 @@ QString manualText() {
         "Open the gear in the bottom-left for **Settings**: the editor font, its "
         "size and width, the line spacing between rows, the folder new notes are "
         "created in, and a Home note to open at launch. The same menu has **New "
-        "Vault…** to start a fresh vault, **Delete Note** to remove the open one, "
-        "and **Check for Updates…** to fetch and install the latest release. New "
-        "Note is Ctrl+N, Open Vault is Ctrl+O, and **Switch Vault…** "
-        "(Ctrl+Shift+O) jumps between vaults sitting in the same folder. Edits "
-        "save themselves a moment after you stop typing — Ctrl+S forces a save.\n"
+        "Vault…** to start a fresh vault, **Delete Note** to remove the open one "
+        "(it asks first), and **Check for Updates…** to fetch and install the "
+        "latest release. **Switch Vault…** jumps between vaults in the same "
+        "folder, and **Insert Template…** drops in a template — both live in the "
+        "menu. Edits save themselves a moment after you stop typing — Ctrl+S "
+        "forces a save.\n"
         "\n"
         "## Other shortcuts\n"
         "More keys to control the app workflow (on macOS, Ctrl is ⌘):\n"
         "- **Ctrl+O** — Open a Vault\n"
         "- **Ctrl+Shift+O** — Quick-switch to another vault in the same folder\n"
         "- **Ctrl+N** — Create a new file\n"
+        "- **Ctrl+T** — Insert a template at the cursor\n"
+        "- **F2** — Rename the current note\n"
+        "- **Ctrl+Shift+Backspace** — Delete the current note (asks first)\n"
         "- **Ctrl+S** — Save the current file (Emerald has auto-save)\n"
         "- **Ctrl+F** — Perform a file search\n"
         "- **Ctrl+Shift+F** — Perform a Vault search\n"
         "- **Ctrl+P** — Open the file picker\n"
+        "- **Ctrl+,** — Open Settings\n"
         "- **Ctrl+Q** — Close Emerald\n"
-        "- **Ctrl+Del** — Delete the current note\n"
         "- **Ctrl++** / **Ctrl+-** — Increase / decrease the font size "
         "(**Ctrl+0** resets it)\n"
-        "- **Alt+←** — Back in the backlink history\n"
-        "- **Alt+→** — Next in the backlink history\n");
+        "- **Alt+←** — Back in the history\n"
+        "- **Alt+→** — Next in the history\n");
 }
 
 // A tree that draws a faint vertical guide for each nesting level, so notes
@@ -473,8 +477,6 @@ void MainWindow::buildUi() {
             &MainWindow::navigateForward);
     connect(m_editor, &MarkdownEditor::noticeRequested, this,
             [this](const QString &text) { notify(text, 2000); });
-    connect(m_editor, &MarkdownEditor::deleteNoteRequested, this,
-            &MainWindow::deleteCurrentNote);
     // A right-click menu on the editor with the usual edit actions plus a
     // working "Delete Note" (the standard menu's Delete only acts on a text
     // selection, so it reads as permanently disabled).
@@ -855,7 +857,8 @@ void MainWindow::buildActions() {
         addAction(a);
         return a;
     };
-    auto *settings = make(tr("Settings…"), {}, &MainWindow::openSettings);
+    auto *settings = make(tr("Settings…"), QKeySequence(Qt::CTRL | Qt::Key_Comma),
+                          &MainWindow::openSettings);
     auto *manual = make(tr("Manual"), {}, &MainWindow::openManual);
     auto *update = make(tr("Check for Updates…"), {}, &MainWindow::checkForUpdates);
     auto *newVault = make(tr("New Vault…"), {}, &MainWindow::newVault);
@@ -871,11 +874,26 @@ void MainWindow::buildActions() {
     auto *insertTpl = make(tr("Insert Template…"),
                            QKeySequence(Qt::CTRL | Qt::Key_T),
                            &MainWindow::insertTemplate);
+    // Rename focuses the title field for editing (F2 is the universal rename).
+    auto *rename = new QAction(tr("Rename Note"), this);
+    rename->setShortcut(QKeySequence(Qt::Key_F2));
+    connect(rename, &QAction::triggered, this, [this] {
+        if (m_currentPath.isEmpty())
+            return;
+        m_titleEdit->setFocus();
+        m_titleEdit->selectAll();
+    });
+    addAction(rename);
     auto *save = make(tr("Save"), QKeySequence(QKeySequence::Save),
                       &MainWindow::saveCurrent);
+    // Delete Note confirms first. Ctrl+Shift+Backspace keeps it clear of
+    // Ctrl+Delete (the editor's delete-word-forward) while staying deliberate.
     m_deleteAction = make(tr("Delete Note"),
-                          QKeySequence(Qt::CTRL | Qt::Key_Delete),
+                          QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Backspace),
                           &MainWindow::deleteCurrentNote);
+    // Context menus hide shortcut labels by default; show this one (the editor's
+    // right-click menu offers Delete Note).
+    m_deleteAction->setShortcutVisibleInContextMenu(true);
     auto *findHere = make(tr("Find in Note…"), QKeySequence(QKeySequence::Find),
                           &MainWindow::openFindInFile);
     auto *search = make(tr("Search Vault…"),
@@ -900,6 +918,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(newNote);
     m_gearMenu->addAction(goTo);
     m_gearMenu->addAction(insertTpl);
+    m_gearMenu->addAction(rename);
     m_gearMenu->addAction(save);
     m_gearMenu->addAction(m_deleteAction);
     m_gearMenu->addSeparator();
@@ -926,20 +945,18 @@ void MainWindow::buildActions() {
     addFontAction({QKeySequence(Qt::CTRL | Qt::Key_0)}, 0);
 
     // Navigation actions drive both the header arrow buttons and the shortcuts.
-    // Two bindings each: Alt+Arrow (browser-style) and Ctrl+[ / Ctrl+] (editor
-    // style, like VS Code / Vim jumplists).
+    // Browser-style Alt+Arrow (Ctrl+[ / Ctrl+] were dropped — they're
+    // indent/outdent in most editors).
     m_backAction = new QAction(this);
     m_backAction->setIcon(makeNavArrow(true));
-    m_backAction->setToolTip(tr("Back  (Alt+Left or Ctrl+[)"));
-    m_backAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Left),
-                                QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)});
+    m_backAction->setToolTip(tr("Back  (Alt+Left)"));
+    m_backAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
     connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
     addAction(m_backAction);
     m_forwardAction = new QAction(this);
     m_forwardAction->setIcon(makeNavArrow(false));
-    m_forwardAction->setToolTip(tr("Forward  (Alt+Right or Ctrl+])"));
-    m_forwardAction->setShortcuts({QKeySequence(Qt::ALT | Qt::Key_Right),
-                                   QKeySequence(Qt::CTRL | Qt::Key_BracketRight)});
+    m_forwardAction->setToolTip(tr("Forward  (Alt+Right)"));
+    m_forwardAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Right));
     connect(m_forwardAction, &QAction::triggered, this,
             &MainWindow::navigateForward);
     addAction(m_forwardAction);
@@ -954,8 +971,8 @@ void MainWindow::loadSettings() {
     const QByteArray split = s.value(QStringLiteral("splitterState")).toByteArray();
     if (!split.isEmpty())
         m_splitter->restoreState(split);
-    // With no custom font saved, keep the editor's built-in fallback chain
-    // (Inter -> Liberation Sans -> sans-serif) untouched.
+    // With no custom font saved, keep the editor's built-in monospace fallback
+    // chain (SF Mono / Menlo / Cascadia / Consolas / … -> monospace) untouched.
     if (!s.contains(QStringLiteral("editorFontFamily")) &&
         !s.contains(QStringLiteral("editorFontSize")))
         return;
@@ -1141,7 +1158,7 @@ void MainWindow::onEditorContextMenu(const QPoint &pos) {
     QMenu *menu = m_editor->createStandardContextMenu();
     // Drop the standard "Delete" entry — it only removes a text selection, so it
     // reads as a broken delete-the-file. Offer the real "Delete Note" instead,
-    // which carries its Ctrl+Del shortcut label.
+    // which carries its Ctrl+Shift+Backspace shortcut label.
     for (QAction *a : menu->actions())
         if (a->objectName() == QLatin1String("edit-delete"))
             menu->removeAction(a);

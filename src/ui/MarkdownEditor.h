@@ -52,7 +52,6 @@ signals:
     void navigateBack();
     void navigateForward();
     void noticeRequested(const QString &text); // transient feedback (e.g. "Copied")
-    void deleteNoteRequested(); // Ctrl+Del: delete the open note, not a word
     // The mascot seed changed — on load, on Generate/Delete, or when the user
     // hand-edits the revealed header line. 0 means the note now has no mascot.
     void mascotSeedChanged(quint64 seed);
@@ -144,9 +143,9 @@ private:
     bool wrapSelectionByLine(const QString &open, const QString &close,
                              bool toggle);
     void selectCurrentLine();                  // Ctrl+L
-    void duplicateLineOrSelection();           // Ctrl+D
-    void deleteCurrentLine();                  // Ctrl+Shift+K
     void moveLines(bool up);                   // Alt+Up / Alt+Down
+    void insertLink();                         // Ctrl+K — wrap/insert [text](…)
+    void setHeadingLevel(int level);           // Ctrl+1…6 — set/toggle # heading
 
     // Heading folding. A heading hides everything below it until the next
     // heading of the same or higher level.
