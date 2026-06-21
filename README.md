@@ -18,6 +18,12 @@ Plain `.md` files · inline live preview · one dependency · Linux · macOS · 
 
 </div>
 
+<p align="center">
+  <a href="https://ko-fi.com/alessandromino">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" />
+  </a>
+</p>
+
 ---
 
 ## Download
