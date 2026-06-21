@@ -139,11 +139,10 @@ void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
     // the region the caret left and the one it entered — not just the two lines.
     rehighlightAround(oldCaret);
     rehighlightAround(caretBlock);
-    // Math and fenced code blocks both reveal their raw source when the
-    // selection covers them, so rehighlight every math/code line in the union of
-    // the old and new selection spans (the lines whose reveal state can have
-    // flipped). Plain lines are untouched — only the caret's line reveals its
-    // markup, as before.
+    // Every line reveals its raw markup when the selection covers it, so
+    // rehighlight each line in the union of the old and new selection spans
+    // whose membership changed. Math and fenced code blocks reveal as a whole,
+    // so any region touched by the span is rehighlighted end to end.
     QTextDocument *doc = document();
     if (!doc)
         return;
@@ -183,7 +182,11 @@ void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
             }
             n = last.blockNumber() + 1;
         } else {
-            if (b.text().contains(QLatin1Char('$'))) // single-line inline $…$
+            // Plain line: rehighlight it when it entered or left the selection
+            // span, so its markup reveals or re-renders to match.
+            const bool was = n >= oldFirst && n <= oldLast;
+            const bool now = n >= newFirst && n <= newLast;
+            if (was != now)
                 rehighlightBlock(b);
             ++n;
         }
@@ -666,12 +669,13 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
 
-    const bool reveal = currentBlock().blockNumber() == m_activeBlock;
-    // Math reveals its raw source not just on the caret's line but on any line
-    // the selection covers, so a selected formula shows its source instead of
-    // rendering under the highlight.
+    // Markup reveals its raw source on the caret's line and on every line a
+    // selection covers — so selecting across rendered text (headings, emphasis,
+    // links, lists, tables, formulas…) shows the actual characters instead of
+    // the rendered form. With no selection the span is just the caret's line
+    // (m_selFirst == m_selLast == m_activeBlock, set in setActiveBlock).
     const int bn = currentBlock().blockNumber();
-    const bool mathReveal = bn >= m_selFirst && bn <= m_selLast;
+    const bool reveal = bn >= m_selFirst && bn <= m_selLast;
 
     // --- Fenced code blocks: a multi-line construct tracked via block state.
     // The editor paints the block's rounded background + copy button; here we
@@ -735,7 +739,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     if (disp.hasMatch()) {
         const int bodyStart = disp.capturedStart(1);
         const int bodyEnd = disp.capturedEnd(1);
-        if (mathReveal) {
+        if (reveal) {
             setFormat(0, bodyStart, m_marker);
             setFormat(bodyStart, bodyEnd - bodyStart, m_math);
             setFormat(bodyEnd, text.size() - bodyEnd, m_marker);
@@ -900,7 +904,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // left, and unlike the others it *accumulates* (bold+italic+strike+highlight
     // can all land on the same character).
     applyInline(m_reCode, text, consumed, m_code, reveal);
-    applyMath(text, consumed, mathReveal);
+    applyMath(text, consumed, reveal);
     applyInternetLinks(text, consumed, reveal);
     applyWikiLinks(text, consumed, reveal);
     applyEmphasis(text, consumed, reveal,

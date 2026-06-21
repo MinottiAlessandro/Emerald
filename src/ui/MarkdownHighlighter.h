@@ -10,8 +10,9 @@
 // lists, fenced code blocks and [[wiki|links]] are rendered with real text
 // formats. The syntax markers themselves (#, **, `, [[ ]] ...) are collapsed
 // to near-zero width and made transparent on every line EXCEPT the one the
-// cursor is on, where they reappear so editing stays natural. That is what
-// produces the Obsidian-style "the markup melts away as you type" feel.
+// cursor is on (and any line a selection covers), where they reappear so
+// editing stays natural. That is what produces the Obsidian-style "the markup
+// melts away as you type" feel.
 class MarkdownHighlighter : public QSyntaxHighlighter {
     Q_OBJECT
 public:

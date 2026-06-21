@@ -1531,12 +1531,15 @@ bool MarkdownEditor::handleTableTab(bool forward) {
     bool structural = false;
 
     if (isSeparatorRow(text)) {
-        // Separator: build a fresh data row right below it.
-        normalize(nCols);
-        rows.insert(rowIdx + 1, emptyRow());
+        // Separator: land in the first cell of the data row below — creating
+        // one only when the table is still just header + separator.
         targetRow = rowIdx + 1;
         targetCell = 0;
-        structural = true;
+        if (rowIdx + 1 >= rowCount) { // no data row yet: build a fresh one
+            normalize(nCols);
+            rows.insert(rowIdx + 1, emptyRow());
+            structural = true;
+        }
     } else if (rowIdx == 0 && lastCell) {
         // End of the header: grow a new column across the whole table.
         normalize(nCols);
@@ -1658,10 +1661,10 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                               cb.body.bottom() - cb.header.top());
             if (!full.intersects(event->rect()))
                 return;
+            if (cb.active) // editing or selected: show the raw ``` source, no box
+                return;
             bg.setBrush(QColor(0x13, 0x20, 0x1a));
             bg.drawRoundedRect(full, 6, 6);
-            if (cb.active) // editing: show the raw ``` fence, no header bar
-                return;
             const qreal r = 6;
             const QRectF h = cb.header;
             QPainterPath path;
@@ -1682,7 +1685,14 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     // bullet line except the active one). The glyph varies by nesting level.
     static const QRegularExpression re(
         QStringLiteral("^(\\s*)[-*+]\\s+(?!\\[[ xX]\\]\\s)"));
-    const int active = textCursor().blockNumber();
+    // Raw markup shows on every line the caret or a selection covers, so the
+    // editor's own glyphs (bullets, checkboxes, rules — and the math below)
+    // must hide there too, matching the highlighter's reveal span.
+    const QTextCursor selCur = textCursor();
+    const int selFirst =
+        document()->findBlock(selCur.selectionStart()).blockNumber();
+    const int selLast =
+        document()->findBlock(selCur.selectionEnd()).blockNumber();
     const QFontMetricsF fm(font());
     const qreal diameter = fm.ascent() * 0.30;
 
@@ -1702,7 +1712,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
         if (geo.top() > event->rect().bottom())
             break;
-        if (geo.bottom() < event->rect().top() || block.blockNumber() == active)
+        if (geo.bottom() < event->rect().top() ||
+            (block.blockNumber() >= selFirst && block.blockNumber() <= selLast))
             continue;
 
         // Horizontal rule: a full-width line across the (hidden) dashes.
@@ -1801,14 +1812,9 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         const QFont inlineFont = MathRender::mathFont(font(), false);
         const QFont displayFont = MathRender::mathFont(font(), true);
         // A formula whose line(s) the selection touches shows raw source (the
-        // highlighter reveals it), so skip painting it — matching that span, not
-        // just the caret's line, keeps the rendered formula from sitting under
-        // the selection highlight.
-        const QTextCursor sel = textCursor();
-        const int selFirst =
-            document()->findBlock(sel.selectionStart()).blockNumber();
-        const int selLast =
-            document()->findBlock(sel.selectionEnd()).blockNumber();
+        // highlighter reveals it), so skip painting it — selFirst/selLast above
+        // (the caret-or-selection span) keep the rendered formula from sitting
+        // under the selection highlight.
 
         // Multi-line $$ blocks first: the highlighter marks the opening and
         // middle lines StateMath (2); the closing line is the next normal one.
@@ -1883,7 +1889,23 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 continue;
             }
 
+            // Inline code wins over math (matching the highlighter's consume
+            // order), so a `$x^2$` stays literal: mask the backtick spans and
+            // skip any formula that opens inside one.
+            static const QRegularExpression inlineCodeRe(
+                QStringLiteral("`[^`]+`"));
+            QList<bool> codeMask(btext.size(), false);
+            auto cit = inlineCodeRe.globalMatch(btext);
+            while (cit.hasNext()) {
+                const auto cm = cit.next();
+                for (int i = cm.capturedStart();
+                     i < cm.capturedEnd() && i < codeMask.size(); ++i)
+                    codeMask[i] = true;
+            }
+
             for (const auto &sp : MathRender::spans(btext)) {
+                if (sp.start < codeMask.size() && codeMask[sp.start])
+                    continue; // inside an inline `code` span — not a formula
                 QTextCursor c0(block);
                 c0.setPosition(block.position() + sp.start);
                 QTextCursor c1(block);

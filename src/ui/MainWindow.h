@@ -63,7 +63,17 @@ private:
     void renameCurrent(const QString &rawTitle);
     void onLinkClicked(const QString &target);
     void onFileChanged(const QString &path); // external edit on disk
+    // Reconcile the open note with disk after an external change: reload when
+    // there are no unsaved edits, re-arm the (possibly dropped) file watch, and
+    // never clobber the user's buffer. Driven by onFileChanged and the rescan.
+    void syncOpenNoteFromDisk();
     void watchCurrent();
+    // A vault folder changed on disk (a note added, removed, or renamed by
+    // another program). Coalesced via m_rescanTimer, then rescan + refreshTree.
+    void onVaultDirChanged(const QString &path);
+    // Keep the watcher's directory list in sync with the vault's folders (root
+    // + sub-folders) so externally-created notes are noticed wherever they land.
+    void watchVaultDirs();
     void selectInTree(const QString &path);
     void openSearch();
     void openQuickOpen();
@@ -118,6 +128,8 @@ private:
     SearchPopup *m_searchPopup = nullptr;
     Updater *m_updater = nullptr;
     QTimer *m_saveTimer = nullptr;
+    QTimer *m_rescanTimer = nullptr; // coalesces vault-folder change bursts
+    QTimer *m_reloadTimer = nullptr; // coalesces open-note file-change bursts
     QMenu *m_gearMenu = nullptr;
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;

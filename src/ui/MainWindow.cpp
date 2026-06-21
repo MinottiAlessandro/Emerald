@@ -443,10 +443,36 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_saveTimer, &QTimer::timeout, this, &MainWindow::saveCurrent);
 
     // Watch the open note's file so edits from another program are noticed
-    // instead of being silently overwritten by our buffer.
+    // instead of being silently overwritten by our buffer; watch the vault's
+    // folders too, so notes added/removed/renamed elsewhere reach the tree.
     m_watcher = new QFileSystemWatcher(this);
     connect(m_watcher, &QFileSystemWatcher::fileChanged, this,
             &MainWindow::onFileChanged);
+    connect(m_watcher, &QFileSystemWatcher::directoryChanged, this,
+            &MainWindow::onVaultDirChanged);
+    // Folder-change events arrive in bursts (a sync client touching many files,
+    // an editor's replace-and-rename); coalesce them into one rescan.
+    m_rescanTimer = new QTimer(this);
+    m_rescanTimer->setSingleShot(true);
+    m_rescanTimer->setInterval(250);
+    connect(m_rescanTimer, &QTimer::timeout, this, [this] {
+        if (!m_vault)
+            return;
+        m_vault->scan();
+        m_searchIndex.rebuild(*m_vault);
+        refreshTree(); // keeps the open note selected and folders expanded
+        // A backup-rename save (e.g. Vim) swaps the note's inode, dropping the
+        // file watch with no further fileChanged — so reconcile the open note
+        // here too, or it would stay stale until reopened.
+        syncOpenNoteFromDisk();
+    });
+    // A save fires a burst of file events (truncate, write, rename); coalesce
+    // them so we read the file once it has settled, never mid-write.
+    m_reloadTimer = new QTimer(this);
+    m_reloadTimer->setSingleShot(true);
+    m_reloadTimer->setInterval(150);
+    connect(m_reloadTimer, &QTimer::timeout, this,
+            &MainWindow::syncOpenNoteFromDisk);
     connect(m_editor, &MarkdownEditor::textChanged, this, [this] {
         if (!m_loading) {
             m_saveTimer->start();
@@ -1364,6 +1390,7 @@ void MainWindow::refreshTree(bool preserveExpansion) {
             it.value()->setExpanded(true);
     m_editor->setCompletions(titles);
     selectInTree(m_currentPath);
+    watchVaultDirs(); // keep folder watches in sync with the rebuilt tree
 }
 
 void MainWindow::openNoteByPath(const QString &path, bool record) {
@@ -1522,32 +1549,70 @@ void MainWindow::watchCurrent() {
         m_watcher->addPath(m_currentPath);
 }
 
-// The open note's file changed on disk (another program saved it). Adopt the
-// new contents when we have no unsaved edits; never clobber the user's buffer.
+// Sync the watcher's directory list to the vault's folders (root + sub-folders)
+// without disturbing the watched note file. Diff against what's already watched
+// so a refresh doesn't churn (or warn about) unchanged paths.
+void MainWindow::watchVaultDirs() {
+    if (!m_watcher)
+        return;
+    QStringList desired;
+    if (m_vault) {
+        const QDir rootDir(m_vault->root());
+        desired << m_vault->root();
+        for (const QString &rel : m_vault->folders())
+            desired << rootDir.filePath(rel);
+    }
+    const QStringList current = m_watcher->directories();
+    QStringList toRemove;
+    for (const QString &d : current)
+        if (!desired.contains(d))
+            toRemove << d;
+    if (!toRemove.isEmpty())
+        m_watcher->removePaths(toRemove);
+    QStringList toAdd;
+    for (const QString &d : desired)
+        if (!current.contains(d))
+            toAdd << d;
+    if (!toAdd.isEmpty())
+        m_watcher->addPaths(toAdd);
+}
+
+// A note was added, removed, or renamed in a vault folder by another program.
+// Defer the rescan so a burst of events collapses into a single rebuild.
+void MainWindow::onVaultDirChanged(const QString &) { m_rescanTimer->start(); }
+
+// The open note's file changed on disk (another program saved it). Defer the
+// reconcile so a save's burst of events collapses into one read of the settled
+// file — and so a momentarily-missing file (mid backup-rename) isn't mistaken
+// for a deletion.
 void MainWindow::onFileChanged(const QString &path) {
-    if (path != m_currentPath)
+    if (path == m_currentPath)
+        m_reloadTimer->start();
+}
+
+// Reconcile the open note with disk. Adopt new contents only when we have no
+// unsaved edits; never clobber the user's buffer.
+void MainWindow::syncOpenNoteFromDisk() {
+    if (!m_vault || m_currentPath.isEmpty())
         return;
 
-    // Editors that save by replace-and-rename make the watcher forget the file;
-    // re-arm it once the new file has settled.
-    if (!m_watcher->files().contains(path))
-        QTimer::singleShot(50, this, [this, path] {
-            if (path == m_currentPath && QFileInfo::exists(path))
-                m_watcher->addPath(path);
-        });
+    // A replace-and-rename or backup-rename save gives the file a new inode and
+    // makes the watcher forget it; follow it back so later edits are noticed.
+    const bool exists = QFileInfo::exists(m_currentPath);
+    if (m_watcher && exists && !m_watcher->files().contains(m_currentPath))
+        m_watcher->addPath(m_currentPath);
 
-    if (!QFileInfo::exists(path)) {
+    if (!exists) {
         notify(tr("This note was removed on disk"), 4000);
         return;
     }
 
-    const QString disk = m_vault->read(path);
+    const QString disk = m_vault->read(m_currentPath);
     if (disk == m_lastSavedContent)
         return; // our own write, or no real change
 
     if (m_editor->toPlainText() != m_lastSavedContent) {
-        notify(
-            tr("Changed on disk — saving will keep your version"), 5000);
+        notify(tr("Changed on disk — saving will keep your version"), 5000);
         return;
     }
 
