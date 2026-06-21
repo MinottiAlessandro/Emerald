@@ -637,20 +637,31 @@ void MarkdownHighlighter::applyMath(const QString &text, QList<bool> &consumed,
             setFormat(innerEnd, end - innerEnd, m_marker);
         } else {
             // Off the active line the editor paints the formula over this span
-            // (MarkdownEditor::paintEvent). Hide the source but reserve its
-            // rendered width via percentage letter-spacing so the surrounding
-            // text flows around the painted formula. Glyphs stay full size (just
-            // transparent) so the line keeps its normal height.
+            // (MarkdownEditor::paintEvent). Hide the source and reserve the
+            // formula's rendered box: its width via percentage letter-spacing,
+            // and — for a tall formula (\frac, \sqrt) — its height by enlarging
+            // the (transparent) glyphs' point size so the line grows to fit it.
+            // Without the height reservation the painter would scale a tall
+            // formula down to a single text line, shrinking it and leaving a gap
+            // before the next word (the reserved width no longer matched).
             const QFont base = document() ? document()->defaultFont() : QFont();
             const QFont f = MathRender::mathFont(base, false);
-            const double mathW = MathRender::measure(m.captured(1), f).width();
-            const QString src = text.mid(start, end - start);
-            const double srcW = QFontMetricsF(f).horizontalAdvance(src);
+            const QSizeF sz = MathRender::measure(m.captured(1), f);
+            const double lineH = QFontMetricsF(base).lineSpacing();
+            const double hFactor =
+                lineH > 0 ? qBound(1.0, sz.height() / lineH, 2.5) : 1.0;
             QTextCharFormat hide;
             hide.setForeground(QColor(0, 0, 0, 0));
+            hide.setFontPointSize(base.pointSizeF() * hFactor);
             hide.setFontLetterSpacingType(QFont::PercentageSpacing);
+            // Letter-spacing is a percentage of the (now enlarged) glyph
+            // advances, so measure the source at that same enlarged size.
+            QFont hideFont = base;
+            hideFont.setPointSizeF(base.pointSizeF() * hFactor);
+            const QString src = text.mid(start, end - start);
+            const double srcW = QFontMetricsF(hideFont).horizontalAdvance(src);
             hide.setFontLetterSpacing(
-                srcW > 0 ? qBound(1.0, 100.0 * mathW / srcW, 1000.0) : 100.0);
+                srcW > 0 ? qBound(1.0, 100.0 * sz.width() / srcW, 2000.0) : 100.0);
             setFormat(start, end - start, hide);
         }
 
@@ -909,4 +920,82 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     applyWikiLinks(text, consumed, reveal);
     applyEmphasis(text, consumed, reveal,
                   doneStart >= 0 ? SDone : 0, doneStart, doneEnd);
+
+    // Fold strikethrough into inline code and math that sit inside a struck span
+    // — a ~~…~~ run or a completed task's label. Both consume their span before
+    // the emphasis pass, so without this they'd render un-struck inside struck
+    // text. Code is real text here, so striking its format is enough; off the
+    // active line the editor paints the formula, so it strikes the math itself
+    // (MarkdownEditor::paintEvent) and here we only need the revealed source.
+    strikeConsumedInline(text, reveal, doneStart, doneEnd);
+}
+
+// Characters that should carry a strikethrough: a completed task's whole label,
+// plus every ~~…~~ span (ignoring ~~ that sit inside inline `code`, where
+// they're literal). Shared shape with the editor's painter so a struck formula
+// drawn there matches a struck `code` coloured here.
+QList<bool> MarkdownHighlighter::struckMask(const QString &text, int doneStart,
+                                            int doneEnd) const {
+    QList<bool> struck(text.size(), false);
+    for (int i = qMax(0, doneStart); i < doneEnd && i < struck.size(); ++i)
+        struck[i] = true;
+    QList<bool> codeMask(text.size(), false);
+    auto cit = m_reCode.globalMatch(text);
+    while (cit.hasNext()) {
+        const auto cm = cit.next();
+        for (int i = cm.capturedStart(); i < cm.capturedEnd() && i < codeMask.size();
+             ++i)
+            codeMask[i] = true;
+    }
+    int open = -1;
+    for (int i = 0; i + 1 < text.size();) {
+        if (!codeMask[i] && text[i] == QLatin1Char('~') &&
+            text[i + 1] == QLatin1Char('~')) {
+            if (open < 0)
+                open = i + 2;
+            else {
+                for (int k = open; k < i && k < struck.size(); ++k)
+                    struck[k] = true;
+                open = -1;
+            }
+            i += 2;
+        } else {
+            ++i;
+        }
+    }
+    return struck;
+}
+
+void MarkdownHighlighter::strikeConsumedInline(const QString &text, bool reveal,
+                                               int doneStart, int doneEnd) {
+    const QList<bool> struck = struckMask(text, doneStart, doneEnd);
+    auto spanStruck = [&](int s, int e) {
+        for (int i = qMax(0, s); i < e && i < struck.size(); ++i)
+            if (struck[i])
+                return true;
+        return false;
+    };
+
+    // Inline code: re-colour its content with the strike added.
+    auto cit = m_reCode.globalMatch(text);
+    while (cit.hasNext()) {
+        const auto cm = cit.next();
+        if (spanStruck(cm.capturedStart(0), cm.capturedEnd(0))) {
+            QTextCharFormat cf = m_code;
+            cf.setFontStrikeOut(true);
+            setFormat(cm.capturedStart(1), cm.capturedLength(1), cf);
+        }
+    }
+
+    // Inline math: only the revealed (active-line) source is real text here;
+    // off the active line the editor paints it and strikes it there.
+    if (reveal) {
+        for (const auto &sp : MathRender::spans(text)) {
+            if (sp.length >= 2 && spanStruck(sp.start, sp.start + sp.length)) {
+                QTextCharFormat cf = m_math;
+                cf.setFontStrikeOut(true);
+                setFormat(sp.start + 1, sp.length - 2, cf); // body, between $ $
+            }
+        }
+    }
 }

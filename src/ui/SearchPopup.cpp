@@ -157,7 +157,11 @@ void SearchPopup::accept() {
     else if (m_templateMode)
         emit templateRequested(path);
     else
-        emit openRequested(path, m_input->text());
+        // Titles-only quick-open (Ctrl+P) carries no body query, so pass none:
+        // the caller would otherwise try to jump to the typed title inside the
+        // body, fail, and land at the top — defeating the restored caret. Only
+        // a full-text search (Ctrl+Shift+F) jumps to its match.
+        emit openRequested(path, m_titlesOnly ? QString() : m_input->text());
     hide();
 }
 

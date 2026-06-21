@@ -109,6 +109,11 @@ private:
     // keeping the index on the current note when it survived.
     void pruneHistory();
     void updateNavActions();
+    // Per-note caret positions, remembered so reopening a note restores the
+    // caret. Persisted to settings so it survives restarts (saveCursorPositions
+    // also folds in the open note's current caret).
+    void saveCursorPositions();
+    void loadCursorPositions();
 
     Vault *m_vault = nullptr;
     SearchIndex m_searchIndex;

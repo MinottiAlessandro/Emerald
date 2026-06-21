@@ -831,8 +831,10 @@ QString bodyBeforeClose(const QString &line) {
 QFont mathFont(const QFont &base, bool display) {
     QFont f = base;
     f.setItalic(true);
-    if (display)
-        f.setPointSizeF(qMax(1.0, base.pointSizeF() * 1.3));
+    // Inline math sits a touch larger than the surrounding text so symbols read
+    // clearly; display math is larger still so a $$ block reads as a centred
+    // display rather than inline text.
+    f.setPointSizeF(qMax(1.0, base.pointSizeF() * (display ? 1.3 : 1.12)));
     return f;
 }
 

@@ -54,6 +54,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QVariant>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -436,6 +437,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     buildActions();
     buildUi();
     loadSettings();
+    loadCursorPositions(); // remembered per-note caret positions, across restarts
 
     m_saveTimer = new QTimer(this);
     m_saveTimer->setSingleShot(true);
@@ -975,14 +977,26 @@ void MainWindow::buildActions() {
     // indent/outdent in most editors).
     m_backAction = new QAction(this);
     m_backAction->setIcon(makeNavArrow(true));
-    m_backAction->setToolTip(tr("Back  (Alt+Left)"));
-    m_backAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
-    connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
-    addAction(m_backAction);
     m_forwardAction = new QAction(this);
     m_forwardAction->setIcon(makeNavArrow(false));
+#ifdef Q_OS_MACOS
+    // On macOS ⌥+Arrow is a text-editing key the QAction shortcut never receives
+    // (the editor handles that itself), so add the system-standard ⌘[ / ⌘] as a
+    // reliable QAction-delivered back/forward as well.
+    m_backAction->setToolTip(tr("Back  (⌘[ or ⌥←)"));
+    m_backAction->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_BracketLeft),
+                                QKeySequence(Qt::ALT | Qt::Key_Left)});
+    m_forwardAction->setToolTip(tr("Forward  (⌘] or ⌥→)"));
+    m_forwardAction->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_BracketRight),
+                                   QKeySequence(Qt::ALT | Qt::Key_Right)});
+#else
+    m_backAction->setToolTip(tr("Back  (Alt+Left)"));
+    m_backAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
     m_forwardAction->setToolTip(tr("Forward  (Alt+Right)"));
     m_forwardAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Right));
+#endif
+    connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
+    addAction(m_backAction);
     connect(m_forwardAction, &QAction::triggered, this,
             &MainWindow::navigateForward);
     addAction(m_forwardAction);
@@ -1264,6 +1278,7 @@ void MainWindow::openVault(const QString &path) {
     m_history.clear();
     m_histIndex = -1;
     updateNavActions();
+    m_editor->clearFolds(); // drop the previous note's folds before clearing
     m_loading = true;
     m_editor->clear();
     m_loading = false;
@@ -1409,6 +1424,8 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
         m_cursorPositions[m_currentPath] = m_editor->textCursor().position();
     saveCurrent();
 
+    m_editor->clearFolds(); // the previous note's folds would dangle once its
+                            // content is replaced below — drop them first
     m_loading = true;
     const QString body = m_vault->read(path);
     m_editor->setPlainText(body);
@@ -1428,19 +1445,25 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
         pushHistory(path);
     updateNavActions();
 
-    // Restore the caret only when arriving via the back/forward arrows
-    // (record == false); a manual open (tree click, link, launch) lands on the
-    // first line. Either way the editor is focused, ready to type. The minimum
-    // position skips a hidden mascot header line so the caret never starts on it.
+    // Always restore the caret to where it last sat in this note (remembered in
+    // m_cursorPositions, persisted across restarts) — whether arriving via the
+    // back/forward arrows, a tree click, a link, or launch. A note never visited
+    // before falls back to its first line. The minimum position skips a hidden
+    // mascot header line so the caret never starts on it. The editor is focused,
+    // ready to type, either way.
     QTextCursor c = m_editor->textCursor();
     const int minPos = m_editor->firstContentPosition();
-    const int last =
-        record ? minPos : qMax(minPos, m_cursorPositions.value(path, minPos));
+    const int last = qMax(minPos, m_cursorPositions.value(path, minPos));
     c.setPosition(qBound(
         minPos, last, qMax(minPos, m_editor->document()->characterCount() - 1)));
     m_editor->setTextCursor(c);
-    m_editor->centerCursor(); // restored caret lands mid-view, with context
     m_editor->setFocus();
+    // Bring the restored caret into view, centred. Deferred to the event loop:
+    // centring inline runs against the just-loaded document before its layout
+    // and viewport have settled, which leaves the view stuck at the top while
+    // the caret sits offscreen lower down.
+    MarkdownEditor *ed = m_editor;
+    QTimer::singleShot(0, ed, [ed] { ed->centerCursor(); });
     refreshMascot(); // mirror this note's inline seed (the editor parsed it on load)
 }
 
@@ -1618,6 +1641,7 @@ void MainWindow::syncOpenNoteFromDisk() {
 
     // No local edits: reload, keeping the caret roughly where it was.
     const int caret = m_editor->textCursor().position();
+    m_editor->clearFolds(); // reloading replaces the content; drop stale folds
     m_loading = true;
     m_editor->setPlainText(disk);
     m_loading = false;
@@ -1707,6 +1731,25 @@ void MainWindow::updateNavActions() {
     if (m_forwardAction)
         m_forwardAction->setEnabled(m_histIndex >= 0 &&
                                     m_histIndex < m_history.size() - 1);
+}
+
+// Persist the per-note caret positions (folding in the open note's current
+// caret) so reopening a note — even after a restart — lands where you left off.
+void MainWindow::saveCursorPositions() {
+    if (m_editor && !m_currentPath.isEmpty())
+        m_cursorPositions[m_currentPath] = m_editor->textCursor().position();
+    QVariantMap map;
+    for (auto it = m_cursorPositions.constBegin();
+         it != m_cursorPositions.constEnd(); ++it)
+        map.insert(it.key(), it.value());
+    QSettings().setValue(QStringLiteral("cursorPositions"), map);
+}
+
+void MainWindow::loadCursorPositions() {
+    const QVariantMap map =
+        QSettings().value(QStringLiteral("cursorPositions")).toMap();
+    for (auto it = map.constBegin(); it != map.constEnd(); ++it)
+        m_cursorPositions.insert(it.key(), it.value().toInt());
 }
 
 void MainWindow::selectInTree(const QString &path) {
@@ -1941,6 +1984,7 @@ void MainWindow::reconcileAfterDeletion() {
     // openNoteByPath() runs below would see an empty m_currentPath next to the
     // deleted note's still-present title/body and re-create it as a new note —
     // making the deletion appear to silently fail.
+    m_editor->clearFolds(); // drop the deleted note's folds before clearing
     m_loading = true;
     m_editor->clear();
     m_loading = false;
@@ -2096,6 +2140,7 @@ void MainWindow::newFolderIn(const QString &dir) {
 
 void MainWindow::closeEvent(QCloseEvent *event) {
     saveCurrent();
+    saveCursorPositions(); // remember caret positions for the next launch
     QSettings().setValue(QStringLiteral("splitterState"), m_splitter->saveState());
     event->accept();
 }

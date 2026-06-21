@@ -13,6 +13,11 @@ int main(int argc, char *argv[]) {
         qputenv("QT_WIDGETS_RHI", QByteArrayLiteral("1"));
 
     QApplication app(argc, argv);
+    // Show the shortcut label beside every menu action. macOS defaults this
+    // attribute to true, which hides accelerators in non-menubar menus — and
+    // Emerald's only menu is the gear popup, so without this its actions would
+    // carry no visible shortcuts.
+    QApplication::setAttribute(Qt::AA_DontShowShortcutsInContextMenus, false);
     QApplication::setApplicationName(QStringLiteral("Emerald"));
     QApplication::setOrganizationName(QStringLiteral("Emerald"));
     QApplication::setApplicationVersion(QStringLiteral(EMERALD_VERSION));

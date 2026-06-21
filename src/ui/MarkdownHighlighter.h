@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
@@ -85,6 +86,15 @@ private:
     // stays editable; off it, hide the source but reserve the formula's rendered
     // width (the editor paints the formula over the gap in paintEvent).
     void applyMath(const QString &text, QList<bool> &consumed, bool reveal);
+    // Per-character mask of the line's struck text: a completed task's label and
+    // every ~~…~~ span (ignoring ~~ inside inline `code`). Used to extend the
+    // strike onto inline code/math, which consume their span before emphasis.
+    QList<bool> struckMask(const QString &text, int doneStart, int doneEnd) const;
+    // After the inline passes, add strikethrough to inline code (and revealed
+    // inline math) that falls inside a struck span — so a ~~`code`~~ or a done
+    // task's `code`/$math$ reads as struck like the surrounding text.
+    void strikeConsumedInline(const QString &text, bool reveal, int doneStart,
+                              int doneEnd);
     // Dim a marker off the active line, reveal it (dimmed) on it. Marks the
     // span consumed either way.
     void markup(int start, int len, QList<bool> &consumed, bool reveal);

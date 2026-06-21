@@ -47,6 +47,11 @@ public:
     // mascot header line, or 0 when there isn't one.
     int firstContentPosition() const;
 
+    // Drop all active folds. Call before replacing the document's content
+    // (loading/reloading a note, clearing on a vault switch) so the stale fold
+    // blocks are never dereferenced by reapplyFolds() during the load.
+    void clearFolds();
+
 signals:
     void linkClicked(const QString &target);
     void navigateBack();

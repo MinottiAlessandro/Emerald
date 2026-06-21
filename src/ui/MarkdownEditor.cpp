@@ -685,6 +685,27 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         }
     }
 
+#ifdef Q_OS_MACOS
+    // macOS: ⌘+Backspace deletes from the caret to the start of the line (the
+    // native Cocoa behaviour). Qt maps Qt::ControlModifier to ⌘ here; ⌥+Backspace
+    // (delete word) stays Qt's default. If the caret is already at the line
+    // start, fall through so the default joins with the previous line.
+    if (event->key() == Qt::Key_Backspace &&
+        (event->modifiers() & Qt::ControlModifier) &&
+        !(event->modifiers() &
+          (Qt::AltModifier | Qt::MetaModifier | Qt::ShiftModifier))) {
+        QTextCursor c = textCursor();
+        if (!c.hasSelection()) {
+            c.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
+            if (c.hasSelection()) {
+                c.removeSelectedText();
+                setTextCursor(c);
+                return;
+            }
+        }
+    }
+#endif
+
     // Up at the very top of the body reveals the hidden mascot header line so it
     // can be read or edited. Moving the caret onto it un-hides it (see
     // updateMascotLineState); pressing Down again re-hides it.
@@ -758,9 +779,10 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
 
     // Typing a pairing character with text selected wraps the selection in it
     // (select a word, press "(" -> "(word)"). Shift is fine — it produces the
-    // character — but Ctrl/Alt/Cmd mean a shortcut, so bail on those.
-    if (!(event->modifiers() &
-          (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) &&
+    // character — but Ctrl/Cmd mean a shortcut, so bail on those. Option/Alt is
+    // allowed: on many non-US keyboards the pairing chars (e.g. [ ] { } `) are
+    // typed with Option, and we key off the produced text, not the modifier.
+    if (!(event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)) &&
         surroundSelection(event->text()))
         return;
 
@@ -770,9 +792,11 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     // Only
     // fires on a line that is exactly "``" with the caret at its end and not
     // already inside a code block (so closing a block by hand still works).
+    // Key off the produced text (a backtick), not the modifiers: on many non-US
+    // Mac keyboards ` is typed with Option, so excluding Alt here would stop the
+    // fence from auto-closing. Still bail on Ctrl/Cmd (those are shortcuts).
     if (event->text() == QStringLiteral("`") &&
-        !(event->modifiers() &
-          (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+        !(event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier))) {
         QTextCursor c = textCursor();
         if (!c.hasSelection() && c.atBlockEnd() &&
             c.block().text() == QStringLiteral("``") &&
@@ -834,16 +858,23 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             setHeadingLevel(event->key() - Qt::Key_0); return; // # … ###### heading
         default: break;
         }
-    } else if (mods == Qt::AltModifier &&
+    } else if ((mods & Qt::AltModifier) &&
+               !(mods & (Qt::ControlModifier | Qt::MetaModifier |
+                         Qt::ShiftModifier)) &&
                (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+        // Masked check (not ==): macOS tags arrow keys with KeypadModifier, so an
+        // exact "mods == AltModifier" test would miss Option+Arrow there.
         moveLines(event->key() == Qt::Key_Up);
         return;
-    } else if (mods == Qt::AltModifier &&
+    } else if ((mods & Qt::AltModifier) &&
+               !(mods & (Qt::ControlModifier | Qt::MetaModifier |
+                         Qt::ShiftModifier)) &&
                (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)) {
         // Browser-style history. Also bound as a window shortcut, but on macOS
         // Option+Arrow is a text-editing key (word left/right) that the QAction
         // shortcut never receives, so handle it here — where the editor has
-        // focus — to make Alt/Option+Arrow navigate on every platform.
+        // focus — to make Alt/Option+Arrow navigate on every platform. (Masked
+        // check for the same KeypadModifier reason as Alt+Up/Down above.)
         if (event->key() == Qt::Key_Left)
             emit navigateBack();
         else
@@ -1260,6 +1291,16 @@ void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
     reapplyFolds();
 }
 
+// Drop every active fold. Must be called before the document's content is
+// wholesale replaced (loading another note, reloading from disk, clearing on a
+// vault switch): the folds hold QTextBlock handles into the current content, and
+// once that content is swapped out those handles dangle. They'd still report
+// isValid() == true (the QTextDocument object is reused), so reapplyFolds() —
+// fired from the contentsChanged that the replacement emits — would call
+// QTextBlock::text() on freed memory and crash. Clearing the list first means
+// reapplyFolds() early-returns on the empty set instead.
+void MarkdownEditor::clearFolds() { m_folds.clear(); }
+
 void MarkdownEditor::reapplyFolds() {
     if (m_applyingFolds)
         return;
@@ -1349,27 +1390,6 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
     if (cur.selectedText().replace(QChar(0x2029), QLatin1Char('\n')) ==
         out.join(QLatin1Char('\n')))
         return; // already aligned
-
-    // Don't auto-align a table whose widest row would soft-wrap onto a new
-    // line: padding every column to its widest cell only makes the longest row
-    // longer, and once a row wraps the column grid no longer lines up — the
-    // formatting "breaks". In that case leave the rows exactly as typed. Cells
-    // paint in a fixed-width font, so measure with one to match what's drawn.
-    const double avail =
-        viewport()->width() - 2.0 * document()->documentMargin();
-    if (avail > 0) {
-        QFont mono = document()->defaultFont();
-        mono.setFamilies({QStringLiteral("Menlo"), QStringLiteral("Consolas"),
-                          QStringLiteral("DejaVu Sans Mono"),
-                          QStringLiteral("monospace")});
-        mono.setStyleHint(QFont::Monospace);
-        const QFontMetricsF fm(mono);
-        double widest = 0;
-        for (const QString &l : out)
-            widest = qMax(widest, fm.horizontalAdvance(l));
-        if (widest > avail)
-            return; // a row would wrap — leave the table unformatted
-    }
 
     m_prettifying = true;
     cur.insertText(out.join(QLatin1Char('\n')));
@@ -1903,6 +1923,36 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                     codeMask[i] = true;
             }
 
+            // Strikethrough mask for this line: a completed task's label and
+            // every ~~…~~ span (ignoring ~~ inside inline `code`). A struck
+            // formula gets a line drawn through it, matching how the highlighter
+            // strikes inline `code` inside the same span.
+            QList<bool> struck(btext.size(), false);
+            {
+                const auto tm = taskRe().match(btext);
+                if (tm.hasMatch() &&
+                    tm.captured(2).compare(QStringLiteral("x"),
+                                           Qt::CaseInsensitive) == 0)
+                    for (int i = tm.capturedEnd(0); i < struck.size(); ++i)
+                        struck[i] = true;
+                int open = -1;
+                for (int i = 0; i + 1 < btext.size();) {
+                    if (!codeMask[i] && btext[i] == QLatin1Char('~') &&
+                        btext[i + 1] == QLatin1Char('~')) {
+                        if (open < 0)
+                            open = i + 2;
+                        else {
+                            for (int k = open; k < i && k < struck.size(); ++k)
+                                struck[k] = true;
+                            open = -1;
+                        }
+                        i += 2;
+                    } else {
+                        ++i;
+                    }
+                }
+            }
+
             for (const auto &sp : MathRender::spans(btext)) {
                 if (sp.start < codeMask.size() && codeMask[sp.start])
                     continue; // inside an inline `code` span — not a formula
@@ -1918,6 +1968,25 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 const QRectF rect(r0.left(), r0.top(), r1.left() - r0.left(),
                                   r0.height());
                 MathRender::paint(p, rect, sp.body, inlineFont, mathColor);
+                if (sp.start < struck.size() && struck[sp.start]) {
+                    // Put the strike where the surrounding ~~text~~ has it: at the
+                    // line's text baseline minus the font's strikeout offset — not
+                    // the middle of the (math-inflated) line box, which sits too
+                    // low. Same dim colour as the highlighter's strike so the line
+                    // reads as continuous across "text $x^2$".
+                    const QTextLine tline =
+                        block.layout()->lineForTextPosition(sp.start);
+                    const QFontMetricsF fmText(font());
+                    const qreal y =
+                        tline.isValid()
+                            ? geo.top() + tline.y() + tline.ascent() -
+                                  fmText.strikeOutPos()
+                            : rect.center().y();
+                    QPen strikePen(QColor(0x5e, 0x7d, 0x6d)); // == m_strike colour
+                    strikePen.setWidthF(1.3);
+                    p.setPen(strikePen);
+                    p.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
+                }
             }
         }
     }
