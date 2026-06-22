@@ -12,7 +12,7 @@ endif()
 
 # Core is pulled in by Widgets, but naming it explicitly gives us Qt's
 # deployment API (qt_generate_deploy_app_script).
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Svg)
 
 # --- Platform icons -------------------------------------------------------
 # Pre-generated and committed (see packaging/macos/make_icns.py and the .ico
@@ -55,6 +55,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/MarkdownEditor.cpp
   src/ui/Mascot.h
   src/ui/Mascot.cpp
+  src/ui/MascotCatalog.h
+  src/ui/MascotCatalog.cpp
   src/ui/MarkdownHighlighter.h
   src/ui/MarkdownHighlighter.cpp
   src/ui/MathRender.h
@@ -68,7 +70,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
 )
 
 target_include_directories(emerald PRIVATE src)
-target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network)
+target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg)
 # Surface the project version to the app (shown in the sidebar footer, used by
 # the update check to compare against the latest GitHub release).
 target_compile_definitions(emerald PRIVATE EMERALD_VERSION="${PROJECT_VERSION}")

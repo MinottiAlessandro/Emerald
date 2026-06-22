@@ -1,5 +1,6 @@
 #include "Mascot.h"
 
+#include "MascotCatalog.h"
 #include <QEnterEvent>
 #include <QImage>
 #include <QMouseEvent>
@@ -1030,6 +1031,167 @@ void drawExtras(Ctx &c, const Traits &t, RNG &g) {
                          c.bw * 0.32, c.bh * 0.24));
 }
 
+// --- Hand-drawn art bridge ------------------------------------------------
+// Map each trait to its catalog asset name (kebab-case; see
+// docs/MASCOT_ART_SPEC.md). All append-only — never reorder or rename a name,
+// or a stored seed would start rendering different parts. An empty name means
+// "this slot is absent" (e.g. BackNone), so no SVG is looked up.
+QString bodyAssetName(int body) {
+    switch (body) {
+    case BodyTall:     return QStringLiteral("tall");
+    case BodyWide:     return QStringLiteral("wide");
+    case BodySlime:    return QStringLiteral("slime");
+    case BodyGhost:    return QStringLiteral("ghost");
+    case BodyBottle:   return QStringLiteral("bottle");
+    case BodyStar:     return QStringLiteral("star");
+    case BodyGem:      return QStringLiteral("gem");
+    case BodyMushroom: return QStringLiteral("mushroom");
+    case BodyRobot:    return QStringLiteral("robot");
+    case BodyOcto:     return QStringLiteral("octo");
+    case BodyJelly:    return QStringLiteral("jelly");
+    case BodyCactus:   return QStringLiteral("cactus");
+    case BodySnowman:  return QStringLiteral("snowman");
+    default:           return QStringLiteral("round");
+    }
+}
+
+QString backAssetName(int back) {
+    switch (back) {
+    case BackBatWings:     return QStringLiteral("bat-wings");
+    case BackFeatherWings: return QStringLiteral("feather-wings");
+    case BackFairyWings:   return QStringLiteral("fairy-wings");
+    case BackCape:         return QStringLiteral("cape");
+    default:               return QString(); // BackNone
+    }
+}
+
+QString tailAssetName(int tail) {
+    switch (tail) {
+    case TailCat:    return QStringLiteral("cat");
+    case TailBushy:  return QStringLiteral("bushy");
+    case TailDevil:  return QStringLiteral("devil");
+    case TailFish:   return QStringLiteral("fish");
+    case TailThin:   return QStringLiteral("thin");
+    case TailFluffy: return QStringLiteral("fluffy");
+    default:         return QString(); // TailNone
+    }
+}
+
+QString topperAssetName(int top) {
+    switch (top) {
+    case TopCatEars:     return QStringLiteral("cat-ears");
+    case TopBearEars:    return QStringLiteral("bear-ears");
+    case TopBunnyEars:   return QStringLiteral("bunny-ears");
+    case TopMouseEars:   return QStringLiteral("mouse-ears");
+    case TopHornsSmall:  return QStringLiteral("horns-small");
+    case TopHornsCurved: return QStringLiteral("horns-curved");
+    case TopUnicorn:     return QStringLiteral("unicorn");
+    case TopAntlers:     return QStringLiteral("antlers");
+    case TopHalo:        return QStringLiteral("halo");
+    case TopCrown:       return QStringLiteral("crown");
+    case TopWizardHat:   return QStringLiteral("wizard-hat");
+    case TopAntennae:    return QStringLiteral("antennae");
+    case TopLeaf:        return QStringLiteral("leaf");
+    case TopFlame:       return QStringLiteral("flame");
+    case TopTuft:        return QStringLiteral("tuft");
+    case TopTopHat:      return QStringLiteral("top-hat");
+    case TopSpikes:      return QStringLiteral("spikes");
+    default:             return QString(); // TopNone
+    }
+}
+
+QString eyesAssetName(int eyes) {
+    switch (eyes) {
+    case EyeSparkle: return QStringLiteral("sparkle");
+    case EyeSleepy:  return QStringLiteral("sleepy");
+    case EyeOval:    return QStringLiteral("oval");
+    case EyeHappy:   return QStringLiteral("happy");
+    case EyeAngry:   return QStringLiteral("angry");
+    case EyeCyclops: return QStringLiteral("cyclops");
+    case EyeStar:    return QStringLiteral("star");
+    case EyeWink:    return QStringLiteral("wink");
+    default:         return QStringLiteral("dot"); // EyeDot
+    }
+}
+
+QString mouthAssetName(int mouth) {
+    switch (mouth) {
+    case MouthCat:  return QStringLiteral("cat");
+    case MouthOpen: return QStringLiteral("open");
+    case MouthFang: return QStringLiteral("fang");
+    case MouthBeak: return QStringLiteral("beak");
+    case MouthGrin: return QStringLiteral("grin");
+    case MouthFlat: return QStringLiteral("flat");
+    default:        return QStringLiteral("smile"); // MouthSmile
+    }
+}
+
+QString patternAssetName(int pattern) {
+    switch (pattern) {
+    case PatSpots:   return QStringLiteral("spots");
+    case PatStripes: return QStringLiteral("stripes");
+    case PatScales:  return QStringLiteral("scales");
+    default:         return QString(); // PatNone
+    }
+}
+
+// The 6 palette slots as the slot-name -> colour map the catalog tints with.
+QHash<QString, QColor> tintFor(const Palette &p) {
+    return {{QStringLiteral("body"), p.body},
+            {QStringLiteral("edge"), p.edge},
+            {QStringLiteral("belly"), p.belly},
+            {QStringLiteral("accent"), p.accent},
+            {QStringLiteral("dark"), p.dark},
+            {QStringLiteral("white"), p.white}};
+}
+
+// A body's overlay mount points: the manifest record when the body is
+// hand-drawn, else points derived from the procedural geometry so an SVG
+// overlay placed on a procedural body still lands sensibly.
+BodyAnchors anchorsFor(const Ctx &c, const Traits &t) {
+    BodyAnchors a = MascotCatalog::shared().anchors(bodyAssetName(t.body));
+    if (!a.valid) {
+        a.face = QPointF(c.cx, c.faceCy);
+        a.eyeGap = c.faceDX;
+        a.topper = QPointF(c.cx, c.bodyTop);
+        a.tail = QPointF(c.cx + c.bw * 0.46, c.groundY - 8);
+        a.back = QPointF(c.cx, c.bcy - c.bh * 0.05);
+        a.ground = QPointF(c.cx, c.groundY);
+    }
+    return a;
+}
+
+// Draw an SVG part across the whole canvas, shifted so the point it was
+// authored around (the canonical mount `canonical`) lands on the body's actual
+// mount point (`mount`). For the default body the two coincide and the shift is
+// zero; other bodies nudge the overlay to fit.
+void renderMount(QPainter &p, const QString &slot, const QString &name,
+                 QPointF mount, QPointF canonical,
+                 const QHash<QString, QColor> &tint) {
+    p.save();
+    p.translate(mount - canonical);
+    MascotCatalog::shared().renderPart(p, slot, name, QRectF(0, 0, 100, 110), tint);
+    p.restore();
+}
+
+// The accessories the procedural drawFace/drawExtras bundle in, rendered as
+// individual SVG parts at their mount when the art exists (used on the
+// hand-drawn path; `CN` holds the canonical anchors).
+void renderExtrasArt(QPainter &p, const Traits &t, const BodyAnchors &A,
+                     const BodyAnchors &CN, const QHash<QString, QColor> &tint) {
+    MascotCatalog &cat = MascotCatalog::shared();
+    auto add = [&](bool on, const QString &name, QPointF at, QPointF canon) {
+        if (on && cat.hasPart(QStringLiteral("extra"), name))
+            renderMount(p, QStringLiteral("extra"), name, at, canon, tint);
+    };
+    add(t.cheeks,   QStringLiteral("cheeks"),   A.face,   CN.face);
+    add(t.whiskers, QStringLiteral("whiskers"), A.face,   CN.face);
+    add(t.carrot,   QStringLiteral("carrot"),   A.face,   CN.face);
+    add(t.gem,      QStringLiteral("gem"),      A.face,   CN.face);
+    add(t.sparkles, QStringLiteral("sparkles"), A.back,   CN.back);
+    add(t.feet,     QStringLiteral("feet"),     A.ground, CN.ground);
+}
+
 // Roll the seed's traits, lay out geometry + palette, and paint the layered
 // creature into `p` (offset vertically by `bob`, eyes shut when `blink`).
 // Shared by the live widget and the gallery's pixmaps.
@@ -1084,16 +1246,74 @@ void drawCreature(QPainter &p, quint64 seed, int w, int h, double bob,
         c.faceDX = headR * 0.5;
     }
 
-    // Back-to-front layers.
-    drawBack(c, t);
-    drawTail(c, t);
-    drawBody(c, t);
-    if (t.belly)
-        drawBelly(c);
-    drawPattern(c, t, g);
-    drawTopper(c, t);
-    drawFace(c, t, blink);
-    drawExtras(c, t, g);
+    // Back-to-front layers. Each part renders from hand-drawn SVG art when the
+    // catalog has it (placed at the body's anchor; see docs/MASCOT_ART_SPEC.md),
+    // otherwise from the procedural draw functions — so art can land one
+    // archetype at a time with no flag day.
+    MascotCatalog &cat = MascotCatalog::shared();
+    const QHash<QString, QColor> tint = tintFor(c.pal);
+    const BodyAnchors A = anchorsFor(c, t); // this body's mount points
+    const BodyAnchors CN;                   // canonical anchors overlays use
+    const bool artBody = cat.hasPart(QStringLiteral("body"), bodyAssetName(t.body));
+
+    // Wings / cape, behind the body.
+    if (const QString n = backAssetName(t.back);
+        !n.isEmpty() && cat.hasPart(QStringLiteral("back"), n))
+        renderMount(p, QStringLiteral("back"), n, A.back, CN.back, tint);
+    else
+        drawBack(c, t);
+
+    // Tail.
+    if (const QString n = tailAssetName(t.tail);
+        !n.isEmpty() && cat.hasPart(QStringLiteral("tail"), n))
+        renderMount(p, QStringLiteral("tail"), n, A.tail, CN.tail, tint);
+    else
+        drawTail(c, t);
+
+    // Body (with its belly baked into the art), then the pattern overlay. A
+    // pattern is per-archetype while bodies are shared by shape, so it stays a
+    // separate full-canvas layer (the artist authors it to sit on the body).
+    // The procedural path draws body + belly + pattern itself.
+    if (artBody) {
+        cat.renderPart(p, QStringLiteral("body"), bodyAssetName(t.body),
+                       QRectF(0, 0, 100, 110), tint);
+        if (const QString n = patternAssetName(t.pattern);
+            !n.isEmpty() && cat.hasPart(QStringLiteral("pattern"), n))
+            cat.renderPart(p, QStringLiteral("pattern"), n,
+                           QRectF(0, 0, 100, 110), tint);
+    } else {
+        drawBody(c, t);
+        if (t.belly)
+            drawBelly(c);
+        drawPattern(c, t, g);
+    }
+
+    // Head topper.
+    if (const QString n = topperAssetName(t.topper);
+        !n.isEmpty() && cat.hasPart(QStringLiteral("topper"), n))
+        renderMount(p, QStringLiteral("topper"), n, A.topper, CN.topper, tint);
+    else
+        drawTopper(c, t);
+
+    // Face. The procedural drawFace bundles eyes + mouth + nose + cheeks /
+    // whiskers and drawExtras adds gem / sparkles; the hand-drawn path (taken
+    // for an art body) composites eyes and mouth at the face anchor plus the
+    // accessories as separate SVG parts. Blink swaps in "<eyes>-closed" if drawn.
+    if (artBody) {
+        const QString eyes = eyesAssetName(t.eyes);
+        const QString closed = eyes + QStringLiteral("-closed");
+        const QString eyesNow =
+            (blink && cat.hasPart(QStringLiteral("eyes"), closed)) ? closed : eyes;
+        if (cat.hasPart(QStringLiteral("eyes"), eyesNow))
+            renderMount(p, QStringLiteral("eyes"), eyesNow, A.face, CN.face, tint);
+        if (const QString m = mouthAssetName(t.mouth);
+            cat.hasPart(QStringLiteral("mouth"), m))
+            renderMount(p, QStringLiteral("mouth"), m, A.face, CN.face, tint);
+        renderExtrasArt(p, t, A, CN, tint);
+    } else {
+        drawFace(c, t, blink);
+        drawExtras(c, t, g);
+    }
     p.restore();
 }
 
