@@ -48,6 +48,16 @@ public:
     // .valid == false when no record exists.
     BodyAnchors anchors(const QString &body) const;
 
+    // Names of user-defined whole creatures, discovered as folders under any
+    // root's creatures/ holding their layer SVGs (creatures/<kind>/body.svg,
+    // …). Sorted + de-duplicated so the set is stable across runs and machines,
+    // which is what lets generation roll one deterministically. The layer SVGs
+    // are then read with hasPart/renderPart using slot "creatures/<kind>".
+    QStringList kinds() const;
+
+    // True when creature `kind` has art (at least a body) on this machine.
+    bool hasKind(const QString &kind) const;
+
     // Prepend a user art root (a folder holding <slot>/<name>.svg and an
     // optional anchors.json). Highest priority; idempotent.
     void addRoot(const QString &dir);
@@ -61,4 +71,6 @@ private:
     mutable QHash<QString, QByteArray> m_rawCache; // "slot/name" -> svg ("" miss)
     QHash<QString, BodyAnchors> m_anchors;
     bool m_anchorsLoaded = false;
+    mutable QStringList m_kinds;       // discovered user creatures, sorted
+    mutable bool m_kindsLoaded = false;
 };

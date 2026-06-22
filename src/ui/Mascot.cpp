@@ -1192,16 +1192,39 @@ void renderExtrasArt(QPainter &p, const Traits &t, const BodyAnchors &A,
     add(t.feet,     QStringLiteral("feet"),     A.ground, CN.ground);
 }
 
+// Composite a user-defined creature (a folder of layer SVGs the user dropped
+// into their mascots catalog) in the standard z-order, rendered as authored —
+// no palette tinting, since the user drew its final colours.
+void drawUserCreature(QPainter &p, const QString &kind, bool blink) {
+    MascotCatalog &cat = MascotCatalog::shared();
+    const QString slot = QStringLiteral("creatures/") + kind;
+    const QRectF full(0, 0, 100, 110);
+    const QHash<QString, QColor> noTint;
+    auto layer = [&](const QString &name) {
+        if (cat.hasPart(slot, name))
+            cat.renderPart(p, slot, name, full, noTint);
+    };
+    layer(QStringLiteral("back"));
+    layer(QStringLiteral("tail"));
+    layer(QStringLiteral("body"));
+    layer(QStringLiteral("pattern"));
+    layer(QStringLiteral("topper"));
+    if (const QString closed = QStringLiteral("eyes-closed");
+        blink && cat.hasPart(slot, closed))
+        cat.renderPart(p, slot, closed, full, noTint);
+    else
+        layer(QStringLiteral("eyes"));
+    layer(QStringLiteral("mouth"));
+}
+
 // Roll the seed's traits, lay out geometry + palette, and paint the layered
-// creature into `p` (offset vertically by `bob`, eyes shut when `blink`).
+// creature into `p` (offset vertically by `bob`, eyes shut when `blink`). A
+// non-empty `kind` present in the catalog draws that user creature instead.
 // Shared by the live widget and the gallery's pixmaps.
-void drawCreature(QPainter &p, quint64 seed, int w, int h, double bob,
-                  bool blink) {
+void drawCreature(QPainter &p, quint64 seed, const QString &kind, int w, int h,
+                  double bob, bool blink) {
     if (seed == 0)
         return;
-    std::mt19937_64 rng(seed);
-    RNG g{rng};
-    const Traits t = rollTraits(g);
 
     p.setRenderHint(QPainter::Antialiasing);
     const double pad = 5.0;
@@ -1209,6 +1232,19 @@ void drawCreature(QPainter &p, quint64 seed, int w, int h, double bob,
     p.save();
     p.translate((w - 100 * s) / 2.0, (h - 110 * s) / 2.0 + bob);
     p.scale(s, s);
+
+    // A user-defined creature short-circuits the built-in roll; an unknown kind
+    // (e.g. a note opened on a machine without that art) falls through to the
+    // built-in creature the seed produces.
+    if (!kind.isEmpty() && MascotCatalog::shared().hasKind(kind)) {
+        drawUserCreature(p, kind, blink);
+        p.restore();
+        return;
+    }
+
+    std::mt19937_64 rng(seed);
+    RNG g{rng};
+    const Traits t = rollTraits(g);
 
     // Body proportions per shape (+ where the face sits on it).
     double bw = 60, bh = 58;
@@ -1348,10 +1384,27 @@ quint64 Mascot::seedFor(const QString &title, const QString &body) {
     return seed ? seed : 0x1ULL; // never 0 (that's the "no creature" sentinel)
 }
 
-void Mascot::setSeed(quint64 seed) {
-    if (seed == m_seed)
+QString Mascot::kindForSeed(quint64 seed) {
+    const QStringList ks = MascotCatalog::shared().kinds();
+    if (ks.isEmpty() || seed == 0)
+        return QString();
+    // splitmix64 over the seed — an independent stream, so the kind choice
+    // neither depends on nor disturbs the built-in trait roll. The pool is the
+    // 34 built-ins plus every discovered user creature, each weighted equally;
+    // built-in (index < A_COUNT) means "leave it to rollTraits", i.e. no kind.
+    quint64 h = seed + 0x9E3779B97F4A7C15ULL;
+    h = (h ^ (h >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    h = (h ^ (h >> 27)) * 0x94D049BB133111EBULL;
+    h ^= h >> 31;
+    const int idx = int(h % quint64(A_COUNT + ks.size()));
+    return idx >= A_COUNT ? ks.at(idx - A_COUNT) : QString();
+}
+
+void Mascot::setMascot(quint64 seed, const QString &kind) {
+    if (seed == m_seed && kind == m_kind)
         return;
     m_seed = seed;
+    m_kind = kind;
     setVisible(seed != 0);
     update();
 }
@@ -1379,15 +1432,15 @@ void Mascot::paintEvent(QPaintEvent *) {
     const double bob = m_hovered ? std::sin(m_tick * 0.22) * 2.5 : 0.0;
     const bool blink = m_hovered && (m_tick % 78) < 4;
     QPainter p(this);
-    drawCreature(p, m_seed, width(), height(), bob, blink);
+    drawCreature(p, m_seed, m_kind, width(), height(), bob, blink);
 }
 
-QPixmap Mascot::renderPixmap(quint64 seed, QSize size) {
+QPixmap Mascot::renderPixmap(quint64 seed, const QString &kind, QSize size) {
     QImage img(size, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     if (seed != 0) {
         QPainter p(&img);
-        drawCreature(p, seed, size.width(), size.height(), 0.0, false);
+        drawCreature(p, seed, kind, size.width(), size.height(), 0.0, false);
     }
     return QPixmap::fromImage(img);
 }

@@ -431,6 +431,15 @@ quint64 mascotSeedInFile(const QString &path) {
     const QByteArray first = f.readLine(256); // the header line is short
     return MascotSeed::fromLine(QString::fromUtf8(first).trimmed());
 }
+
+// The user-creature kind on that same first line, or empty.
+QString mascotKindInFile(const QString &path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return QString();
+    const QByteArray first = f.readLine(256);
+    return MascotSeed::kindFromLine(QString::fromUtf8(first).trimmed());
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -753,7 +762,9 @@ void MainWindow::refreshMascot() {
 void MainWindow::onMascotSeedChanged(quint64 seed) {
     if (!m_mascot)
         return;
-    m_mascot->setSeed(seed); // hides itself when 0
+    // The editor is the source of truth for the kind too (it lives on the same
+    // header line); mirror both onto the corner creature.
+    m_mascot->setMascot(seed, m_editor ? m_editor->mascotKind() : QString());
     if (seed) {
         positionMascot();
         m_mascot->raise();
@@ -777,15 +788,17 @@ void MainWindow::generateMascot() {
     }
     // The seed is hashed from the note's content (sans any existing header line)
     // and written back into the file's first line, which drives the creature.
+    // If the seed rolls one of the user's own creatures, record its kind on the
+    // line too so the choice is reproducible and travels with the note.
     const quint64 seed = Mascot::seedFor(m_currentTitle, m_editor->bodyText());
-    m_editor->setMascotSeed(seed); // emits mascotSeedChanged -> updates the corner
+    m_editor->setMascot(seed, Mascot::kindForSeed(seed)); // -> mascotSeedChanged
     notify(tr("Mascot generated"));
 }
 
 void MainWindow::deleteMascot() {
     if (!m_vault || m_currentPath.isEmpty() || m_editor->mascotSeed() == 0)
         return;
-    m_editor->setMascotSeed(0); // removes the header line; hides the creature
+    m_editor->setMascot(0); // removes the header line; hides the creature
     notify(tr("Mascot removed"));
 }
 
@@ -818,12 +831,12 @@ void MainWindow::openMascotGallery() {
 
     // Gather every note whose file starts with a mascot header line. No metadata
     // store — each seed lives in its own note, read straight off disk.
-    struct Entry { QString path, title; quint64 seed; };
+    struct Entry { QString path, title; quint64 seed; QString kind; };
     QVector<Entry> entries;
     for (const Note &n : m_vault->notes()) {
         const quint64 seed = mascotSeedInFile(n.path);
         if (seed)
-            entries.push_back({n.path, n.title, seed});
+            entries.push_back({n.path, n.title, seed, mascotKindInFile(n.path)});
     }
     std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b) {
         return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
@@ -854,7 +867,7 @@ void MainWindow::openMascotGallery() {
             cell->setAutoRaise(true);
             cell->setIconSize(QSize(120, 132));
             cell->setIcon(
-                QIcon(Mascot::renderPixmap(e.seed, QSize(120, 132))));
+                QIcon(Mascot::renderPixmap(e.seed, e.kind, QSize(120, 132))));
             cell->setText(e.title);
             cell->setToolTip(e.title);
             const QString abs = e.path;

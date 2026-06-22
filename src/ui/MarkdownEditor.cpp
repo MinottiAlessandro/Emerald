@@ -289,6 +289,10 @@ quint64 MarkdownEditor::mascotSeed() const {
     return MascotSeed::fromLine(document()->firstBlock().text());
 }
 
+QString MarkdownEditor::mascotKind() const {
+    return MascotSeed::kindFromLine(document()->firstBlock().text());
+}
+
 int MarkdownEditor::firstContentPosition() const {
     const QTextBlock mb = mascotBlock();
     if (mb.isValid() && mb.next().isValid())
@@ -300,7 +304,7 @@ QString MarkdownEditor::bodyText() const {
     return MascotSeed::strip(toPlainText());
 }
 
-void MarkdownEditor::setMascotSeed(quint64 seed) {
+void MarkdownEditor::setMascot(quint64 seed, const QString &kind) {
     const QTextBlock mb = mascotBlock();
     QTextCursor c(document());
     c.beginEditBlock();
@@ -313,10 +317,10 @@ void MarkdownEditor::setMascotSeed(quint64 seed) {
     } else if (mb.isValid()) { // replace the existing header line's text
         c.setPosition(mb.position());
         c.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
-        c.insertText(MascotSeed::line(seed));
+        c.insertText(MascotSeed::line(seed, kind));
     } else { // insert a fresh header line above all existing content
         c.movePosition(QTextCursor::Start);
-        c.insertText(MascotSeed::line(seed) + QLatin1Char('\n'));
+        c.insertText(MascotSeed::line(seed, kind) + QLatin1Char('\n'));
     }
     c.endEditBlock();
     updateMascotLineState(); // hide the line + emit mascotSeedChanged
@@ -337,9 +341,11 @@ void MarkdownEditor::updateMascotLineState() {
     }
 
     const quint64 seed = mb.isValid() ? MascotSeed::fromLine(mb.text()) : 0;
-    if (seed != m_mascotSeed) {
+    const QString kind = mb.isValid() ? MascotSeed::kindFromLine(mb.text()) : QString();
+    if (seed != m_mascotSeed || kind != m_mascotKind) {
         m_mascotSeed = seed;
-        emit mascotSeedChanged(seed);
+        m_mascotKind = kind;
+        emit mascotSeedChanged(seed); // MainWindow re-reads the kind from us
     }
 }
 

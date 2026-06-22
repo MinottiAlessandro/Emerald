@@ -38,8 +38,11 @@ public:
     // The note's mascot seed, stored as a hidden header line at the top of the
     // document (see MascotSeed). 0 when the note has no mascot.
     quint64 mascotSeed() const;
-    // Write/replace (seed != 0) or remove (seed == 0) the mascot header line.
-    void setMascotSeed(quint64 seed);
+    // The user-creature kind on that header line, or empty (built-in / none).
+    QString mascotKind() const;
+    // Write/replace (seed != 0) or remove (seed == 0) the mascot header line,
+    // carrying an optional user-creature kind.
+    void setMascot(quint64 seed, const QString &kind = QString());
     // The body text with any leading mascot header line removed (for hashing /
     // indexing — the header line isn't note content).
     QString bodyText() const;
@@ -202,6 +205,7 @@ private:
     bool m_adjustingScroll = false; // guard the over-scroll range extension
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
     quint64 m_mascotSeed = 0;    // last seen mascot seed, to detect changes
+    QString m_mascotKind;        // last seen kind, so a kind-only change emits too
     // The spacing-aware document layout (owned by the document). Held as the
     // base type; applyLineSpacing() downcasts to set the per-row padding.
     QPlainTextDocumentLayout *m_spacedLayout = nullptr;

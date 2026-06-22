@@ -284,6 +284,51 @@ group (white fills tagged `data-slot`) and a `#shade` group, renders cleanly at
 
 ---
 
+## 9. User-defined creatures (drop-in, for end users)
+
+Everything above is the *built-in* roster (the commissioned art shipped in the
+binary). End users can also add **their own whole creatures** with no rebuild,
+and it's transparent — drop a folder, it shows up in generated mascots.
+
+**Where:** the per-user mascots folder — on Linux `~/.local/share/Emerald/mascots/`
+(the OS app-data dir on macOS/Windows). The same folder also overrides built-in
+parts if you drop a `body/`, `topper/`, … into it.
+
+**How:** one folder per creature under `creatures/`, named with a folder-safe
+slug (`[A-Za-z0-9._-]`) — that name *is* the creature's `kind`:
+
+```
+<mascots>/creatures/my-dragon/
+    body.svg        ← required (a creature must have a body)
+    back.svg  tail.svg  pattern.svg  topper.svg  mouth.svg   ← all optional
+    eyes.svg  eyes-closed.svg                                ← optional (blink)
+```
+
+Each file is one **layer**, authored on the same 100×110 canvas, composited in
+the §7 z-order. Unlike the built-in parts, a user creature is **drawn as
+authored — no palette tinting** (you draw its final colours; `#tint`/`data-slot`
+isn't needed, though `#shade`-style translucent shading still works). You can
+also collapse the whole creature into a single `body.svg`.
+
+**What happens automatically:**
+- **Discovery** — the app scans `creatures/` at startup; each folder with a
+  `body.svg` becomes an available `kind`. No registration.
+- **Generation** — when a mascot is generated, the roll draws from *the 34
+  built-ins **plus** your creatures*, each weighted equally. If it lands on one
+  of yours, the app records it on the note's seed line as
+  `<!-- mascot: N kind:my-dragon -->` (you never type this).
+- **Determinism & portability** — existing notes are never re-rolled, so adding
+  a creature only affects mascots generated *afterwards*; and because the chosen
+  `kind` is written into the note, the creature is reproducible and travels with
+  the file. On a machine that lacks that art it **falls back** to the built-in
+  creature the seed alone produces.
+
+**Definition of done for a user creature:** a `creatures/<slug>/` folder with at
+least `body.svg` (`viewBox="0 0 100 110"`), drawn in final colours, that renders
+cleanly at 24px and 300px.
+
+---
+
 ## Appendix A — the 34 archetype recipes
 
 Each archetype selects a body + overlays; some traits are randomised per-seed

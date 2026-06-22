@@ -1,11 +1,13 @@
 #include "MascotCatalog.h"
 
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPainter>
 #include <QRectF>
+#include <QSet>
 #include <QStandardPaths>
 #include <QSvgRenderer>
 #include <QXmlStreamReader>
@@ -92,6 +94,30 @@ void MascotCatalog::addRoot(const QString &dir) {
     m_rawCache.clear();
     m_anchors.clear();
     m_anchorsLoaded = false;
+    m_kinds.clear();
+    m_kindsLoaded = false;
+}
+
+QStringList MascotCatalog::kinds() const {
+    if (m_kindsLoaded)
+        return m_kinds;
+    m_kindsLoaded = true;
+    QSet<QString> seen;
+    for (const QString &root : m_roots) {
+        QDir dir(root + QStringLiteral("/creatures"));
+        const QStringList subs =
+            dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QString &name : subs)
+            if (QFile::exists(dir.filePath(name) + QStringLiteral("/body.svg")))
+                seen.insert(name); // a creature must at least have a body
+    }
+    m_kinds = QStringList(seen.cbegin(), seen.cend());
+    m_kinds.sort(); // stable order -> deterministic generation across machines
+    return m_kinds;
+}
+
+bool MascotCatalog::hasKind(const QString &kind) const {
+    return !kind.isEmpty() && kinds().contains(kind);
 }
 
 QByteArray MascotCatalog::rawPart(const QString &slot, const QString &name) const {
