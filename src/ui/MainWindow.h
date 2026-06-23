@@ -44,6 +44,7 @@ private:
     void newVault();              // create a fresh vault folder, then open it
     void deleteCurrentNote();     // delete the open note (with confirmation)
     void changeFontSize(int delta); // +1 / -1 step; 0 resets to the default
+    void toggleSidebar(); // collapse/restore the left pane (Ctrl+\ or handle click)
     void onEditorContextMenu(const QPoint &pos);
 
     void chooseVault();

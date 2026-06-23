@@ -255,7 +255,9 @@ QString manualText() {
         "`.md`); edit it to rename the note.\n"
         "- **Sidebar** — notes live in a folder tree. Right-click to create or "
         "delete notes and folders, drag to move them, Shift/Ctrl-click to select "
-        "several at once, and single-click a folder to fold it.\n"
+        "several at once, and single-click a folder to fold it. Collapse the whole "
+        "sidebar with **Ctrl+\\** (or click the divider) and again to bring it "
+        "back.\n"
         "- **History** — the back / forward arrows (Alt+Left / Alt+Right "
         "or the mouse side buttons) walk back and forward through the notes "
         "you've opened.\n"
@@ -291,6 +293,7 @@ QString manualText() {
         "- **Ctrl+Q** — Close Emerald\n"
         "- **Ctrl++** / **Ctrl+-** — Increase / decrease the font size "
         "(**Ctrl+0** resets it)\n"
+        "- **Ctrl+\\** — Toggle the sidebar (collapse / reopen the left pane)\n"
         "- **Alt+←** — Back in the history\n"
         "- **Alt+→** — Next in the history\n");
 }
@@ -902,6 +905,9 @@ void MainWindow::buildActions() {
                           &MainWindow::openSettings);
     auto *manual = make(tr("Manual"), {}, &MainWindow::openManual);
     auto *update = make(tr("Check for Updates…"), {}, &MainWindow::checkForUpdates);
+    auto *toggleSide = make(tr("Toggle Sidebar"),
+                            QKeySequence(Qt::CTRL | Qt::Key_Backslash),
+                            &MainWindow::toggleSidebar);
     auto *newVault = make(tr("New Vault…"), {}, &MainWindow::newVault);
     auto *openVault = make(tr("Open Vault…"), QKeySequence(QKeySequence::Open),
                            &MainWindow::chooseVault);
@@ -952,6 +958,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(settings);
     m_gearMenu->addAction(manual);
     m_gearMenu->addAction(update);
+    m_gearMenu->addAction(toggleSide);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(newVault);
     m_gearMenu->addAction(openVault);
@@ -1172,6 +1179,15 @@ void MainWindow::changeFontSize(int delta) {
     s.setValue(QStringLiteral("editorFontFamily"), f.family());
     s.setValue(QStringLiteral("editorFontSize"), size);
     notify(tr("Font size: %1 pt").arg(size), 1200);
+}
+
+void MainWindow::toggleSidebar() {
+    const QList<int> sizes = m_splitter->sizes();
+    const int total = sizes.value(0) + sizes.value(1);
+    if (sizes.value(0) > 0)
+        m_splitter->setSizes({0, total}); // collapse
+    else
+        m_splitter->setSizes({220, total - 220}); // reopen at min
 }
 
 void MainWindow::newVault() {
@@ -1889,14 +1905,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         } else if (event->type() == QEvent::MouseButtonRelease) {
             const QPoint up = static_cast<QMouseEvent *>(event)->globalPosition()
                                   .toPoint();
-            if ((up - m_handlePressPos).manhattanLength() < 4) {
-                const QList<int> sizes = m_splitter->sizes();
-                const int total = sizes.value(0) + sizes.value(1);
-                if (sizes.value(0) > 0)
-                    m_splitter->setSizes({0, total}); // collapse
-                else
-                    m_splitter->setSizes({220, total - 220}); // reopen at min
-            }
+            if ((up - m_handlePressPos).manhattanLength() < 4)
+                toggleSidebar();
         }
     }
     return QMainWindow::eventFilter(watched, event);

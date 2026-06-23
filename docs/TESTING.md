@@ -113,6 +113,7 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Default font** is a system monospace face on a clean profile (no saved font override). ★
 - [ ] **Line spacing** setting changes row spacing and survives note loads.
 - [ ] **Font size** `Ctrl++` / `Ctrl+-` / `Ctrl+0` (up / down / reset).
+- [ ] **Toggle sidebar** (`Ctrl+\` or the gear menu) collapses the left pane fully and restores it; clicking the splitter handle does the same. ◆
 - [ ] Heading sizes scale with the body font.
 - [ ] Dark theme renders correctly (embedded QSS).
 
@@ -166,6 +167,7 @@ Verify each fires and that menu items show their shortcut label.
 | Move line up / down                | `Alt+↑` / `Alt+↓`              | [ ] |
 | Indent / outdent                   | `Tab` / `Shift+Tab`            | [ ] |
 | Font size up / down / reset        | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | [ ] |
+| Toggle sidebar                     | `Ctrl+\`                       | [ ] |
 | Quit                               | `Ctrl+Q`                       | [ ] |
 
 > On macOS use **⌘** where **Ctrl** is listed.

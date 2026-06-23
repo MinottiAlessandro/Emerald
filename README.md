@@ -127,6 +127,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 | Move line up / down | `Alt+↑` / `Alt+↓` |
 | Indent / outdent list item | `Tab` / `Shift+Tab` |
 | Font size up / down / reset | `Ctrl++` / `Ctrl+-` / `Ctrl+0` |
+| Toggle sidebar | `Ctrl+\` |
 | Quit | `Ctrl+Q` |
 
 > `Ctrl+Delete` stays the usual delete-word-forward; Delete note is the deliberate `Ctrl+Shift+Backspace`.
