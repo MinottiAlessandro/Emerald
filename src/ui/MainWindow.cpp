@@ -297,6 +297,7 @@ QString manualText() {
         "- **Ctrl+G** — Open the mascot gallery (every note's creature at a "
         "glance)\n"
         "- **Ctrl+M** — Generate (or re-roll) this note's mascot\n"
+        "- **Ctrl+Shift+M** — Delete this note's mascot\n"
         "- **Alt+←** — Back in the history\n"
         "- **Alt+→** — Next in the history\n");
 }
@@ -952,7 +953,9 @@ void MainWindow::buildActions() {
     m_genMascotAction = make(tr("Generate Mascot"),
                              QKeySequence(Qt::CTRL | Qt::Key_M),
                              &MainWindow::generateMascot);
-    m_delMascotAction = make(tr("Delete Mascot"), {}, &MainWindow::deleteMascot);
+    m_delMascotAction = make(tr("Delete Mascot"),
+                             QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M),
+                             &MainWindow::deleteMascot);
     auto *gallery = make(tr("Mascot Gallery…"),
                          QKeySequence(Qt::CTRL | Qt::Key_G),
                          &MainWindow::openMascotGallery);

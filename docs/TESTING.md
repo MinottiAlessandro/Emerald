@@ -100,8 +100,9 @@ move the caret back onto the line, confirm the raw markers reappear.
 
 ## 11. Mascots
 - [ ] A note past the char threshold (if auto-gen enabled in **Settings → Mascot**) grows a corner mascot.
-- [ ] **Generate** (`Ctrl+M`) / **Delete** mascot from the gear menu. ◆
+- [ ] **Generate** (`Ctrl+M`) / **Delete** (`Ctrl+Shift+M`) mascot from the gear menu. ◆
 - [ ] `Ctrl+M` is disabled with no note open, and re-rolls the creature on an open note. ◆
+- [ ] `Ctrl+Shift+M` is disabled until the note has a mascot, then removes it (clears the seed line). ◆
 - [ ] Hover gives a gentle blink/bob.
 - [ ] Clicking a mascot **or pressing `Ctrl+G`** opens the vault-wide gallery; clicking a creature jumps to its note. ◆
 - [ ] Press **↑** at the top of a note reveals the hidden seed line (`<!-- mascot: … -->`); editing/deleting it updates the creature.
@@ -171,6 +172,7 @@ Verify each fires and that menu items show their shortcut label.
 | Toggle sidebar                     | `Ctrl+\`                       | [ ] |
 | Mascot gallery                     | `Ctrl+G`                       | [ ] |
 | Generate mascot                    | `Ctrl+M`                       | [ ] |
+| Delete mascot                      | `Ctrl+Shift+M`                 | [ ] |
 | Quit                               | `Ctrl+Q`                       | [ ] |
 
 > On macOS use **⌘** where **Ctrl** is listed.
