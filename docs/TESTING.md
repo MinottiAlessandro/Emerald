@@ -103,10 +103,13 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Generate** (`Ctrl+M`) / **Delete** (`Ctrl+Shift+M`) mascot from the gear menu. ◆
 - [ ] `Ctrl+M` is disabled with no note open, and re-rolls the creature on an open note. ◆
 - [ ] `Ctrl+Shift+M` is disabled until the note has a mascot, then removes it (clears the seed line). ◆
+- [ ] With auto-generation on (**Settings → Mascot**), deleting a note's mascot (`Ctrl+Shift+M`) stops it from auto-regenerating for that note even as you keep typing; a manual **Generate** (`Ctrl+M`) resumes auto-gen. ◆
 - [ ] Hover gives a gentle blink/bob.
 - [ ] Clicking a mascot **or pressing `Ctrl+G`** opens the vault-wide gallery; clicking a creature jumps to its note. ◆
 - [ ] Press **↑** at the top of a note reveals the hidden seed line (`<!-- mascot: … -->`); editing/deleting it updates the creature.
 - [ ] The seed line is invisible in a plain Markdown viewer (it's an HTML comment).
+- [ ] **Use Image Mascots** (gear menu): with images in the mascots `images/` folder, a note with a mascot shows one of them as a rounded tile (in the corner and the gallery); the same note always maps to the same image. ◆
+- [ ] Toggling **Use Image Mascots** off restores the procedural creature; with it on but the `images/` folder empty, mascots fall back to the procedural creature. ◆
 
 ## 12. Editor appearance & settings
 - [ ] **Settings** (`Ctrl+,`) opens the dialog. ★

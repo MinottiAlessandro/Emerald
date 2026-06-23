@@ -58,9 +58,23 @@ public:
     // True when creature `kind` has art (at least a body) on this machine.
     bool hasKind(const QString &kind) const;
 
+    // User-supplied raster mascots dropped in any root's images/ folder
+    // (*.png/*.jpg/*.jpeg/*.webp), sorted by file name so the set is stable
+    // across machines. When the app's "image mode" is on, a note shows
+    // imageForSeed(its seed) as a tile instead of the procedural creature.
+    QStringList images() const;
+    // The image a seed maps to (deterministic, uniform over the set), or empty
+    // when no images exist. Independent of the built-in trait / kind rolls.
+    QString imageForSeed(quint64 seed) const;
+
     // Prepend a user art root (a folder holding <slot>/<name>.svg and an
     // optional anchors.json). Highest priority; idempotent.
     void addRoot(const QString &dir);
+
+    // Forget the lazily-built caches so the next lookup re-scans disk — used
+    // when the user adds or removes art at runtime (e.g. drops in new images
+    // before toggling image mode).
+    void refresh();
 
 private:
     MascotCatalog();
@@ -73,4 +87,6 @@ private:
     bool m_anchorsLoaded = false;
     mutable QStringList m_kinds;       // discovered user creatures, sorted
     mutable bool m_kindsLoaded = false;
+    mutable QStringList m_images;      // discovered user images, sorted by name
+    mutable bool m_imagesLoaded = false;
 };

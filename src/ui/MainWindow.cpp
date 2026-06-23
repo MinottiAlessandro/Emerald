@@ -2,6 +2,7 @@
 
 #include "MarkdownEditor.h"
 #include "Mascot.h"
+#include "MascotCatalog.h"
 #include "SearchPopup.h"
 #include "Updater.h"
 #include "core/MascotSeed.h"
@@ -799,14 +800,38 @@ void MainWindow::generateMascot() {
     // line too so the choice is reproducible and travels with the note.
     const quint64 seed = Mascot::seedFor(m_currentTitle, m_editor->bodyText());
     m_editor->setMascot(seed, Mascot::kindForSeed(seed)); // -> mascotSeedChanged
+    setAutoMascotOff(m_currentPath, false); // an explicit Generate re-enables auto
     notify(tr("Mascot generated"));
 }
 
 void MainWindow::deleteMascot() {
     if (!m_vault || m_currentPath.isEmpty() || m_editor->mascotSeed() == 0)
         return;
+    // Suppress *before* clearing: setMascot(0) edits the document, which emits
+    // textChanged -> maybeAutoGenerateMascot synchronously; the flag must already
+    // be set so that pass bails instead of instantly recreating the mascot.
+    setAutoMascotOff(m_currentPath, true);
     m_editor->setMascot(0); // removes the header line; hides the creature
     notify(tr("Mascot removed"));
+}
+
+bool MainWindow::autoMascotOff(const QString &path) const {
+    return !path.isEmpty() && QSettings()
+        .value(QStringLiteral("mascotAutoOff")).toStringList().contains(path);
+}
+
+void MainWindow::setAutoMascotOff(const QString &path, bool off) {
+    if (path.isEmpty())
+        return;
+    QSettings s;
+    QStringList paths = s.value(QStringLiteral("mascotAutoOff")).toStringList();
+    if (off == paths.contains(path))
+        return; // already in the desired state
+    if (off)
+        paths.append(path);
+    else
+        paths.removeAll(path);
+    s.setValue(QStringLiteral("mascotAutoOff"), paths);
 }
 
 void MainWindow::maybeAutoGenerateMascot() {
@@ -815,6 +840,8 @@ void MainWindow::maybeAutoGenerateMascot() {
     QSettings s;
     if (!s.value(QStringLiteral("mascotAuto"), false).toBool())
         return;
+    if (autoMascotOff(m_currentPath))
+        return; // user deleted this note's mascot — leave it manual-only
     const int threshold =
         s.value(QStringLiteral("mascotThreshold"), 100).toInt();
     if (m_editor->bodyText().size() < threshold)
@@ -851,7 +878,7 @@ void MainWindow::openMascotGallery() {
 
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Mascot Gallery"));
-    dlg.resize(560, 540);
+    dlg.resize(640, 620);
     auto *outer = new QVBoxLayout(&dlg);
 
     if (entries.isEmpty()) {
@@ -865,16 +892,16 @@ void MainWindow::openMascotGallery() {
         scroll->setFrameShape(QFrame::NoFrame);
         auto *grid = new QWidget;
         auto *gl = new QGridLayout(grid);
-        gl->setSpacing(6);
-        const int cols = 4;
+        gl->setSpacing(10);
+        const int cols = 3;
+        const QSize iconSize(176, 196); // bigger cells so each creature reads well
         for (int i = 0; i < entries.size(); ++i) {
             const Entry &e = entries.at(i);
             auto *cell = new QToolButton(grid);
             cell->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
             cell->setAutoRaise(true);
-            cell->setIconSize(QSize(120, 132));
-            cell->setIcon(
-                QIcon(Mascot::renderPixmap(e.seed, e.kind, QSize(120, 132))));
+            cell->setIconSize(iconSize);
+            cell->setIcon(QIcon(Mascot::renderPixmap(e.seed, e.kind, iconSize)));
             cell->setText(e.title);
             cell->setToolTip(e.title);
             const QString abs = e.path;
@@ -959,6 +986,21 @@ void MainWindow::buildActions() {
     auto *gallery = make(tr("Mascot Gallery…"),
                          QKeySequence(Qt::CTRL | Qt::Key_G),
                          &MainWindow::openMascotGallery);
+    // Image mode: draw each note's mascot as one of the user's own images
+    // (dropped in the mascots/images folder, picked by the note's seed) instead
+    // of the procedural creature. Off by default; the seed line is untouched, so
+    // it only changes how an existing mascot is drawn.
+    auto *imageMode = new QAction(tr("Use Image Mascots"), this);
+    imageMode->setCheckable(true);
+    imageMode->setChecked(
+        QSettings().value(QStringLiteral("mascotImageMode"), false).toBool());
+    connect(imageMode, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue(QStringLiteral("mascotImageMode"), on);
+        MascotCatalog::shared().refresh(); // re-scan for images added meanwhile
+        if (m_mascot)
+            m_mascot->update(); // repaint the corner in the chosen style
+    });
+    addAction(imageMode);
     auto *quit = new QAction(tr("Quit"), this);
     quit->setShortcut(QKeySequence(QKeySequence::Quit));
     connect(quit, &QAction::triggered, this, &QWidget::close);
@@ -986,6 +1028,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(m_genMascotAction);
     m_gearMenu->addAction(m_delMascotAction);
     m_gearMenu->addAction(gallery);
+    m_gearMenu->addAction(imageMode);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(quit);
 

@@ -7,7 +7,9 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QPixmapCache>
 #include <QPolygonF>
+#include <QSettings>
 #include <QTimer>
 #include <QtMath>
 #include <random>
@@ -1426,12 +1428,46 @@ void Mascot::mousePressEvent(QMouseEvent *e) {
         emit clicked();
 }
 
+// "Image mode": when the user has enabled it and dropped images in the mascots
+// folder, a note's seed maps to one of those images, drawn as a rounded tile
+// (the whole square contained, centred, shifted by `bob` for the hover bounce)
+// instead of the procedural creature. Returns false — leaving the painter
+// untouched — when image mode is off or no image applies, so the caller falls
+// back to drawCreature.
+static bool drawImageMascot(QPainter &p, quint64 seed, int w, int h, double bob) {
+    if (seed == 0 ||
+        !QSettings().value(QStringLiteral("mascotImageMode"), false).toBool())
+        return false;
+    const QString path = MascotCatalog::shared().imageForSeed(seed);
+    if (path.isEmpty())
+        return false;
+    QPixmap pm;
+    if (!QPixmapCache::find(path, &pm)) { // decode once — these are MB-sized PNGs
+        pm.load(path);
+        QPixmapCache::insert(path, pm);
+    }
+    if (pm.isNull())
+        return false;
+    const QSize fit = pm.size().scaled(QSize(w, h), Qt::KeepAspectRatio);
+    const QRectF r((w - fit.width()) / 2.0, (h - fit.height()) / 2.0 + bob,
+                   fit.width(), fit.height());
+    p.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+    QPainterPath clip;
+    clip.addRoundedRect(r, qMin(r.width(), r.height()) * 0.16,
+                        qMin(r.width(), r.height()) * 0.16);
+    p.setClipPath(clip);
+    p.drawPixmap(r, pm, QRectF(pm.rect()));
+    return true;
+}
+
 void Mascot::paintEvent(QPaintEvent *) {
     if (m_seed == 0)
         return;
     const double bob = m_hovered ? std::sin(m_tick * 0.22) * 2.5 : 0.0;
-    const bool blink = m_hovered && (m_tick % 78) < 4;
     QPainter p(this);
+    if (drawImageMascot(p, m_seed, width(), height(), bob))
+        return;
+    const bool blink = m_hovered && (m_tick % 78) < 4;
     drawCreature(p, m_seed, m_kind, width(), height(), bob, blink);
 }
 
@@ -1440,7 +1476,8 @@ QPixmap Mascot::renderPixmap(quint64 seed, const QString &kind, QSize size) {
     img.fill(Qt::transparent);
     if (seed != 0) {
         QPainter p(&img);
-        drawCreature(p, seed, kind, size.width(), size.height(), 0.0, false);
+        if (!drawImageMascot(p, seed, size.width(), size.height(), 0.0))
+            drawCreature(p, seed, kind, size.width(), size.height(), 0.0, false);
     }
     return QPixmap::fromImage(img);
 }

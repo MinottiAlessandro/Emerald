@@ -95,6 +95,12 @@ private:
     void openMascotGallery(); // transient grid of every mascot in the vault
     void maybeAutoGenerateMascot(); // auto-create once past the char threshold
     void updateMascotActions();     // enable/disable the menu entries
+    // Notes whose mascot the user deleted by hand: auto-generation skips them so
+    // it won't keep recreating one (manual Generate still works and re-enables
+    // it). Kept per note path in QSettings — auto-gen is a local opt-in, so its
+    // suppression is local too.
+    bool autoMascotOff(const QString &path) const;
+    void setAutoMascotOff(const QString &path, bool off);
     void onTreeItemClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);

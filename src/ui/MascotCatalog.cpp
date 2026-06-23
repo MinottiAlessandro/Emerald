@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
+#include <QMap>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPainter>
@@ -90,12 +91,47 @@ void MascotCatalog::addRoot(const QString &dir) {
     if (dir.isEmpty() || m_roots.contains(dir))
         return;
     m_roots.prepend(dir); // user roots win over the built-in
-    // A new root can satisfy lookups that previously missed, so drop the caches.
+    refresh();            // a new root can satisfy lookups that previously missed
+}
+
+void MascotCatalog::refresh() {
     m_rawCache.clear();
     m_anchors.clear();
     m_anchorsLoaded = false;
     m_kinds.clear();
     m_kindsLoaded = false;
+    m_images.clear();
+    m_imagesLoaded = false;
+}
+
+QStringList MascotCatalog::images() const {
+    if (m_imagesLoaded)
+        return m_images;
+    m_imagesLoaded = true;
+    static const QStringList exts{QStringLiteral("*.png"), QStringLiteral("*.jpg"),
+                                  QStringLiteral("*.jpeg"), QStringLiteral("*.webp")};
+    QMap<QString, QString> byName; // name -> path; QMap keeps keys sorted
+    for (const QString &root : m_roots) { // highest priority first
+        QDir dir(root + QStringLiteral("/images"));
+        for (const QString &f : dir.entryList(exts, QDir::Files))
+            if (!byName.contains(f)) // a higher-priority root already won this name
+                byName.insert(f, dir.filePath(f));
+    }
+    m_images = byName.values(); // paths in ascending file-name order
+    return m_images;
+}
+
+QString MascotCatalog::imageForSeed(quint64 seed) const {
+    const QStringList im = images();
+    if (im.isEmpty() || seed == 0)
+        return QString();
+    // splitmix64 over the seed — an independent stream (mirrors
+    // Mascot::kindForSeed) so the picked image is uniform and stable per seed.
+    quint64 h = seed + 0x9E3779B97F4A7C15ULL;
+    h = (h ^ (h >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    h = (h ^ (h >> 27)) * 0x94D049BB133111EBULL;
+    h ^= h >> 31;
+    return im.at(int(h % quint64(im.size())));
 }
 
 QStringList MascotCatalog::kinds() const {
