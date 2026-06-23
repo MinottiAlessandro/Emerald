@@ -90,7 +90,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 
 **Mascots**
 - **A creature per note** — an optional, procedurally drawn mascot in the bottom-right corner, seeded from the note's title and text (rendered live, no image files). Around three dozen archetypes spanning ordinary animals, mythological creatures, and objects. Hover for a gentle blink and bob.
-- **Gallery & control** — click a mascot (or press **Ctrl+G**) for a vault-wide **gallery** (click any creature to jump to its note). **Generate** / **Delete** from the gear menu; auto-generation once a note passes a character count is opt-in under **Settings → Mascot**.
+- **Gallery & control** — click a mascot (or press **Ctrl+G**) for a vault-wide **gallery** (click any creature to jump to its note). **Generate** (**Ctrl+M**) / **Delete** from the gear menu; auto-generation once a note passes a character count is opt-in under **Settings → Mascot**.
 - **Bring your own** — drop a folder of SVGs into your mascots folder (`creatures/<name>/body.svg`, plus optional `topper`/`eyes`/`mouth`/… layers) and Emerald discovers it and starts rolling your creature into the mix alongside the built-ins — no rebuild. The chosen creature is recorded in the note so it stays reproducible and travels with the file, falling back to a built-in on a machine that doesn't have the art.
 - **Stored in the note itself** — the seed lives in a hidden first line (`<!-- mascot: … -->`), invisible in any other Markdown viewer, so mascots travel with your notes and leave no separate metadata behind. Press **↑** at the top of a note to reveal the line; edit or delete the seed by hand and the creature follows.
 
@@ -129,6 +129,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 | Font size up / down / reset | `Ctrl++` / `Ctrl+-` / `Ctrl+0` |
 | Toggle sidebar | `Ctrl+\` |
 | Mascot gallery | `Ctrl+G` |
+| Generate mascot | `Ctrl+M` |
 | Quit | `Ctrl+Q` |
 
 > `Ctrl+Delete` stays the usual delete-word-forward; Delete note is the deliberate `Ctrl+Shift+Backspace`.

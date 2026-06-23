@@ -296,6 +296,7 @@ QString manualText() {
         "- **Ctrl+\\** — Toggle the sidebar (collapse / reopen the left pane)\n"
         "- **Ctrl+G** — Open the mascot gallery (every note's creature at a "
         "glance)\n"
+        "- **Ctrl+M** — Generate (or re-roll) this note's mascot\n"
         "- **Alt+←** — Back in the history\n"
         "- **Alt+→** — Next in the history\n");
 }
@@ -948,7 +949,9 @@ void MainWindow::buildActions() {
     auto *search = make(tr("Search Vault…"),
                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F),
                         &MainWindow::openSearch);
-    m_genMascotAction = make(tr("Generate Mascot"), {}, &MainWindow::generateMascot);
+    m_genMascotAction = make(tr("Generate Mascot"),
+                             QKeySequence(Qt::CTRL | Qt::Key_M),
+                             &MainWindow::generateMascot);
     m_delMascotAction = make(tr("Delete Mascot"), {}, &MainWindow::deleteMascot);
     auto *gallery = make(tr("Mascot Gallery…"),
                          QKeySequence(Qt::CTRL | Qt::Key_G),
