@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# Regenerate every committed raster icon from the master icons/EmeraldClean.png.
-# Run this whenever the master changes. Needs ImageMagick (`magick`) + python3;
-# the generated assets are committed so ordinary builds need no image tooling.
+# Regenerate every committed icon asset from the commissioned art
+# icons/NewDetailed.png. The art is first lifted onto a transparent square master
+# (icons/EmeraldClean.png) by extract_subject.py, then that master is fanned out to
+# the per-platform formats below. Run this whenever the art changes. Needs
+# ImageMagick (`magick`), python3, numpy + Pillow; the generated assets are committed
+# so ordinary builds need no image tooling.
 #
 # Usage:  packaging/make_icons.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/icons/EmeraldClean.png"
+
+echo ">> Transparent square master from commissioned art"
+python3 "$ROOT/packaging/extract_subject.py"
 
 echo ">> Windows multi-size .ico (16-256)"
 magick "$SRC" -background none \
