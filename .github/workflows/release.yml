@@ -40,7 +40,10 @@ jobs:
           # Intel. The install-qt-action Qt is already universal2, so this only
           # adds the main binary's second slice (negligible size). Single-quote
           # the semicolon list so bash keeps it as one cmake argument.
-          - { os: macos-latest,      name: macos,       cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'", qt_arch: '' }
+          # Pinned to macos-14: the migrated macos-latest (macOS 26 / AppleClang
+          # 21) SDK dropped the legacy AGL framework that Qt 6.8.1 still links,
+          # giving "ld: framework 'AGL' not found". macos-14's SDK still ships it.
+          - { os: macos-14,          name: macos,       cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'", qt_arch: '' }
           - { os: windows-latest,    name: windows,     cmake_args: '', qt_arch: '' }
     steps:
       - uses: actions/checkout@v4
