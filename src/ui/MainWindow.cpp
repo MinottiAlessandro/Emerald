@@ -294,6 +294,8 @@ QString manualText() {
         "- **Ctrl++** / **Ctrl+-** — Increase / decrease the font size "
         "(**Ctrl+0** resets it)\n"
         "- **Ctrl+\\** — Toggle the sidebar (collapse / reopen the left pane)\n"
+        "- **Ctrl+G** — Open the mascot gallery (every note's creature at a "
+        "glance)\n"
         "- **Alt+←** — Back in the history\n"
         "- **Alt+→** — Next in the history\n");
 }
@@ -948,7 +950,9 @@ void MainWindow::buildActions() {
                         &MainWindow::openSearch);
     m_genMascotAction = make(tr("Generate Mascot"), {}, &MainWindow::generateMascot);
     m_delMascotAction = make(tr("Delete Mascot"), {}, &MainWindow::deleteMascot);
-    auto *gallery = make(tr("Mascot Gallery…"), {}, &MainWindow::openMascotGallery);
+    auto *gallery = make(tr("Mascot Gallery…"),
+                         QKeySequence(Qt::CTRL | Qt::Key_G),
+                         &MainWindow::openMascotGallery);
     auto *quit = new QAction(tr("Quit"), this);
     quit->setShortcut(QKeySequence(QKeySequence::Quit));
     connect(quit, &QAction::triggered, this, &QWidget::close);
