@@ -295,11 +295,18 @@ int main(int argc, char **argv) {
               }),
               QStringLiteral("ms"));
 
-    addMetric(metrics, QStringLiteral("mascot_render_500"),
+    addMetric(metrics, QStringLiteral("mascot_render_unique_500"),
               timeMs([&] {
                   for (int i = 0; i < 500; ++i)
                       Mascot::renderPixmap(quint64(i + 1) * 11400714819323198485ULL,
                                            QString(), QSize(176, 196));
+              }),
+              QStringLiteral("ms"));
+    addMetric(metrics, QStringLiteral("mascot_render_repeated_500"),
+              timeMs([&] {
+                  const quint64 seed = 11400714819323198485ULL;
+                  for (int i = 0; i < 500; ++i)
+                      Mascot::renderPixmap(seed, QString(), QSize(176, 196));
               }),
               QStringLiteral("ms"));
     addMetric(metrics, QStringLiteral("rss_final"), peakRssKb(), QStringLiteral("KiB"));

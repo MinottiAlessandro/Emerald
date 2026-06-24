@@ -39,7 +39,8 @@ Metrics:
 - `editor_set_plain_text`: load a large note into the editor.
 - `editor_render_viewport`: render the editor viewport once.
 - `math_measure_and_paint`: repeated formula measure/paint loop.
-- `mascot_render_500`: render 500 deterministic mascot pixmaps.
+- `mascot_render_unique_500`: render 500 different deterministic mascot pixmaps.
+- `mascot_render_repeated_500`: render the same mascot 500 times to measure cache reuse.
 - `rss_after_rebuild` / `rss_final`: peak RSS where the platform exposes it.
 
 For consistent release comparisons, run on the same machine, same Qt version,
