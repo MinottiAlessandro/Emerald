@@ -1,0 +1,53 @@
+name: Performance
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/perf/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/performance.yml'
+  workflow_dispatch:
+
+env:
+  QT_VERSION: '6.8.1'
+  QT_QPA_PLATFORM: offscreen
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  perf:
+    name: Perf budget
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Configure
+        run: cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DEMERALD_BUILD_PERF_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-perf -j
+
+      - name: Run performance benchmarks
+        run: |
+          ./build-perf/emerald_perf_tests \
+            --notes 2500 \
+            --words 220 \
+            --queries 80 \
+            --json perf-ci.json
+
+      - name: Check performance budgets
+        run: python3 tests/perf/check_perf_budget.py perf-ci.json
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: emerald-perf-ci
+          path: perf-ci.json

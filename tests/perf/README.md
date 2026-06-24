@@ -16,6 +16,19 @@ Run:
 QT_QPA_PLATFORM=offscreen ./build-perf/emerald_perf_tests --json perf-1.5.1.json
 ```
 
+Check the current run against the CI absolute budgets:
+
+```bash
+python3 tests/perf/check_perf_budget.py perf-1.5.1.json
+```
+
+Compare a new release against an older baseline:
+
+```bash
+python3 tests/perf/check_perf_budget.py perf-1.5.1.json \
+  --baseline perf-1.5.0.json
+```
+
 Useful knobs:
 
 ```bash
@@ -45,3 +58,5 @@ Metrics:
 
 For consistent release comparisons, run on the same machine, same Qt version,
 same build type, and close unrelated heavy processes. Use Release builds.
+CI uses the profile in `perf-budget.json`: 2500 notes, 220 words per note, and
+80 query repetitions.

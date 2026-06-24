@@ -1,0 +1,34 @@
+{
+  "profile": {
+    "notes": 2500,
+    "words_per_note": 220,
+    "queries": 80
+  },
+  "absolute": {
+    "vault_scan": { "max": 250.0 },
+    "search_rebuild": { "max": 900.0 },
+    "startup_index_complete": { "max": 900.0 },
+    "startup_index_chunks": { "max": 120.0 },
+    "search_p95": { "max": 30.0 },
+    "search_update_note": { "max": 25.0 },
+    "editor_set_plain_text": { "max": 200.0 },
+    "editor_render_viewport": { "max": 120.0 },
+    "math_measure_and_paint": { "max": 80.0 },
+    "mascot_render_unique_500": { "max": 1500.0 },
+    "mascot_render_repeated_500": { "max": 120.0 },
+    "rss_final": { "max": 450000.0 }
+  },
+  "relative": {
+    "vault_scan": { "max_regression_percent": 20.0, "min_absolute_delta": 5.0 },
+    "search_rebuild": { "max_regression_percent": 15.0, "min_absolute_delta": 15.0 },
+    "startup_index_complete": { "max_regression_percent": 15.0, "min_absolute_delta": 15.0 },
+    "search_p95": { "max_regression_percent": 15.0, "min_absolute_delta": 1.0 },
+    "search_update_note": { "max_regression_percent": 15.0, "min_absolute_delta": 0.5 },
+    "editor_set_plain_text": { "max_regression_percent": 15.0, "min_absolute_delta": 5.0 },
+    "editor_render_viewport": { "max_regression_percent": 15.0, "min_absolute_delta": 3.0 },
+    "math_measure_and_paint": { "max_regression_percent": 15.0, "min_absolute_delta": 2.0 },
+    "mascot_render_unique_500": { "max_regression_percent": 15.0, "min_absolute_delta": 25.0 },
+    "mascot_render_repeated_500": { "max_regression_percent": 20.0, "min_absolute_delta": 2.0 },
+    "rss_final": { "max_regression_percent": 15.0, "min_absolute_delta": 20480.0 }
+  }
+}
