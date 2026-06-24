@@ -2,6 +2,7 @@
 
 #include "core/Note.h"
 #include "core/SearchIndex.h"
+#include <QDateTime>
 #include <QHash>
 #include <QMainWindow>
 #include <QPoint>
@@ -79,6 +80,15 @@ private:
     // Rescan the vault listing and update the search index only for notes whose
     // path/title changed since the previous listing.
     void rescanVaultIncremental(bool preserveExpansion = true);
+    struct NoteFileMeta {
+        QString title;
+        qint64 size = -1;
+        QDateTime modified;
+    };
+    NoteFileMeta noteFileMeta(const Note &note) const;
+    QHash<QString, NoteFileMeta> scannedNoteMeta() const;
+    void updateIndexForScannedVault(const QHash<QString, NoteFileMeta> &previous);
+    void markNoteMetaCurrent(const QString &path, const QString &title);
     // Keep the watcher's directory list in sync with the vault's folders (root
     // + sub-folders) so externally-created notes are noticed wherever they land.
     void watchVaultDirs();
@@ -168,5 +178,6 @@ private:
     QStringList m_history; // visited note paths (browser-style)
     int m_histIndex = -1;
     QHash<QString, int> m_cursorPositions; // note path -> last caret position
+    QHash<QString, NoteFileMeta> m_noteMeta; // path -> title/size/mtime snapshot
     int m_indexGeneration = 0;
 };

@@ -1324,6 +1324,7 @@ void MainWindow::openManual() {
         path = note.path;
         m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, manualText());
+        markNoteMetaCurrent(note.path, note.title);
         refreshTree();
     }
     openNoteByPath(path);
@@ -1371,6 +1372,7 @@ void MainWindow::openVault(const QString &path) {
     m_vault = new Vault(path);
     migrateLegacyMascots(path); // fold any legacy .emerald/mascots.json into notes
     m_vault->scan();
+    m_noteMeta = scannedNoteMeta();
     startIndexRebuild();
 
     m_currentPath.clear();
@@ -1564,24 +1566,58 @@ void MainWindow::rescanVaultIncremental(bool preserveExpansion) {
     if (!m_vault)
         return;
 
-    QHash<QString, QString> oldTitles;
-    for (const Note &n : m_vault->notes())
-        oldTitles.insert(n.path, n.title);
-
+    const QHash<QString, NoteFileMeta> previous = m_noteMeta;
     m_vault->scan();
-
-    QSet<QString> newPaths;
-    for (const Note &n : m_vault->notes()) {
-        newPaths.insert(n.path);
-        const auto old = oldTitles.constFind(n.path);
-        if (old == oldTitles.constEnd() || old.value() != n.title)
-            m_searchIndex.updateNote(n.path, n.title, m_vault->read(n.path));
-    }
-    for (auto it = oldTitles.constBegin(); it != oldTitles.constEnd(); ++it)
-        if (!newPaths.contains(it.key()))
-            m_searchIndex.removeNote(it.key());
-
+    updateIndexForScannedVault(previous);
     refreshTree(preserveExpansion);
+}
+
+MainWindow::NoteFileMeta MainWindow::noteFileMeta(const Note &note) const {
+    const QFileInfo info(note.path);
+    NoteFileMeta meta;
+    meta.title = note.title;
+    if (info.exists()) {
+        meta.size = info.size();
+        meta.modified = info.lastModified();
+    }
+    return meta;
+}
+
+QHash<QString, MainWindow::NoteFileMeta> MainWindow::scannedNoteMeta() const {
+    QHash<QString, NoteFileMeta> meta;
+    if (!m_vault)
+        return meta;
+    const QVector<Note> notes = m_vault->notes();
+    meta.reserve(notes.size());
+    for (const Note &note : notes)
+        meta.insert(note.path, noteFileMeta(note));
+    return meta;
+}
+
+void MainWindow::updateIndexForScannedVault(
+    const QHash<QString, NoteFileMeta> &previous) {
+    const QHash<QString, NoteFileMeta> current = scannedNoteMeta();
+    for (const Note &note : m_vault->notes()) {
+        const NoteFileMeta meta = current.value(note.path);
+        const auto old = previous.constFind(note.path);
+        if (old == previous.constEnd() || old.value().title != meta.title ||
+            old.value().size != meta.size ||
+            old.value().modified != meta.modified) {
+            m_searchIndex.updateNote(note.path, note.title,
+                                     readNoteForIndex(note.path));
+        }
+    }
+    for (auto it = previous.constBegin(); it != previous.constEnd(); ++it)
+        if (!current.contains(it.key()))
+            m_searchIndex.removeNote(it.key());
+    m_noteMeta = current;
+}
+
+void MainWindow::markNoteMetaCurrent(const QString &path, const QString &title) {
+    if (path.isEmpty())
+        return;
+    Note note{path, title};
+    m_noteMeta.insert(path, noteFileMeta(note));
 }
 
 void MainWindow::openNoteByPath(const QString &path, bool record) {
@@ -1683,8 +1719,12 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
         m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
     m_searchIndex.renamePath(oldPath, newPath);
     m_searchIndex.updateNote(newPath, newTitle, m_editor->toPlainText());
-    for (const QString &p : changedLinks)
+    m_noteMeta.remove(oldPath);
+    markNoteMetaCurrent(newPath, newTitle);
+    for (const QString &p : changedLinks) {
         m_searchIndex.updateNote(p, Vault::titleFromPath(p), m_vault->read(p));
+        markNoteMetaCurrent(p, Vault::titleFromPath(p));
+    }
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
     notify(tr("Renamed to “%1”").arg(newTitle), 3000);
@@ -1722,6 +1762,7 @@ void MainWindow::saveCurrent() {
         m_lastSavedContent = content;
         m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, content);
+        markNoteMetaCurrent(note.path, note.title);
         refreshTree();
         watchCurrent();
         selectInTree(note.path);
@@ -1738,6 +1779,7 @@ void MainWindow::saveCurrent() {
     m_vault->write(m_currentPath, content);
     m_lastSavedContent = content;
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, content);
+    markNoteMetaCurrent(m_currentPath, m_currentTitle);
 }
 
 // Watch only the note that's currently open; drop whatever we watched before.
@@ -1825,6 +1867,8 @@ void MainWindow::syncOpenNoteFromDisk() {
     m_editor->setPlainText(disk);
     m_loading = false;
     m_lastSavedContent = disk;
+    m_searchIndex.updateNote(m_currentPath, m_currentTitle, disk);
+    markNoteMetaCurrent(m_currentPath, m_currentTitle);
 
     QTextCursor c = m_editor->textCursor();
     c.setPosition(qMin(caret, int(disk.size())));
@@ -2141,20 +2185,9 @@ void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
 void MainWindow::reconcileAfterDeletion() {
     const bool currentGone =
         !m_currentPath.isEmpty() && !QFileInfo::exists(m_currentPath);
-    QHash<QString, QString> oldTitles;
-    for (const Note &n : m_vault->notes())
-        oldTitles.insert(n.path, n.title);
+    const QHash<QString, NoteFileMeta> previous = m_noteMeta;
     m_vault->scan();
-    QSet<QString> newPaths;
-    for (const Note &n : m_vault->notes()) {
-        newPaths.insert(n.path);
-        const auto old = oldTitles.constFind(n.path);
-        if (old == oldTitles.constEnd() || old.value() != n.title)
-            m_searchIndex.updateNote(n.path, n.title, m_vault->read(n.path));
-    }
-    for (auto it = oldTitles.constBegin(); it != oldTitles.constEnd(); ++it)
-        if (!newPaths.contains(it.key()))
-            m_searchIndex.removeNote(it.key());
+    updateIndexForScannedVault(previous);
     if (!currentGone) {
         // A *different* note (or a folder of them) was deleted — its path may
         // still sit in the nav history; drop it so Back/Forward can't reach a
@@ -2263,6 +2296,7 @@ void MainWindow::newNoteIn(const QString &dir) {
     const Note note = m_vault->createNoteIn(dir, name);
     m_vault->scan();
     m_searchIndex.updateNote(note.path, note.title, m_vault->read(note.path));
+    markNoteMetaCurrent(note.path, note.title);
     refreshTree();
     openNoteByPath(note.path);
 }
@@ -2314,6 +2348,7 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
     watchCurrent(); // the open note may have moved with it
 
     m_vault->scan();
+    m_noteMeta = scannedNoteMeta();
     refreshTree();
     if (!m_currentPath.isEmpty()) {
         setWindowTitle(
