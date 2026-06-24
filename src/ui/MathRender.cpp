@@ -6,6 +6,8 @@
 #include <QFontMetricsF>
 #include <QHash>
 #include <QPainter>
+#include <QPixmap>
+#include <QPixmapCache>
 #include <QRectF>
 #include <memory>
 #include <vector>
@@ -795,6 +797,61 @@ BoxPtr build(const QString &body) {
     return parser.parseRow(0);
 }
 
+QString bodyKey(const QString &body) {
+    return QString::number(body.size()) + QLatin1Char(':') +
+           QString::number(qHash(body, 0x8d12e7U), 16);
+}
+
+QString formulaKey(const QString &prefix, const QString &body, const QFont &font,
+                   bool display) {
+    return prefix + QLatin1Char(':') + bodyKey(body) + QLatin1Char(':') +
+           font.toString() + QLatin1Char(':') + (display ? QLatin1Char('d')
+                                                         : QLatin1Char('i'));
+}
+
+QSizeF measureUncached(const QString &body, const QFont &font, bool display) {
+    BoxPtr tree = build(body);
+    layout(*tree, font, display);
+    return QSizeF(tree->w, tree->asc + tree->desc);
+}
+
+void paintUncached(QPainter &p, const QRectF &rect, const QString &body,
+                   const QFont &font, const QColor &color, bool display,
+                   MathRender::Align align) {
+    BoxPtr tree = build(body);
+    layout(*tree, font, display);
+    const double natW = tree->w;
+    const double natH = tree->asc + tree->desc;
+    if (natW <= 0.0 || natH <= 0.0)
+        return;
+
+    const double scale =
+        qMin(1.0, qMin(rect.width() / natW, rect.height() / natH));
+    double x, baseline;
+    if (align == MathRender::Align::Display) {
+        // Centre the formula both ways in its block.
+        x = rect.left() + (rect.width() - natW * scale) / 2.0;
+        baseline =
+            rect.top() + (rect.height() - natH * scale) / 2.0 + tree->asc * scale;
+    } else {
+        // Inline: sit on the surrounding text baseline, left-aligned, so any
+        // reserved slack falls to the right and reads as ordinary spacing. A
+        // formula taller than the line is top-aligned so it stays in the line
+        // box rather than overlapping the line above.
+        QFontMetricsF fm(font);
+        const double scaledAsc = tree->asc * scale;
+        x = rect.left();
+        baseline = scaledAsc > fm.ascent() ? rect.top() + scaledAsc
+                                           : rect.top() + fm.ascent();
+    }
+    p.save();
+    p.setPen(color);
+    p.translate(x, baseline);
+    p.scale(scale, scale);
+    paintBox(p, *tree, 0.0, 0.0); // baseline at y = 0
+    p.restore();
+}
+
 } // namespace
 
 namespace MathRender {
@@ -852,46 +909,50 @@ QVector<Span> spans(const QString &line) {
 
 QSizeF measure(const QString &body, const QFont &font, bool display) {
     EMERALD_PROFILE_SCOPE("MathRender::measure");
-    BoxPtr tree = build(body);
-    layout(*tree, font, display);
-    return QSizeF(tree->w, tree->asc + tree->desc);
+    static QHash<QString, QSizeF> cache;
+    static QStringList order;
+    const QString key = formulaKey(QStringLiteral("measure"), body, font, display);
+    const auto it = cache.constFind(key);
+    if (it != cache.constEnd())
+        return it.value();
+    const QSizeF size = measureUncached(body, font, display);
+    cache.insert(key, size);
+    order << key;
+    constexpr int kMaxEntries = 512;
+    while (order.size() > kMaxEntries)
+        cache.remove(order.takeFirst());
+    return size;
 }
 
 void paint(QPainter &p, const QRectF &rect, const QString &body,
            const QFont &font, const QColor &color, Align align) {
     EMERALD_PROFILE_SCOPE("MathRender::paint");
-    BoxPtr tree = build(body);
-    layout(*tree, font, align == Align::Display);
-    const double natW = tree->w;
-    const double natH = tree->asc + tree->desc;
-    if (natW <= 0.0 || natH <= 0.0)
+    const QSize pixelSize =
+        (rect.size() * p.device()->devicePixelRatioF()).toSize();
+    if (pixelSize.isEmpty())
         return;
-
-    const double scale =
-        qMin(1.0, qMin(rect.width() / natW, rect.height() / natH));
-    double x, baseline;
-    if (align == Align::Display) {
-        // Centre the formula both ways in its block.
-        x = rect.left() + (rect.width() - natW * scale) / 2.0;
-        baseline =
-            rect.top() + (rect.height() - natH * scale) / 2.0 + tree->asc * scale;
-    } else {
-        // Inline: sit on the surrounding text baseline, left-aligned, so any
-        // reserved slack falls to the right and reads as ordinary spacing. A
-        // formula taller than the line is top-aligned so it stays in the line
-        // box rather than overlapping the line above.
-        QFontMetricsF fm(font);
-        const double scaledAsc = tree->asc * scale;
-        x = rect.left();
-        baseline = scaledAsc > fm.ascent() ? rect.top() + scaledAsc
-                                           : rect.top() + fm.ascent();
+    const bool display = align == Align::Display;
+    const QString key = formulaKey(QStringLiteral("paint"), body, font, display) +
+                        QLatin1Char(':') + color.name(QColor::HexArgb) +
+                        QLatin1Char(':') + QString::number(pixelSize.width()) +
+                        QLatin1Char('x') + QString::number(pixelSize.height()) +
+                        QLatin1Char(':') +
+                        QString::number(p.device()->devicePixelRatioF(), 'f', 2);
+    QPixmap cached;
+    if (QPixmapCache::find(key, &cached)) {
+        p.drawPixmap(rect.topLeft(), cached);
+        return;
     }
-    p.save();
-    p.setPen(color);
-    p.translate(x, baseline);
-    p.scale(scale, scale);
-    paintBox(p, *tree, 0.0, 0.0); // baseline at y = 0
-    p.restore();
+
+    QPixmap pm(pixelSize);
+    pm.setDevicePixelRatio(p.device()->devicePixelRatioF());
+    pm.fill(Qt::transparent);
+    QPainter cachePainter(&pm);
+    paintUncached(cachePainter, QRectF(QPointF(0, 0), rect.size()), body, font,
+                  color, display, align);
+    cachePainter.end();
+    QPixmapCache::insert(key, pm);
+    p.drawPixmap(rect.topLeft(), pm);
 }
 
 } // namespace MathRender

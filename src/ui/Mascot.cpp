@@ -1465,6 +1465,10 @@ void Mascot::paintEvent(QPaintEvent *) {
         return;
     const double bob = m_hovered ? std::sin(m_tick * 0.22) * 2.5 : 0.0;
     QPainter p(this);
+    if (!m_hovered) {
+        p.drawPixmap(0, 0, renderPixmap(m_seed, m_kind, size()));
+        return;
+    }
     if (drawImageMascot(p, m_seed, width(), height(), bob))
         return;
     const bool blink = m_hovered && (m_tick % 78) < 4;
@@ -1472,6 +1476,19 @@ void Mascot::paintEvent(QPaintEvent *) {
 }
 
 QPixmap Mascot::renderPixmap(quint64 seed, const QString &kind, QSize size) {
+    const bool imageMode =
+        QSettings().value(QStringLiteral("mascotImageMode"), false).toBool();
+    const QString imagePath =
+        imageMode ? MascotCatalog::shared().imageForSeed(seed) : QString();
+    const QString key =
+        QStringLiteral("mascot:") + QString::number(seed) + QLatin1Char(':') +
+        kind + QLatin1Char(':') + QString::number(size.width()) +
+        QLatin1Char('x') + QString::number(size.height()) + QLatin1Char(':') +
+        (imageMode ? imagePath : QStringLiteral("procedural"));
+    QPixmap cached;
+    if (QPixmapCache::find(key, &cached))
+        return cached;
+
     QImage img(size, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     if (seed != 0) {
@@ -1479,5 +1496,7 @@ QPixmap Mascot::renderPixmap(quint64 seed, const QString &kind, QSize size) {
         if (!drawImageMascot(p, seed, size.width(), size.height(), 0.0))
             drawCreature(p, seed, kind, size.width(), size.height(), 0.0, false);
     }
-    return QPixmap::fromImage(img);
+    QPixmap pm = QPixmap::fromImage(img);
+    QPixmapCache::insert(key, pm);
+    return pm;
 }
