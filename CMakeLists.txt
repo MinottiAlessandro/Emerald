@@ -180,3 +180,38 @@ else()
   set(CPACK_PACKAGE_FILE_NAME "Emerald-linux-${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 include(CPack)
+
+# --- Development performance benchmarks -----------------------------------
+# Not built for release packages. Enable with:
+#   cmake -S . -B build-perf -DEMERALD_BUILD_PERF_TESTS=ON
+#   cmake --build build-perf -j
+#   QT_QPA_PLATFORM=offscreen ./build-perf/emerald_perf_tests --json perf.json
+option(EMERALD_BUILD_PERF_TESTS "Build development-only performance benchmarks" OFF)
+if(EMERALD_BUILD_PERF_TESTS)
+  add_executable(emerald_perf_tests
+    tests/perf/PerfBench.cpp
+    src/core/Note.h
+    src/core/Vault.h
+    src/core/Vault.cpp
+    src/core/SearchIndex.h
+    src/core/SearchIndex.cpp
+    src/core/WikiLink.h
+    src/core/WikiLink.cpp
+    src/core/MascotSeed.h
+    src/core/Perf.h
+    src/ui/MarkdownEditor.h
+    src/ui/MarkdownEditor.cpp
+    src/ui/MarkdownHighlighter.h
+    src/ui/MarkdownHighlighter.cpp
+    src/ui/MathRender.h
+    src/ui/MathRender.cpp
+    src/ui/Mascot.h
+    src/ui/Mascot.cpp
+    src/ui/MascotCatalog.h
+    src/ui/MascotCatalog.cpp
+    resources/resources.qrc
+  )
+  target_include_directories(emerald_perf_tests PRIVATE src)
+  target_link_libraries(emerald_perf_tests PRIVATE Qt6::Widgets Qt6::Svg)
+  target_compile_definitions(emerald_perf_tests PRIVATE EMERALD_VERSION="${PROJECT_VERSION}")
+endif()
