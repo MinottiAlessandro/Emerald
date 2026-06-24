@@ -1130,6 +1130,7 @@ void MarkdownEditor::moveLines(bool up) {
 }
 
 void MarkdownEditor::forEachCodeBlock(
+    const QRectF &clip,
     const std::function<void(const CodeBlock &)> &fn) const {
     const qreal docMargin = document()->documentMargin();
     const qreal left = docMargin * 0.5;
@@ -1145,6 +1146,16 @@ void MarkdownEditor::forEachCodeBlock(
     const QTextCursor tc = textCursor();
     const int selFirst = document()->findBlock(tc.selectionStart()).blockNumber();
     const int selLast = document()->findBlock(tc.selectionEnd()).blockNumber();
+    QTextBlock start = firstVisibleBlock();
+    if (!start.isValid())
+        return;
+    // If the viewport starts inside a fenced region, walk back to its opening
+    // fence so the block geometry is complete. This bounds the common case to
+    // visible content while still drawing a block whose header is above view.
+    while (start.previous().isValid() && start.userState() == 1 &&
+           start.previous().userState() == 1)
+        start = start.previous();
+
     bool inCode = false;
     qreal headerTop = 0, headerBottom = 0;
     int openNum = 0;
@@ -1154,6 +1165,8 @@ void MarkdownEditor::forEachCodeBlock(
         CodeBlock cb;
         cb.header = QRectF(left, headerTop, right - left, headerBottom - headerTop);
         cb.body = QRectF(left, headerBottom, right - left, bodyBottom - headerBottom);
+        if (!cb.header.united(cb.body).intersects(clip))
+            return;
         const qreal s = 16;
         cb.copyBtn = QRectF(cb.header.right() - s - 8,
                             cb.header.center().y() - s / 2, s, s);
@@ -1166,9 +1179,14 @@ void MarkdownEditor::forEachCodeBlock(
         fn(cb);
     };
 
-    for (QTextBlock b = document()->firstBlock(); b.isValid(); b = b.next()) {
+    for (QTextBlock b = start; b.isValid(); b = b.next()) {
         const bool isCode = b.userState() == 1; // MarkdownHighlighter::StateCode
         const QRectF geo = blockBoundingGeometry(b).translated(contentOffset());
+        if (geo.top() > clip.bottom()) {
+            if (inCode)
+                emitRegion(geo.top(), b.blockNumber());
+            break;
+        }
         if (isCode && !inCode) { // opening fence = the header row
             inCode = true;
             headerTop = geo.top();
@@ -1193,7 +1211,8 @@ void MarkdownEditor::forEachCodeBlock(
 
 bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
     bool copied = false;
-    forEachCodeBlock([&](const CodeBlock &cb) {
+    const QRectF clip(QPointF(pos), QSizeF(1, 1));
+    forEachCodeBlock(clip, [&](const CodeBlock &cb) {
         if (!copied && !cb.active && cb.copyBtn.contains(pos)) {
             QApplication::clipboard()->setText(cb.code);
             copied = true;
@@ -1206,7 +1225,8 @@ bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
 
 bool MarkdownEditor::isOverCopyButton(const QPoint &pos) const {
     bool over = false;
-    forEachCodeBlock([&](const CodeBlock &cb) {
+    const QRectF clip(QPointF(pos), QSizeF(1, 1));
+    forEachCodeBlock(clip, [&](const CodeBlock &cb) {
         if (!cb.active && cb.copyBtn.contains(pos))
             over = true;
     });
@@ -1685,7 +1705,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         QPainter bg(viewport());
         bg.setRenderHint(QPainter::Antialiasing);
         bg.setPen(Qt::NoPen);
-        forEachCodeBlock([&](const CodeBlock &cb) {
+        forEachCodeBlock(event->rect(), [&](const CodeBlock &cb) {
             const QRectF full(cb.header.left(), cb.header.top(), cb.header.width(),
                               cb.body.bottom() - cb.header.top());
             if (!full.intersects(event->rect()))
@@ -1854,8 +1874,16 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         QRectF regionGeo;
         QStringList body;
         int openNum = 0;
-        for (QTextBlock b = document()->firstBlock(); b.isValid();
-             b = b.next()) {
+        QTextBlock start = firstVisibleBlock();
+        if (start.isValid()) {
+            if (start.previous().isValid() && start.previous().userState() == 2) {
+                start = start.previous();
+                while (start.previous().isValid() &&
+                       start.previous().userState() == 2)
+                    start = start.previous();
+            }
+        }
+        for (QTextBlock b = start; b.isValid(); b = b.next()) {
             const bool mathy = b.userState() == 2; // StateMath: open / middle
             const QRectF geo =
                 blockBoundingGeometry(b).translated(contentOffset());
@@ -1884,6 +1912,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 flush(b.blockNumber());
                 inMath = false;
             }
+            if (geo.top() > event->rect().bottom() && !inMath)
+                break;
         }
         if (inMath) { // a block left open at end of document
             const bool busy = selLast >= openNum;
@@ -2001,7 +2031,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     }
 
     // Code-block header content: language label on the left, copy button right.
-    forEachCodeBlock([&](const CodeBlock &cb) {
+    forEachCodeBlock(event->rect(), [&](const CodeBlock &cb) {
         if (cb.active || !cb.header.intersects(event->rect()))
             return; // while editing, the raw fence shows instead
         QFont lf = font();

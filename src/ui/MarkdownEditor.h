@@ -128,8 +128,9 @@ private:
         QString code;     // the block's inner lines
         bool active = false; // the caret is inside this block (show raw markup)
     };
-    // Visit each fenced code block's geometry/content.
-    void forEachCodeBlock(const std::function<void(const CodeBlock &)> &fn) const;
+    // Visit fenced code blocks that intersect `clip` in viewport coordinates.
+    void forEachCodeBlock(const QRectF &clip,
+                          const std::function<void(const CodeBlock &)> &fn) const;
     // True for a line *inside* a fenced code block (not a fence itself). Such
     // lines must render verbatim: no bullets, rules, headings or list-continue.
     bool insideCodeBlock(const QTextBlock &block) const;
