@@ -27,6 +27,9 @@ public:
     void rebuild(const Vault &vault);
     void updateNote(const QString &path, const QString &title,
                     const QString &content);
+    void removeNote(const QString &path);
+    void renamePath(const QString &oldPath, const QString &newPath,
+                    const QString &newTitle = QString());
 
     QList<Result> search(const QString &query, int limit = 50) const;
 

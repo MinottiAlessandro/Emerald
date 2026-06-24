@@ -91,6 +91,32 @@ void SearchIndex::updateNote(const QString &path, const QString &title,
     indexDoc(id);
 }
 
+void SearchIndex::removeNote(const QString &path) {
+    auto it = m_byPath.find(path);
+    if (it == m_byPath.end())
+        return;
+    const int id = it.value();
+    unindexDoc(id);
+    m_byPath.erase(it);
+    m_docs.remove(id);
+}
+
+void SearchIndex::renamePath(const QString &oldPath, const QString &newPath,
+                             const QString &newTitle) {
+    if (oldPath == newPath && newTitle.isEmpty())
+        return;
+    auto it = m_byPath.find(oldPath);
+    if (it == m_byPath.end())
+        return;
+    const int id = it.value();
+    m_byPath.erase(it);
+    m_byPath.insert(newPath, id);
+    Doc &doc = m_docs[id];
+    doc.path = newPath;
+    if (!newTitle.isEmpty())
+        doc.title = newTitle;
+}
+
 void SearchIndex::ensureSortedTerms() const {
     if (!m_termsDirty)
         return;
