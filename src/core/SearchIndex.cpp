@@ -57,11 +57,7 @@ void SearchIndex::unindexDoc(int id) {
 
 void SearchIndex::rebuild(const Vault &vault) {
     EMERALD_PROFILE_SCOPE("SearchIndex::rebuild");
-    m_docs.clear();
-    m_byPath.clear();
-    m_postings.clear();
-    m_nextId = 0;
-    m_termsDirty = true;
+    clear();
     for (const Note &n : vault.notes()) {
         const int id = m_nextId++;
         // Drop a leading mascot header line so it doesn't pollute the index.
@@ -70,6 +66,15 @@ void SearchIndex::rebuild(const Vault &vault) {
         m_byPath.insert(n.path, id);
         indexDoc(id);
     }
+}
+
+void SearchIndex::clear() {
+    m_docs.clear();
+    m_byPath.clear();
+    m_postings.clear();
+    m_nextId = 0;
+    m_termsDirty = true;
+    m_sortedTerms.clear();
 }
 
 void SearchIndex::updateNote(const QString &path, const QString &title,

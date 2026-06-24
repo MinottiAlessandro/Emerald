@@ -20,6 +20,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -490,6 +491,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_reloadTimer->setInterval(150);
     connect(m_reloadTimer, &QTimer::timeout, this,
             &MainWindow::syncOpenNoteFromDisk);
+    m_indexTimer = new QTimer(this);
+    m_indexTimer->setInterval(0);
+    connect(m_indexTimer, &QTimer::timeout, this, &MainWindow::indexPendingNotes);
     connect(m_editor, &MarkdownEditor::textChanged, this, [this] {
         if (!m_loading) {
             m_saveTimer->start();
@@ -1351,7 +1355,7 @@ void MainWindow::openVault(const QString &path) {
     m_vault = new Vault(path);
     migrateLegacyMascots(path); // fold any legacy .emerald/mascots.json into notes
     m_vault->scan();
-    m_searchIndex.rebuild(*m_vault);
+    startIndexRebuild();
 
     m_currentPath.clear();
     m_currentTitle.clear();
@@ -1371,6 +1375,38 @@ void MainWindow::openVault(const QString &path) {
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
     openInitialNote();
     refreshMascot(); // hide a stale mascot if the new vault opened no note
+}
+
+void MainWindow::startIndexRebuild() {
+    m_searchIndex.clear();
+    m_pendingIndexNotes = m_vault ? m_vault->notes() : QVector<Note>();
+    m_pendingIndexPos = 0;
+    if (m_pendingIndexNotes.isEmpty()) {
+        m_indexTimer->stop();
+        return;
+    }
+    m_indexTimer->start();
+}
+
+void MainWindow::indexPendingNotes() {
+    if (!m_vault || m_pendingIndexPos >= m_pendingIndexNotes.size()) {
+        m_indexTimer->stop();
+        return;
+    }
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    int indexed = 0;
+    while (m_pendingIndexPos < m_pendingIndexNotes.size()) {
+        const Note note = m_pendingIndexNotes.at(m_pendingIndexPos++);
+        if (QFileInfo::exists(note.path))
+            m_searchIndex.updateNote(note.path, note.title, m_vault->read(note.path));
+        ++indexed;
+        if (indexed >= 24 || elapsed.elapsed() >= 8)
+            break;
+    }
+    if (m_pendingIndexPos >= m_pendingIndexNotes.size())
+        m_indexTimer->stop();
 }
 
 // One-time upgrade from the old per-vault store: read each saved seed and write

@@ -25,6 +25,7 @@ public:
     };
 
     void rebuild(const Vault &vault);
+    void clear();
     void updateNote(const QString &path, const QString &title,
                     const QString &content);
     void removeNote(const QString &path);
