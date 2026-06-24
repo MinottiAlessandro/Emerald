@@ -48,6 +48,7 @@ private:
         QString title;
         QString content;
         QStringList terms; // unique terms, kept so the doc can be un-indexed
+        QHash<QString, int> termFreq; // lowercased term -> token frequency
     };
 
     void indexDoc(int id);

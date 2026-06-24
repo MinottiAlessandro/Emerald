@@ -31,8 +31,10 @@ QStringList SearchIndex::tokenize(const QString &text) {
 void SearchIndex::indexDoc(int id) {
     Doc &doc = m_docs[id];
     const QStringList all = tokenize(doc.title + QLatin1Char(' ') + doc.content);
-    const QSet<QString> unique(all.begin(), all.end());
-    doc.terms = QStringList(unique.begin(), unique.end());
+    doc.termFreq.clear();
+    for (const QString &term : all)
+        ++doc.termFreq[term];
+    doc.terms = QStringList(doc.termFreq.keyBegin(), doc.termFreq.keyEnd());
     for (const QString &term : doc.terms) {
         QVector<int> &posting = m_postings[term];
         if (posting.isEmpty())
@@ -61,8 +63,8 @@ void SearchIndex::rebuild(const Vault &vault) {
     for (const Note &n : vault.notes()) {
         const int id = m_nextId++;
         // Drop a leading mascot header line so it doesn't pollute the index.
-        m_docs.insert(id,
-                      Doc{n.path, n.title, MascotSeed::strip(vault.read(n.path)), {}});
+        m_docs.insert(id, Doc{n.path, n.title,
+                              MascotSeed::strip(vault.read(n.path)), {}, {}});
         m_byPath.insert(n.path, id);
         indexDoc(id);
     }
@@ -89,9 +91,10 @@ void SearchIndex::updateNote(const QString &path, const QString &title,
         doc.title = title;
         doc.content = body;
         doc.terms.clear();
+        doc.termFreq.clear();
     } else {
         id = m_nextId++;
-        m_docs.insert(id, Doc{path, title, body, {}});
+        m_docs.insert(id, Doc{path, title, body, {}, {}});
         m_byPath.insert(path, id);
     }
     indexDoc(id);
@@ -141,15 +144,25 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
 
     // Every token is treated as a prefix; a note must match all of them.
     QSet<int> candidates;
+    QHash<int, int> frequencyScore;
     bool first = true;
     for (const QString &token : tokens) {
         QSet<int> forToken;
         auto lo = std::lower_bound(m_sortedTerms.cbegin(), m_sortedTerms.cend(),
                                    token);
         for (auto it = lo; it != m_sortedTerms.cend() && it->startsWith(token);
-             ++it)
-            for (int id : m_postings.value(*it))
+             ++it) {
+            const QString term = *it;
+            const auto posting = m_postings.constFind(term);
+            if (posting == m_postings.constEnd())
+                continue;
+            for (int id : *posting) {
                 forToken.insert(id);
+                const auto doc = m_docs.constFind(id);
+                if (doc != m_docs.constEnd())
+                    frequencyScore[id] += doc->termFreq.value(term);
+            }
+        }
         if (first) {
             candidates = forToken;
             first = false;
@@ -164,19 +177,12 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
     results.reserve(candidates.size());
     for (int id : candidates) {
         const Doc &doc = m_docs[id];
-        int score = 0;
+        int score = frequencyScore.value(id);
         for (const QString &token : tokens) {
             if (doc.title.contains(token, Qt::CaseInsensitive))
                 score += 100; // title hits rank first
-            int from = 0;
-            while ((from = doc.content.indexOf(token, from, Qt::CaseInsensitive)) !=
-                   -1) {
-                ++score;
-                from += token.length();
-            }
         }
-        results.append({doc.path, doc.title, makeSnippet(doc.content, tokens.first()),
-                        score});
+        results.append({doc.path, doc.title, QString(), score});
     }
     std::sort(results.begin(), results.end(),
               [](const Result &a, const Result &b) {
@@ -186,6 +192,11 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
               });
     if (results.size() > limit)
         results.erase(results.begin() + limit, results.end());
+    for (Result &r : results) {
+        const auto it = m_byPath.constFind(r.path);
+        if (it != m_byPath.constEnd())
+            r.snippet = makeSnippet(m_docs[*it].content, tokens.first());
+    }
     return results;
 }
 
