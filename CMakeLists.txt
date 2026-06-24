@@ -48,6 +48,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/SearchIndex.cpp
   src/core/WikiLink.h
   src/core/WikiLink.cpp
+  src/core/Perf.h
   src/core/MascotSeed.h
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp

@@ -1,5 +1,6 @@
 #include "Vault.h"
 
+#include "Perf.h"
 #include "WikiLink.h"
 #include <QDir>
 #include <QDirIterator>
@@ -15,6 +16,7 @@ QString Vault::titleFromPath(const QString &path) {
 }
 
 void Vault::scan() {
+    EMERALD_PROFILE_SCOPE("Vault::scan");
     m_notes.clear();
     QDirIterator it(m_root, {QStringLiteral("*.md")}, QDir::Files,
                     QDirIterator::Subdirectories);

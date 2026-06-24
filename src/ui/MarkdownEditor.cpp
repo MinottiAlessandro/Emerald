@@ -3,6 +3,7 @@
 #include "MarkdownHighlighter.h"
 #include "MathRender.h"
 #include "core/MascotSeed.h"
+#include "core/Perf.h"
 #include "core/WikiLink.h"
 
 #include <QAbstractItemView>
@@ -1646,6 +1647,7 @@ void MarkdownEditor::moveToTableCell(const QTextBlock &block, int cellIdx) {
 }
 
 void MarkdownEditor::resizeEvent(QResizeEvent *event) {
+    EMERALD_PROFILE_SCOPE("MarkdownEditor::resizeEvent");
     // Remember which block tops the viewport before the base relayout. The
     // document can scroll past its end (see the over-scroll range set up in the
     // constructor), and a width change rewraps every line; left alone, the
@@ -1676,6 +1678,7 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
 }
 
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
+    EMERALD_PROFILE_SCOPE("MarkdownEditor::paintEvent");
     // Code-block backgrounds go behind the text: a rounded body with a thin
     // header bar (rounded top corners) in a lighter complementary colour.
     {

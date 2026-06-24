@@ -1,5 +1,6 @@
 #include "MathRender.h"
 
+#include "core/Perf.h"
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
@@ -850,6 +851,7 @@ QVector<Span> spans(const QString &line) {
 }
 
 QSizeF measure(const QString &body, const QFont &font, bool display) {
+    EMERALD_PROFILE_SCOPE("MathRender::measure");
     BoxPtr tree = build(body);
     layout(*tree, font, display);
     return QSizeF(tree->w, tree->asc + tree->desc);
@@ -857,6 +859,7 @@ QSizeF measure(const QString &body, const QFont &font, bool display) {
 
 void paint(QPainter &p, const QRectF &rect, const QString &body,
            const QFont &font, const QColor &color, Align align) {
+    EMERALD_PROFILE_SCOPE("MathRender::paint");
     BoxPtr tree = build(body);
     layout(*tree, font, align == Align::Display);
     const double natW = tree->w;

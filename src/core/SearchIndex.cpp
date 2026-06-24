@@ -1,6 +1,7 @@
 #include "SearchIndex.h"
 
 #include "MascotSeed.h"
+#include "Perf.h"
 #include "Vault.h"
 #include <QRegularExpression>
 #include <algorithm>
@@ -54,6 +55,7 @@ void SearchIndex::unindexDoc(int id) {
 }
 
 void SearchIndex::rebuild(const Vault &vault) {
+    EMERALD_PROFILE_SCOPE("SearchIndex::rebuild");
     m_docs.clear();
     m_byPath.clear();
     m_postings.clear();
@@ -99,6 +101,7 @@ void SearchIndex::ensureSortedTerms() const {
 
 QList<SearchIndex::Result> SearchIndex::search(const QString &query,
                                                int limit) const {
+    EMERALD_PROFILE_SCOPE("SearchIndex::search");
     const QStringList tokens = tokenize(query);
     if (tokens.isEmpty())
         return {};
@@ -155,6 +158,7 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
 
 QList<SearchIndex::Result> SearchIndex::searchTitles(const QString &query,
                                                      int limit) const {
+    EMERALD_PROFILE_SCOPE("SearchIndex::searchTitles");
     const QStringList tokens = tokenize(query);
     if (tokens.isEmpty())
         return {};

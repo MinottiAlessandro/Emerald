@@ -4,6 +4,9 @@
 #include <QByteArray>
 #include <QFile>
 #include <QIcon>
+#include <QLoggingCategory>
+
+Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf")
 
 int main(int argc, char *argv[]) {
     // Composite the widget backing store on the GPU (Qt's RHI path). This makes
