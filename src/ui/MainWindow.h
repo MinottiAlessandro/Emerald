@@ -15,8 +15,9 @@ class MarkdownEditor;
 class Mascot;
 class SearchPopup;
 class Updater;
-class QTreeWidget;
-class QTreeWidgetItem;
+class QAbstractItemModel;
+class QTreeView;
+class QModelIndex;
 class QLineEdit;
 class QLabel;
 class QTimer;
@@ -118,7 +119,7 @@ private:
     // suppression is local too.
     bool autoMascotOff(const QString &path) const;
     void setAutoMascotOff(const QString &path, bool off);
-    void onTreeItemClicked(QTreeWidgetItem *item, int column);
+    void onTreeIndexClicked(const QModelIndex &index);
     void onTreeContextMenu(const QPoint &pos);
     void newNoteIn(const QString &dir);
     void newFolderIn(const QString &dir);
@@ -153,7 +154,8 @@ private:
     QTimer *m_toastTimer = nullptr;
     QFrame *m_findBar = nullptr;       // in-note find overlay
     QLineEdit *m_findInput = nullptr;
-    QTreeWidget *m_noteTree = nullptr;
+    QTreeView *m_noteTree = nullptr;
+    QAbstractItemModel *m_noteTreeModel = nullptr;
     SearchPopup *m_searchPopup = nullptr;
     Updater *m_updater = nullptr;
     QTimer *m_saveTimer = nullptr;

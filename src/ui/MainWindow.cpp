@@ -9,6 +9,7 @@
 #include "core/Vault.h"
 
 #include <QAbstractItemView>
+#include <QAbstractItemModel>
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -36,6 +37,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QInputDialog>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -48,6 +50,7 @@
 #include <QSet>
 #include <QIcon>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPainter>
 #include <QPixmap>
 #include <QPointer>
@@ -57,12 +60,13 @@
 #include <QThread>
 #include <QTimer>
 #include <QToolButton>
-#include <QTreeWidget>
+#include <QTreeView>
 #include <QVariant>
-#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
+#include <memory>
+#include <vector>
 
 namespace {
 constexpr int kPathRole = Qt::UserRole;     // leaf: the note's file path
@@ -306,11 +310,195 @@ QString manualText() {
         "- **Alt+→** — Next in the history\n");
 }
 
+const QIcon &chevronIcon(bool expanded);
+
+struct NoteTreeNode {
+    QString text;
+    QString path;
+    QString dir;
+    NoteTreeNode *parent = nullptr;
+    std::vector<std::unique_ptr<NoteTreeNode>> children;
+    int row = 0;
+
+    bool isFolder() const { return !dir.isEmpty(); }
+};
+
+class NoteTreeModel : public QAbstractItemModel {
+public:
+    explicit NoteTreeModel(QObject *parent = nullptr) : QAbstractItemModel(parent) {}
+
+    QModelIndex index(int row, int column,
+                      const QModelIndex &parent = QModelIndex()) const override {
+        if (column != 0 || row < 0)
+            return QModelIndex();
+        const NoteTreeNode *parentNode = nodeFor(parent);
+        if (row >= static_cast<int>(parentNode->children.size()))
+            return QModelIndex();
+        return createIndex(row, column, parentNode->children.at(row).get());
+    }
+
+    QModelIndex parent(const QModelIndex &child) const override {
+        if (!child.isValid())
+            return QModelIndex();
+        const auto *node = static_cast<NoteTreeNode *>(child.internalPointer());
+        if (!node || !node->parent || node->parent == &m_root)
+            return QModelIndex();
+        return createIndex(node->parent->row, 0, node->parent);
+    }
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override {
+        return nodeFor(parent)->children.size();
+    }
+
+    int columnCount(const QModelIndex & = QModelIndex()) const override { return 1; }
+
+    QVariant data(const QModelIndex &index, int role) const override {
+        if (!index.isValid())
+            return QVariant();
+        const auto *node = static_cast<NoteTreeNode *>(index.internalPointer());
+        if (!node)
+            return QVariant();
+        if (role == Qt::DisplayRole)
+            return node->text;
+        if (role == Qt::DecorationRole && node->isFolder())
+            return chevronIcon(m_expandedDirs.contains(node->dir));
+        if (role == kPathRole)
+            return node->path;
+        if (role == kDirRole)
+            return node->dir;
+        return QVariant();
+    }
+
+    Qt::ItemFlags flags(const QModelIndex &index) const override {
+        if (!index.isValid())
+            return Qt::ItemIsDropEnabled;
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled |
+               Qt::ItemIsDropEnabled;
+    }
+
+    QStringList mimeTypes() const override {
+        return {QStringLiteral("application/x-emerald-note-tree")};
+    }
+
+    QMimeData *mimeData(const QModelIndexList &indexes) const override {
+        auto *mime = new QMimeData;
+        QStringList paths;
+        for (const QModelIndex &index : indexes) {
+            if (index.column() != 0)
+                continue;
+            const QString dir = data(index, kDirRole).toString();
+            const QString path = dir.isEmpty() ? data(index, kPathRole).toString() : dir;
+            if (!path.isEmpty() && !paths.contains(path))
+                paths << path;
+        }
+        mime->setData(QStringLiteral("application/x-emerald-note-tree"),
+                      paths.join(QLatin1Char('\n')).toUtf8());
+        return mime;
+    }
+
+    Qt::DropActions supportedDragActions() const override { return Qt::MoveAction; }
+    Qt::DropActions supportedDropActions() const override { return Qt::MoveAction; }
+
+    void rebuild(const QString &rootPath, const QStringList &folders,
+                 const QVector<Note> &notes, const QSet<QString> &expandedDirs) {
+        beginResetModel();
+        m_root.children.clear();
+        m_noteNodes.clear();
+        m_dirNodes.clear();
+        m_expandedDirs = expandedDirs;
+
+        const QDir rootDir(rootPath);
+        auto appendChild = [](NoteTreeNode *parent, const QString &text,
+                              const QString &path, const QString &dir) {
+            auto child = std::make_unique<NoteTreeNode>();
+            child->text = text;
+            child->path = path;
+            child->dir = dir;
+            child->parent = parent;
+            child->row = parent->children.size();
+            NoteTreeNode *raw = child.get();
+            parent->children.push_back(std::move(child));
+            return raw;
+        };
+
+        std::function<NoteTreeNode *(const QString &)> ensure =
+            [&](const QString &rel) -> NoteTreeNode * {
+            if (rel.isEmpty() || rel == QStringLiteral("."))
+                return &m_root;
+            if (auto it = m_relDirNodes.constFind(rel); it != m_relDirNodes.constEnd())
+                return it.value();
+            const int slash = rel.lastIndexOf(QLatin1Char('/'));
+            NoteTreeNode *parent =
+                ensure(slash < 0 ? QString() : rel.left(slash));
+            const QString text = slash < 0 ? rel : rel.mid(slash + 1);
+            NoteTreeNode *node =
+                appendChild(parent, text, QString(), rootDir.filePath(rel));
+            m_relDirNodes.insert(rel, node);
+            m_dirNodes.insert(node->dir, node);
+            return node;
+        };
+
+        m_relDirNodes.clear();
+        for (const QString &rel : folders)
+            ensure(rel);
+
+        for (const Note &note : notes) {
+            const QString dirRel =
+                rootDir.relativeFilePath(QFileInfo(note.path).absolutePath());
+            NoteTreeNode *leaf = appendChild(ensure(dirRel), note.title, note.path,
+                                             QString());
+            m_noteNodes.insert(note.path, leaf);
+        }
+        endResetModel();
+    }
+
+    QModelIndex indexForPath(const QString &path) const {
+        return indexForNode(m_noteNodes.value(path, nullptr));
+    }
+
+    QModelIndex indexForDir(const QString &dir) const {
+        return indexForNode(m_dirNodes.value(dir, nullptr));
+    }
+
+    QSet<QString> expandedDirs() const { return m_expandedDirs; }
+
+    void setDirExpanded(const QString &dir, bool expanded) {
+        if (dir.isEmpty())
+            return;
+        if (expanded)
+            m_expandedDirs.insert(dir);
+        else
+            m_expandedDirs.remove(dir);
+        const QModelIndex idx = indexForDir(dir);
+        if (idx.isValid())
+            emit dataChanged(idx, idx, {Qt::DecorationRole});
+    }
+
+private:
+    const NoteTreeNode *nodeFor(const QModelIndex &index) const {
+        if (!index.isValid())
+            return &m_root;
+        return static_cast<NoteTreeNode *>(index.internalPointer());
+    }
+
+    QModelIndex indexForNode(NoteTreeNode *node) const {
+        if (!node || node == &m_root)
+            return QModelIndex();
+        return createIndex(node->row, 0, node);
+    }
+
+    NoteTreeNode m_root;
+    QHash<QString, NoteTreeNode *> m_noteNodes;
+    QHash<QString, NoteTreeNode *> m_dirNodes;
+    QHash<QString, NoteTreeNode *> m_relDirNodes;
+    QSet<QString> m_expandedDirs;
+};
+
 // A tree that draws a faint vertical guide for each nesting level, so notes
 // inside a folder read clearly as sub-items.
-class NoteTree : public QTreeWidget {
+class NoteTreeView : public QTreeView {
 public:
-    using QTreeWidget::QTreeWidget;
+    using QTreeView::QTreeView;
     // Called with (source note/folder paths, destination folder path; empty
     // dest = vault root) when a selection is dropped.
     std::function<void(const QStringList &, const QString &)> onMove;
@@ -319,12 +507,24 @@ protected:
     void dropEvent(QDropEvent *event) override {
         // The whole current selection moves together.
         QStringList srcPaths;
-        for (QTreeWidgetItem *it : selectedItems()) {
-            const QString dirRole = it->data(0, kDirRole).toString();
-            const QString p =
-                dirRole.isEmpty() ? it->data(0, kPathRole).toString() : dirRole;
-            if (!p.isEmpty())
-                srcPaths << p;
+        if (selectionModel()) {
+            const QModelIndexList rows = selectionModel()->selectedRows();
+            for (const QModelIndex &idx : rows) {
+                const QString dirRole = idx.data(kDirRole).toString();
+                const QString p =
+                    dirRole.isEmpty() ? idx.data(kPathRole).toString() : dirRole;
+                if (!p.isEmpty())
+                    srcPaths << p;
+            }
+        }
+        if (srcPaths.isEmpty()) {
+            const QByteArray encoded =
+                event->mimeData()->data(QStringLiteral("application/x-emerald-note-tree"));
+            for (const QString &p :
+                 QString::fromUtf8(encoded).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                if (!p.isEmpty())
+                    srcPaths << p;
+            }
         }
         if (srcPaths.isEmpty()) {
             event->ignore();
@@ -332,11 +532,11 @@ protected:
         }
         const QStringList roots = topLevelPaths(srcPaths);
         QString destDir; // empty => root
-        if (QTreeWidgetItem *target = itemAt(event->position().toPoint())) {
-            const QString d = target->data(0, kDirRole).toString();
+        const QModelIndex target = indexAt(event->position().toPoint());
+        if (target.isValid()) {
+            const QString d = target.data(kDirRole).toString();
             destDir = d.isEmpty()
-                          ? QFileInfo(target->data(0, kPathRole).toString())
-                                .absolutePath()
+                          ? QFileInfo(target.data(kPathRole).toString()).absolutePath()
                           : d;
         }
         // Accept the drop, but run the actual move *after* the view's own
@@ -362,7 +562,7 @@ protected:
 
     void drawBranches(QPainter *painter, const QRect &rect,
                       const QModelIndex &index) const override {
-        QTreeWidget::drawBranches(painter, rect, index);
+        QTreeView::drawBranches(painter, rect, index);
         int depth = 0;
         for (QModelIndex a = index.parent(); a.isValid(); a = a.parent())
             ++depth;
@@ -586,8 +786,10 @@ void MainWindow::buildUi() {
     row->addWidget(m_centerColumn, 1);
     row->addStretch(0);
 
-    auto *tree = new NoteTree(this);
+    m_noteTreeModel = new NoteTreeModel(this);
+    auto *tree = new NoteTreeView(this);
     m_noteTree = tree;
+    m_noteTree->setModel(m_noteTreeModel);
     m_noteTree->setHeaderHidden(true);
     m_noteTree->setIndentation(16);
     m_noteTree->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -600,21 +802,21 @@ void MainWindow::buildUi() {
     tree->onMove = [this](const QStringList &srcs, const QString &dest) {
         moveItems(srcs, dest);
     };
-    connect(m_noteTree, &QTreeWidget::itemClicked, this,
-            &MainWindow::onTreeItemClicked);
-    connect(m_noteTree, &QTreeWidget::customContextMenuRequested, this,
+    connect(m_noteTree, &QTreeView::clicked, this,
+            &MainWindow::onTreeIndexClicked);
+    connect(m_noteTree, &QTreeView::customContextMenuRequested, this,
             &MainWindow::onTreeContextMenu);
     // Folders carry an up/down chevron instead of a folder icon; keep it in
     // sync with the fold state.
-    connect(m_noteTree, &QTreeWidget::itemExpanded, this,
-            [](QTreeWidgetItem *it) {
-                if (!it->data(0, kDirRole).toString().isEmpty())
-                    it->setIcon(0, chevronIcon(true));
+    connect(m_noteTree, &QTreeView::expanded, this,
+            [this](const QModelIndex &idx) {
+                auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel);
+                model->setDirExpanded(idx.data(kDirRole).toString(), true);
             });
-    connect(m_noteTree, &QTreeWidget::itemCollapsed, this,
-            [](QTreeWidgetItem *it) {
-                if (!it->data(0, kDirRole).toString().isEmpty())
-                    it->setIcon(0, chevronIcon(false));
+    connect(m_noteTree, &QTreeView::collapsed, this,
+            [this](const QModelIndex &idx) {
+                auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel);
+                model->setDirExpanded(idx.data(kDirRole).toString(), false);
             });
 
     // Sidebar header: a big "Notes" title with the back/forward arrows on the
@@ -1505,58 +1707,28 @@ void MainWindow::refreshTree(bool preserveExpansion) {
     // Remember which folders are open so a rebuild (after a rename/move/new note)
     // doesn't collapse the tree the user expanded. A freshly opened vault passes
     // preserveExpansion=false, so it always starts fully collapsed.
-    QSet<QString> expanded;
-    if (preserveExpansion)
-        for (QTreeWidgetItemIterator it(m_noteTree); *it; ++it) {
-            const QString dir = (*it)->data(0, kDirRole).toString();
-            if (!dir.isEmpty() && (*it)->isExpanded())
-                expanded.insert(dir);
-        }
-
-    m_noteTree->clear();
-    if (!m_vault)
+    auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel);
+    const QSet<QString> expanded =
+        preserveExpansion && model ? model->expandedDirs() : QSet<QString>();
+    if (!m_vault) {
+        if (model)
+            model->rebuild(QString(), QStringList(), QVector<Note>(), QSet<QString>());
         return;
-    const QDir rootDir(m_vault->root());
-    QHash<QString, QTreeWidgetItem *> folders;
-
-    // Find or build the (possibly nested) folder node for a relative dir path.
-    std::function<QTreeWidgetItem *(const QString &)> ensure =
-        [&](const QString &rel) -> QTreeWidgetItem * {
-        if (rel.isEmpty() || rel == QStringLiteral("."))
-            return m_noteTree->invisibleRootItem();
-        if (auto it = folders.constFind(rel); it != folders.constEnd())
-            return it.value();
-        const int slash = rel.lastIndexOf(QLatin1Char('/'));
-        QTreeWidgetItem *parent =
-            ensure(slash < 0 ? QString() : rel.left(slash));
-        auto *node = new QTreeWidgetItem(parent);
-        node->setText(0, slash < 0 ? rel : rel.mid(slash + 1));
-        node->setData(0, kDirRole, rootDir.filePath(rel));
-        // Collapsed glyph by default; expandAll() below flips visible folders to
-        // the expanded chevron via the itemExpanded signal.
-        node->setIcon(0, chevronIcon(false));
-        node->setFlags(node->flags() & ~Qt::ItemIsSelectable);
-        folders.insert(rel, node);
-        return node;
-    };
-
-    for (const QString &rel : m_vault->folders())
-        ensure(rel);
+    }
 
     QStringList titles;
-    for (const Note &n : m_vault->notes()) {
-        const QString dirRel =
-            rootDir.relativeFilePath(QFileInfo(n.path).absolutePath());
-        auto *leaf = new QTreeWidgetItem(ensure(dirRel));
-        leaf->setText(0, n.title);
-        leaf->setData(0, kPathRole, n.path);
+    for (const Note &n : m_vault->notes())
         titles << n.title;
-    }
+
+    model->rebuild(m_vault->root(), m_vault->folders(), m_vault->notes(), expanded);
+
     // Re-open the folders that were open before (none for a fresh vault, so it
-    // stays fully collapsed). The chevron icons follow via the itemExpanded signal.
-    for (auto it = folders.constBegin(); it != folders.constEnd(); ++it)
-        if (expanded.contains(it.value()->data(0, kDirRole).toString()))
-            it.value()->setExpanded(true);
+    // stays fully collapsed). The chevron icons follow via the expanded signal.
+    for (const QString &dir : expanded) {
+        const QModelIndex idx = model->indexForDir(dir);
+        if (idx.isValid())
+            m_noteTree->setExpanded(idx, true);
+    }
     m_editor->setCompletions(titles);
     selectInTree(m_currentPath);
     watchVaultDirs(); // keep folder watches in sync with the rebuilt tree
@@ -1976,13 +2148,16 @@ void MainWindow::loadCursorPositions() {
 }
 
 void MainWindow::selectInTree(const QString &path) {
-    for (QTreeWidgetItemIterator it(m_noteTree); *it; ++it) {
-        if ((*it)->data(0, kPathRole).toString() == path) {
-            m_noteTree->setCurrentItem(*it);
-            return;
-        }
+    auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel);
+    const QModelIndex idx = model ? model->indexForPath(path) : QModelIndex();
+    if (idx.isValid() && m_noteTree->selectionModel()) {
+        m_noteTree->selectionModel()->setCurrentIndex(
+            idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        m_noteTree->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+        return;
     }
-    m_noteTree->clearSelection();
+    if (m_noteTree->selectionModel())
+        m_noteTree->selectionModel()->clearSelection();
 }
 
 void MainWindow::openSearch() {
@@ -2106,28 +2281,28 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     return QMainWindow::eventFilter(watched, event);
 }
 
-void MainWindow::onTreeItemClicked(QTreeWidgetItem *item, int) {
+void MainWindow::onTreeIndexClicked(const QModelIndex &index) {
     // Ctrl/Shift clicks are selection gestures (multi-select) — let them just
     // extend the selection without opening a note or folding a folder.
     if (QGuiApplication::keyboardModifiers() &
         (Qt::ControlModifier | Qt::ShiftModifier))
         return;
-    const QString path = item->data(0, kPathRole).toString();
+    const QString path = index.data(kPathRole).toString();
     if (!path.isEmpty()) {
         openNoteByPath(path);
         return;
     }
     // A single click on a folder row folds / unfolds it.
-    if (!item->data(0, kDirRole).toString().isEmpty())
-        item->setExpanded(!item->isExpanded());
+    if (!index.data(kDirRole).toString().isEmpty())
+        m_noteTree->setExpanded(index, !m_noteTree->isExpanded(index));
 }
 
 void MainWindow::onTreeContextMenu(const QPoint &pos) {
     if (!m_vault)
         return;
-    QTreeWidgetItem *item = m_noteTree->itemAt(pos);
-    const QString notePath = item ? item->data(0, kPathRole).toString() : QString();
-    const QString folderPath = item ? item->data(0, kDirRole).toString() : QString();
+    const QModelIndex item = m_noteTree->indexAt(pos);
+    const QString notePath = item.isValid() ? item.data(kPathRole).toString() : QString();
+    const QString folderPath = item.isValid() ? item.data(kDirRole).toString() : QString();
 
     // Where "New" creates: the clicked folder, the clicked note's folder, or
     // the vault root for empty space.
@@ -2140,13 +2315,18 @@ void MainWindow::onTreeContextMenu(const QPoint &pos) {
     // Gather the selected paths; a bulk delete applies when the right-clicked
     // row is part of a multi-row selection.
     QStringList selPaths;
-    for (QTreeWidgetItem *it : m_noteTree->selectedItems()) {
-        const QString d = it->data(0, kDirRole).toString();
-        const QString p = d.isEmpty() ? it->data(0, kPathRole).toString() : d;
-        if (!p.isEmpty())
-            selPaths << p;
+    if (m_noteTree->selectionModel()) {
+        const QModelIndexList rows = m_noteTree->selectionModel()->selectedRows();
+        for (const QModelIndex &idx : rows) {
+            const QString d = idx.data(kDirRole).toString();
+            const QString p = d.isEmpty() ? idx.data(kPathRole).toString() : d;
+            if (!p.isEmpty())
+                selPaths << p;
+        }
     }
-    const bool bulk = item && item->isSelected() && selPaths.size() > 1;
+    const bool bulk = item.isValid() && m_noteTree->selectionModel() &&
+                      m_noteTree->selectionModel()->isSelected(item) &&
+                      selPaths.size() > 1;
 
     QMenu menu(this);
     menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
