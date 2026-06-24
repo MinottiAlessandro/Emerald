@@ -4,6 +4,7 @@
 #include "Perf.h"
 #include "Vault.h"
 #include <QRegularExpression>
+#include <QSet>
 #include <algorithm>
 
 namespace {
@@ -33,10 +34,10 @@ void SearchIndex::indexDoc(int id) {
     const QSet<QString> unique(all.begin(), all.end());
     doc.terms = QStringList(unique.begin(), unique.end());
     for (const QString &term : doc.terms) {
-        QSet<int> &posting = m_postings[term];
+        QVector<int> &posting = m_postings[term];
         if (posting.isEmpty())
             m_termsDirty = true; // a new word entered the vocabulary
-        posting.insert(id);
+        posting.append(id);
     }
 }
 
@@ -46,7 +47,7 @@ void SearchIndex::unindexDoc(int id) {
         auto it = m_postings.find(term);
         if (it == m_postings.end())
             continue;
-        it->remove(id);
+        it->removeAll(id);
         if (it->isEmpty()) {
             m_postings.erase(it);
             m_termsDirty = true;
@@ -142,7 +143,8 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
                                    token);
         for (auto it = lo; it != m_sortedTerms.cend() && it->startsWith(token);
              ++it)
-            forToken.unite(m_postings.value(*it));
+            for (int id : m_postings.value(*it))
+                forToken.insert(id);
         if (first) {
             candidates = forToken;
             first = false;

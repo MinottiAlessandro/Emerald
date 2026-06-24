@@ -2,9 +2,9 @@
 
 #include <QHash>
 #include <QList>
-#include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 class Vault;
 
@@ -55,7 +55,7 @@ private:
 
     QHash<int, Doc> m_docs;
     QHash<QString, int> m_byPath;         // path -> doc id
-    QHash<QString, QSet<int>> m_postings; // term -> doc ids
+    QHash<QString, QVector<int>> m_postings; // term -> doc ids
     int m_nextId = 0;
 
     mutable QStringList m_sortedTerms; // vocabulary, sorted, for prefix lookup
