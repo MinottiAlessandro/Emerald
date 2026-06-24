@@ -25,6 +25,7 @@ class QPoint;
 class QSplitter;
 class QFrame;
 class QFileSystemWatcher;
+class QThread;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -53,7 +54,6 @@ private:
     void openVaultSwitcher(); // quick picker for sibling vaults (Ctrl+Shift+O)
     void openVault(const QString &path);
     void startIndexRebuild();
-    void indexPendingNotes();
     void openInitialNote(); // open Home or the last-edited note on launch
     // Rebuild the sidebar from the vault. Folder expansion is preserved across
     // rebuilds (so a rename/move/new-note doesn't collapse the tree); a fresh
@@ -149,7 +149,7 @@ private:
     QTimer *m_saveTimer = nullptr;
     QTimer *m_rescanTimer = nullptr; // coalesces vault-folder change bursts
     QTimer *m_reloadTimer = nullptr; // coalesces open-note file-change bursts
-    QTimer *m_indexTimer = nullptr;  // chunks initial indexing through the event loop
+    QThread *m_indexThread = nullptr; // builds the startup search index off the UI thread
     QMenu *m_gearMenu = nullptr;
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
@@ -168,6 +168,5 @@ private:
     QStringList m_history; // visited note paths (browser-style)
     int m_histIndex = -1;
     QHash<QString, int> m_cursorPositions; // note path -> last caret position
-    QVector<Note> m_pendingIndexNotes;
-    int m_pendingIndexPos = 0;
+    int m_indexGeneration = 0;
 };

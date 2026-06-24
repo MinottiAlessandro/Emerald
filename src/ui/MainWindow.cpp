@@ -50,9 +50,11 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
+#include <QPointer>
 #include <QScrollArea>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -449,6 +451,16 @@ QString mascotKindInFile(const QString &path) {
     const QByteArray first = f.readLine(256);
     return MascotSeed::kindFromLine(QString::fromUtf8(first).trimmed());
 }
+
+QString readNoteForIndex(const QString &path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return QString();
+    QString text = QString::fromUtf8(f.readAll());
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    return text;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -491,9 +503,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_reloadTimer->setInterval(150);
     connect(m_reloadTimer, &QTimer::timeout, this,
             &MainWindow::syncOpenNoteFromDisk);
-    m_indexTimer = new QTimer(this);
-    m_indexTimer->setInterval(0);
-    connect(m_indexTimer, &QTimer::timeout, this, &MainWindow::indexPendingNotes);
     connect(m_editor, &MarkdownEditor::textChanged, this, [this] {
         if (!m_loading) {
             m_saveTimer->start();
@@ -512,7 +521,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         });
 }
 
-MainWindow::~MainWindow() { delete m_vault; }
+MainWindow::~MainWindow() {
+    if (m_indexThread) {
+        m_indexThread->requestInterruption();
+        m_indexThread->wait();
+        m_indexThread = nullptr;
+    }
+    delete m_vault;
+}
 
 void MainWindow::buildUi() {
     m_editor = new MarkdownEditor(this);
@@ -1378,35 +1394,55 @@ void MainWindow::openVault(const QString &path) {
 }
 
 void MainWindow::startIndexRebuild() {
+    ++m_indexGeneration;
+    const int generation = m_indexGeneration;
+
+    if (m_indexThread) {
+        m_indexThread->requestInterruption();
+        m_indexThread = nullptr;
+    }
+
     m_searchIndex.clear();
-    m_pendingIndexNotes = m_vault ? m_vault->notes() : QVector<Note>();
-    m_pendingIndexPos = 0;
-    if (m_pendingIndexNotes.isEmpty()) {
-        m_indexTimer->stop();
+    const QVector<Note> notes = m_vault ? m_vault->notes() : QVector<Note>();
+    if (notes.isEmpty())
         return;
-    }
-    m_indexTimer->start();
-}
 
-void MainWindow::indexPendingNotes() {
-    if (!m_vault || m_pendingIndexPos >= m_pendingIndexNotes.size()) {
-        m_indexTimer->stop();
-        return;
-    }
-
-    QElapsedTimer elapsed;
-    elapsed.start();
-    int indexed = 0;
-    while (m_pendingIndexPos < m_pendingIndexNotes.size()) {
-        const Note note = m_pendingIndexNotes.at(m_pendingIndexPos++);
-        if (QFileInfo::exists(note.path))
-            m_searchIndex.updateNote(note.path, note.title, m_vault->read(note.path));
-        ++indexed;
-        if (indexed >= 24 || elapsed.elapsed() >= 8)
-            break;
-    }
-    if (m_pendingIndexPos >= m_pendingIndexNotes.size())
-        m_indexTimer->stop();
+    const QPointer<MainWindow> guard(this);
+    QThread *thread = QThread::create([guard, notes, generation] {
+        auto *built = new SearchIndex;
+        for (const Note &note : notes) {
+            if (QThread::currentThread()->isInterruptionRequested()) {
+                delete built;
+                return;
+            }
+            if (QFileInfo::exists(note.path))
+                built->updateNote(note.path, note.title, readNoteForIndex(note.path));
+        }
+        if (!guard) {
+            delete built;
+            return;
+        }
+        QMetaObject::invokeMethod(
+            guard,
+            [guard, built, generation] {
+                if (guard && guard->m_indexGeneration == generation) {
+                    guard->m_searchIndex = std::move(*built);
+                    if (!guard->m_currentPath.isEmpty())
+                        guard->m_searchIndex.updateNote(
+                            guard->m_currentPath, guard->m_currentTitle,
+                            guard->m_editor->toPlainText());
+                }
+                delete built;
+            },
+            Qt::QueuedConnection);
+    });
+    m_indexThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_indexThread == thread)
+            m_indexThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
 }
 
 // One-time upgrade from the old per-vault store: read each saved seed and write
