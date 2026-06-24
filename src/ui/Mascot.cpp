@@ -1497,6 +1497,16 @@ QPixmap Mascot::renderPixmap(quint64 seed, const QString &kind, QSize size) {
             drawCreature(p, seed, kind, size.width(), size.height(), 0.0, false);
     }
     QPixmap pm = QPixmap::fromImage(img);
-    QPixmapCache::insert(key, pm);
+    static QHash<QString, int> seen;
+    static QStringList seenOrder;
+    const int count = seen.value(key) + 1;
+    seen.insert(key, count);
+    if (count == 1)
+        seenOrder << key;
+    constexpr int kMaxSeenKeys = 2048;
+    while (seenOrder.size() > kMaxSeenKeys)
+        seen.remove(seenOrder.takeFirst());
+    if (count >= 2)
+        QPixmapCache::insert(key, pm);
     return pm;
 }

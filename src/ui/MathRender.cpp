@@ -951,7 +951,17 @@ void paint(QPainter &p, const QRectF &rect, const QString &body,
     paintUncached(cachePainter, QRectF(QPointF(0, 0), rect.size()), body, font,
                   color, display, align);
     cachePainter.end();
-    QPixmapCache::insert(key, pm);
+    static QHash<QString, int> seen;
+    static QStringList seenOrder;
+    const int count = seen.value(key) + 1;
+    seen.insert(key, count);
+    if (count == 1)
+        seenOrder << key;
+    constexpr int kMaxSeenKeys = 1024;
+    while (seenOrder.size() > kMaxSeenKeys)
+        seen.remove(seenOrder.takeFirst());
+    if (count >= 2)
+        QPixmapCache::insert(key, pm);
     p.drawPixmap(rect.topLeft(), pm);
 }
 
