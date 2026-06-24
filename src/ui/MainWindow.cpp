@@ -477,9 +477,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_rescanTimer, &QTimer::timeout, this, [this] {
         if (!m_vault)
             return;
-        m_vault->scan();
-        m_searchIndex.rebuild(*m_vault);
-        refreshTree(); // keeps the open note selected and folders expanded
+        rescanVaultIncremental(); // keeps the open note selected and folders expanded
         // A backup-rename save (e.g. Vim) swaps the note's inode, dropping the
         // file watch with no further fileChanged — so reconcile the open note
         // here too, or it would stay stale until reopened.
@@ -1305,7 +1303,7 @@ void MainWindow::openManual() {
         m_vault->write(note.path, manualText());
         path = note.path;
         m_vault->scan();
-        m_searchIndex.rebuild(*m_vault);
+        m_searchIndex.updateNote(note.path, note.title, manualText());
         refreshTree();
     }
     openNoteByPath(path);
@@ -1490,6 +1488,30 @@ void MainWindow::refreshTree(bool preserveExpansion) {
     watchVaultDirs(); // keep folder watches in sync with the rebuilt tree
 }
 
+void MainWindow::rescanVaultIncremental(bool preserveExpansion) {
+    if (!m_vault)
+        return;
+
+    QHash<QString, QString> oldTitles;
+    for (const Note &n : m_vault->notes())
+        oldTitles.insert(n.path, n.title);
+
+    m_vault->scan();
+
+    QSet<QString> newPaths;
+    for (const Note &n : m_vault->notes()) {
+        newPaths.insert(n.path);
+        const auto old = oldTitles.constFind(n.path);
+        if (old == oldTitles.constEnd() || old.value() != n.title)
+            m_searchIndex.updateNote(n.path, n.title, m_vault->read(n.path));
+    }
+    for (auto it = oldTitles.constBegin(); it != oldTitles.constEnd(); ++it)
+        if (!newPaths.contains(it.key()))
+            m_searchIndex.removeNote(it.key());
+
+    refreshTree(preserveExpansion);
+}
+
 void MainWindow::openNoteByPath(const QString &path, bool record) {
     if (!m_vault || path.isEmpty())
         return;
@@ -1578,7 +1600,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
         return;
     }
 
-    m_vault->updateLinksTo(oldTitle, newTitle);
+    const QStringList changedLinks = m_vault->updateLinksToPaths(oldTitle, newTitle);
     m_currentPath = newPath;
     m_currentTitle = newTitle;
     watchCurrent(); // follow the file to its new name
@@ -1587,7 +1609,10 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
             p = newPath;
     if (m_cursorPositions.contains(oldPath))
         m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
-    m_searchIndex.rebuild(*m_vault); // paths and link text changed vault-wide
+    m_searchIndex.renamePath(oldPath, newPath);
+    m_searchIndex.updateNote(newPath, newTitle, m_editor->toPlainText());
+    for (const QString &p : changedLinks)
+        m_searchIndex.updateNote(p, Vault::titleFromPath(p), m_vault->read(p));
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
     notify(tr("Renamed to “%1”").arg(newTitle), 3000);
@@ -1624,7 +1649,7 @@ void MainWindow::saveCurrent() {
         m_vault->write(note.path, content);
         m_lastSavedContent = content;
         m_vault->scan();
-        m_searchIndex.rebuild(*m_vault);
+        m_searchIndex.updateNote(note.path, note.title, content);
         refreshTree();
         watchCurrent();
         selectInTree(note.path);
@@ -2044,8 +2069,20 @@ void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
 void MainWindow::reconcileAfterDeletion() {
     const bool currentGone =
         !m_currentPath.isEmpty() && !QFileInfo::exists(m_currentPath);
+    QHash<QString, QString> oldTitles;
+    for (const Note &n : m_vault->notes())
+        oldTitles.insert(n.path, n.title);
     m_vault->scan();
-    m_searchIndex.rebuild(*m_vault);
+    QSet<QString> newPaths;
+    for (const Note &n : m_vault->notes()) {
+        newPaths.insert(n.path);
+        const auto old = oldTitles.constFind(n.path);
+        if (old == oldTitles.constEnd() || old.value() != n.title)
+            m_searchIndex.updateNote(n.path, n.title, m_vault->read(n.path));
+    }
+    for (auto it = oldTitles.constBegin(); it != oldTitles.constEnd(); ++it)
+        if (!newPaths.contains(it.key()))
+            m_searchIndex.removeNote(it.key());
     if (!currentGone) {
         // A *different* note (or a folder of them) was deleted — its path may
         // still sit in the nav history; drop it so Back/Forward can't reach a
@@ -2153,7 +2190,7 @@ void MainWindow::newNoteIn(const QString &dir) {
         return;
     const Note note = m_vault->createNoteIn(dir, name);
     m_vault->scan();
-    m_searchIndex.rebuild(*m_vault);
+    m_searchIndex.updateNote(note.path, note.title, m_vault->read(note.path));
     refreshTree();
     openNoteByPath(note.path);
 }
@@ -2164,9 +2201,26 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
     const QString destDir = destDirIn.isEmpty() ? m_vault->root() : destDirIn;
     int moved = 0;
     for (const QString &srcPath : srcPaths) {
+        QStringList movedNotes;
+        const bool movingFolder = QFileInfo(srcPath).isDir();
+        if (movingFolder) {
+            for (const Note &n : m_vault->notes())
+                if (n.path == srcPath ||
+                    n.path.startsWith(srcPath + QLatin1Char('/')))
+                    movedNotes << n.path;
+        }
         const QString newPath = m_vault->movePath(srcPath, destDir);
         if (newPath.isEmpty())
             continue;
+        if (movingFolder) {
+            for (const QString &p : movedNotes) {
+                const QString mapped = p == srcPath ? newPath
+                                                    : newPath + p.mid(srcPath.length());
+                m_searchIndex.renamePath(p, mapped, Vault::titleFromPath(mapped));
+            }
+        } else {
+            m_searchIndex.renamePath(srcPath, newPath, Vault::titleFromPath(newPath));
+        }
         // Follow the open note / history if they lived in what just moved.
         auto remap = [&](QString &p) {
             if (p == srcPath)
@@ -2188,7 +2242,6 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
     watchCurrent(); // the open note may have moved with it
 
     m_vault->scan();
-    m_searchIndex.rebuild(*m_vault);
     refreshTree();
     if (!m_currentPath.isEmpty()) {
         setWindowTitle(

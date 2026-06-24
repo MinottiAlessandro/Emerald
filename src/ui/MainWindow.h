@@ -72,6 +72,9 @@ private:
     // A vault folder changed on disk (a note added, removed, or renamed by
     // another program). Coalesced via m_rescanTimer, then rescan + refreshTree.
     void onVaultDirChanged(const QString &path);
+    // Rescan the vault listing and update the search index only for notes whose
+    // path/title changed since the previous listing.
+    void rescanVaultIncremental(bool preserveExpansion = true);
     // Keep the watcher's directory list in sync with the vault's folders (root
     // + sub-folders) so externally-created notes are noticed wherever they land.
     void watchVaultDirs();

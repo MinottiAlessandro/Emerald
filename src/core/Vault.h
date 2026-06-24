@@ -54,6 +54,9 @@ public:
     // Rewrite every [[oldTitle]] link (preserving any |alias or #heading) to
     // point at newTitle, across all notes. Returns the number of files changed.
     int updateLinksTo(const QString &oldTitle, const QString &newTitle);
+    // Same rewrite, returning the paths that actually changed so callers can
+    // incrementally refresh dependent indexes.
+    QStringList updateLinksToPaths(const QString &oldTitle, const QString &newTitle);
 
     static QString titleFromPath(const QString &path);
     // A title usable as a filename (non-empty, no path/illegal characters).

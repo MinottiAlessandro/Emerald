@@ -149,14 +149,20 @@ QString Vault::renameNote(const QString &oldPath, const QString &newTitle) {
 }
 
 int Vault::updateLinksTo(const QString &oldTitle, const QString &newTitle) {
-    int changed = 0;
+    return updateLinksToPaths(oldTitle, newTitle).size();
+}
+
+QStringList Vault::updateLinksToPaths(const QString &oldTitle,
+                                      const QString &newTitle) {
+    QStringList changedPaths;
     for (const Note &n : m_notes) {
         const QString content = read(n.path);
         const QString updated = replaceLinkTargets(content, oldTitle, newTitle);
-        if (updated != content && write(n.path, updated))
-            ++changed;
+        if (updated != content && write(n.path, updated)) {
+            changedPaths << n.path;
+        }
     }
-    return changed;
+    return changedPaths;
 }
 
 Note Vault::createNote(const QString &title) {
