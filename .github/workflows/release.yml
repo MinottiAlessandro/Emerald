@@ -50,6 +50,13 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      - name: Remove stale Microsoft apt sources
+        if: startsWith(matrix.name, 'linux')
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/azure-cli.list
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo rm -f /etc/apt/sources.list.d/packages-microsoft-com*.list
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
