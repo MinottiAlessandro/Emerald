@@ -1,9 +1,11 @@
 build/
 build-appimage/
+build-perf*/
 *.AppImage
 *.user
 .cache/
 compile_commands.json
+perf-*.json
 
 # graphify knowledge-graph output (generated)
 graphify-out/
