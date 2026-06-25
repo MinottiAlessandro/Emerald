@@ -187,17 +187,6 @@ The `core/` layer is GUI-free, so the vault and link logic can be tested without
 
 ---
 
-## Roadmap
-
-- [x] Cross-platform support (Linux · macOS · Windows)
-- [x] Per-platform packaging & automated releases
-- [x] LaTeX math (inline `$…$` and display `$$…$$`)
-- [ ] Mermaid diagrams
-- [ ] Tags
-- [ ] Graphic bullet glyphs / inline images
-
----
-
 ## License
 
 Released under the [MIT License](LICENSE) — © 2026 Alessandro Minotti.
