@@ -10,14 +10,20 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCompleter>
+#include <QDateTime>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QImageReader>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPlainTextDocumentLayout>
+#include <QPixmapCache>
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
@@ -41,6 +47,64 @@ const QRegularExpression &mdLinkRe() {
     static const QRegularExpression re(
         QStringLiteral("\\[([^\\]\\[]+)\\]\\(([^)\\s]+)\\)"));
     return re;
+}
+
+const QRegularExpression &imageLineRe() {
+    static const QRegularExpression re(QStringLiteral(
+        "^\\s*!\\[[^\\]\\n]*\\]\\((?:<([^>]+)>|([^\\)\\n]+))\\)\\s*$"));
+    return re;
+}
+
+QString imageTargetFromLine(const QString &text) {
+    const auto m = imageLineRe().match(text);
+    if (!m.hasMatch())
+        return QString();
+    const QString raw =
+        !m.captured(1).isEmpty() ? m.captured(1) : m.captured(2);
+    return QUrl::fromPercentEncoding(raw.toUtf8());
+}
+
+QPixmap imagePreviewPixmap(const QString &path, QSize logicalMax, qreal dpr) {
+    const QFileInfo info(path);
+    if (!info.isFile() || logicalMax.isEmpty())
+        return {};
+
+    const QSize deviceMax = (QSizeF(logicalMax) * dpr).toSize();
+    const QString key =
+        QStringLiteral("note-image:%1:%2:%3:%4:%5x%6")
+            .arg(info.absoluteFilePath())
+            .arg(info.size())
+            .arg(info.lastModified().toMSecsSinceEpoch())
+            .arg(dpr)
+            .arg(deviceMax.width())
+            .arg(deviceMax.height());
+
+    QPixmap cached;
+    if (QPixmapCache::find(key, &cached))
+        return cached;
+
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    const QSize sourceSize = reader.size();
+    if (sourceSize.isValid()) {
+        reader.setScaledSize(sourceSize.scaled(deviceMax, Qt::KeepAspectRatio));
+    } else {
+        reader.setScaledSize(deviceMax);
+    }
+
+    QImage image = reader.read();
+    if (image.isNull())
+        return {};
+    if (image.size().width() > deviceMax.width() ||
+        image.size().height() > deviceMax.height()) {
+        image = image.scaled(deviceMax, Qt::KeepAspectRatio,
+                             Qt::SmoothTransformation);
+    }
+
+    QPixmap pm = QPixmap::fromImage(image);
+    pm.setDevicePixelRatio(dpr);
+    QPixmapCache::insert(key, pm);
+    return pm;
 }
 
 // --- pipe-table helpers (for the auto-prettifier) -----------------------
@@ -90,6 +154,27 @@ QString dashCell(int width, int align) {
     if (align == 3) // explicit left ":--": keep the colon the user typed
         return QLatin1Char(':') + QString(width - 1, QLatin1Char('-'));
     return QString(width, QLatin1Char('-'));
+}
+
+QStringList imageFilePathsFromMimeData(const QMimeData *mime) {
+    QStringList paths;
+    if (!mime || !mime->hasUrls())
+        return paths;
+
+    for (const QUrl &url : mime->urls()) {
+        if (!url.isLocalFile())
+            continue;
+        const QString path = url.toLocalFile();
+        if (paths.contains(path))
+            continue;
+        const QFileInfo info(path);
+        if (!info.isFile())
+            continue;
+        QImageReader reader(path);
+        if (reader.canRead())
+            paths.append(path);
+    }
+    return paths;
 }
 
 // QPlainTextEdit's layout ignores block-format line height and margins, so the
@@ -243,6 +328,13 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
 
 void MarkdownEditor::setCompletions(const QStringList &titles) {
     m_completionModel->setStringList(titles);
+}
+
+void MarkdownEditor::setImageBasePath(const QString &path) {
+    if (m_imageBasePath == path)
+        return;
+    m_imageBasePath = path;
+    viewport()->update();
 }
 
 void MarkdownEditor::applyFont(const QFont &font) {
@@ -891,6 +983,31 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
 
     QPlainTextEdit::keyPressEvent(event);
     updateCompletionPopup();
+}
+
+bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const {
+    if (source && (source->hasImage() ||
+                   !imageFilePathsFromMimeData(source).isEmpty()))
+        return true;
+    return QPlainTextEdit::canInsertFromMimeData(source);
+}
+
+void MarkdownEditor::insertFromMimeData(const QMimeData *source) {
+    if (source) {
+        const QStringList imagePaths = imageFilePathsFromMimeData(source);
+        if (!imagePaths.isEmpty()) {
+            emit imageFilesInserted(imagePaths);
+            return;
+        }
+        if (source->hasImage()) {
+            const QImage image = qvariant_cast<QImage>(source->imageData());
+            if (!image.isNull()) {
+                emit imagePasted(image);
+                return;
+            }
+        }
+    }
+    QPlainTextEdit::insertFromMimeData(source);
 }
 
 // Wrap the selection in `marker` (e.g. ** or *), or unwrap if it's already
@@ -1732,6 +1849,80 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     }
 
     QPlainTextEdit::paintEvent(event);
+
+    // Standalone Markdown images are stored as plain text but rendered as a
+    // local preview whenever the caret/selection is not on that line.
+    {
+        const QTextCursor selCur = textCursor();
+        const int selFirst =
+            document()->findBlock(selCur.selectionStart()).blockNumber();
+        const int selLast =
+            document()->findBlock(selCur.selectionEnd()).blockNumber();
+
+        QPainter imgPainter(viewport());
+        imgPainter.setRenderHint(QPainter::Antialiasing);
+        const qreal dpr = devicePixelRatioF();
+        for (QTextBlock block = firstVisibleBlock(); block.isValid();
+             block = block.next()) {
+            if (!block.isVisible())
+                continue;
+            if (insideCodeBlock(block))
+                continue;
+            const QRectF geo =
+                blockBoundingGeometry(block).translated(contentOffset());
+            if (geo.top() > event->rect().bottom())
+                break;
+            if (geo.bottom() < event->rect().top() ||
+                (block.blockNumber() >= selFirst && block.blockNumber() <= selLast))
+                continue;
+
+            const QString target = imageTargetFromLine(block.text());
+            if (target.isEmpty() || m_imageBasePath.isEmpty())
+                continue;
+
+            QString path;
+            const QUrl url(target);
+            if (url.isValid() && !url.scheme().isEmpty()) {
+                if (!url.isLocalFile())
+                    continue;
+                path = url.toLocalFile();
+            } else if (QDir::isAbsolutePath(target)) {
+                path = target;
+            } else {
+                path = QDir(m_imageBasePath).filePath(target);
+            }
+
+            const qreal margin = document()->documentMargin();
+            QRectF area(margin, geo.top() + 8,
+                        viewport()->width() - margin * 2, geo.height() - 16);
+            if (area.width() < 24 || area.height() < 24)
+                continue;
+
+            const QPixmap pm =
+                imagePreviewPixmap(path, area.size().toSize(), dpr);
+            if (pm.isNull()) {
+                const QRectF placeholder =
+                    QRectF(area.center() - QPointF(110, 24), QSizeF(220, 48));
+                imgPainter.setPen(QPen(QColor(0x20, 0x38, 0x2b), 1));
+                imgPainter.setBrush(QColor(0x10, 0x11, 0x13));
+                imgPainter.drawRoundedRect(placeholder, 6, 6);
+                imgPainter.setPen(QColor(0x6f, 0x8e, 0x7e));
+                imgPainter.drawText(placeholder, Qt::AlignCenter,
+                                    tr("Image not found"));
+                continue;
+            }
+
+            const QSizeF logicalSize = QSizeF(pm.size()) / pm.devicePixelRatio();
+            const QPointF topLeft(
+                area.left() + (area.width() - logicalSize.width()) / 2.0,
+                area.top() + (area.height() - logicalSize.height()) / 2.0);
+            const QRectF imageRect(topLeft, logicalSize);
+            imgPainter.setPen(QPen(QColor(0x20, 0x38, 0x2b), 1));
+            imgPainter.setBrush(QColor(0x10, 0x11, 0x13));
+            imgPainter.drawRoundedRect(imageRect, 6, 6);
+            imgPainter.drawPixmap(topLeft, pm);
+        }
+    }
 
     // Draw a bullet glyph over each list dash that the highlighter hid (every
     // bullet line except the active one). The glyph varies by nesting level.

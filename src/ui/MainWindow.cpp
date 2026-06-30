@@ -50,6 +50,8 @@
 #include <QHash>
 #include <QSet>
 #include <QIcon>
+#include <QImage>
+#include <QImageReader>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
@@ -64,6 +66,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
+#include <QUrl>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -671,6 +674,44 @@ quint64 contentFingerprint(const QString &content) {
     const quint64 lo = qHash(content, 0x2545f4914f6cdd1ULL);
     return (hi << 32) ^ lo ^ (hi >> 16);
 }
+
+QString attachmentBaseName(QString name) {
+    name = name.trimmed();
+    if (name.isEmpty())
+        name = QStringLiteral("image");
+    QString out;
+    out.reserve(name.size());
+    for (const QChar c : name) {
+        if (c.unicode() < 0x20 || QStringLiteral("/\\:*?\"<>|").contains(c))
+            out += QLatin1Char('-');
+        else if (c.isSpace())
+            out += QLatin1Char('-');
+        else
+            out += c;
+    }
+    while (out.contains(QStringLiteral("--")))
+        out.replace(QStringLiteral("--"), QStringLiteral("-"));
+    while (out.startsWith(QLatin1Char('-')))
+        out.remove(0, 1);
+    while (out.endsWith(QLatin1Char('-')))
+        out.chop(1);
+    return out.isEmpty() ? QStringLiteral("image") : out;
+}
+
+QString markdownImageTarget(QString relPath) {
+    relPath.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    return QString::fromLatin1(QUrl::toPercentEncoding(
+        relPath, QByteArrayLiteral("/._-~")));
+}
+
+QString markdownAltText(QString text) {
+    text.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    text.replace(QLatin1Char('\r'), QLatin1Char(' '));
+    text.replace(QLatin1Char('['), QLatin1Char('('));
+    text.replace(QLatin1Char(']'), QLatin1Char(')'));
+    text = text.trimmed();
+    return text.isEmpty() ? QStringLiteral("Image") : text;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -750,6 +791,10 @@ void MainWindow::buildUi() {
             &MainWindow::navigateForward);
     connect(m_editor, &MarkdownEditor::noticeRequested, this,
             [this](const QString &text) { notify(text, 2000); });
+    connect(m_editor, &MarkdownEditor::imageFilesInserted, this,
+            &MainWindow::insertImagesFromFiles);
+    connect(m_editor, &MarkdownEditor::imagePasted, this,
+            &MainWindow::insertPastedImage);
     // A right-click menu on the editor with the usual edit actions plus a
     // working "Delete Note" (the standard menu's Delete only acts on a text
     // selection, so it reads as permanently disabled).
@@ -1186,6 +1231,9 @@ void MainWindow::buildActions() {
     auto *insertTpl = make(tr("Insert Template…"),
                            QKeySequence(Qt::CTRL | Qt::Key_T),
                            &MainWindow::insertTemplate);
+    m_insertImageAction = make(tr("Insert Image…"),
+                               QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I),
+                               &MainWindow::insertImage);
     // Rename focuses the title field for editing (F2 is the universal rename).
     auto *rename = new QAction(tr("Rename Note"), this);
     rename->setShortcut(QKeySequence(Qt::Key_F2));
@@ -1259,6 +1307,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(newNote);
     m_gearMenu->addAction(goTo);
     m_gearMenu->addAction(insertTpl);
+    m_gearMenu->addAction(m_insertImageAction);
     m_gearMenu->addAction(rename);
     m_gearMenu->addAction(save);
     m_gearMenu->addAction(m_deleteAction);
@@ -1610,9 +1659,12 @@ void MainWindow::onEditorContextMenu(const QPoint &pos) {
     for (QAction *a : menu->actions())
         if (a->objectName() == QLatin1String("edit-delete"))
             menu->removeAction(a);
-    if (m_deleteAction && !m_currentPath.isEmpty()) {
+    if (!m_currentPath.isEmpty() && (m_insertImageAction || m_deleteAction)) {
         menu->addSeparator();
-        menu->addAction(m_deleteAction);
+        if (m_insertImageAction)
+            menu->addAction(m_insertImageAction);
+        if (m_deleteAction)
+            menu->addAction(m_deleteAction);
     }
     menu->exec(m_editor->mapToGlobal(pos));
     delete menu;
@@ -1693,6 +1745,7 @@ void MainWindow::openVault(const QString &path) {
     m_editor->clearFolds(); // drop the previous note's folds before clearing
     m_loading = true;
     m_editor->clear();
+    m_editor->setImageBasePath(QString());
     m_editor->document()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);
@@ -1934,6 +1987,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
                             // content is replaced below — drop them first
     m_loading = true;
     const QString body = m_vault->read(path);
+    m_editor->setImageBasePath(QFileInfo(path).absolutePath());
     m_editor->setPlainText(body);
     m_editor->document()->setModified(false);
     m_loading = false;
@@ -2349,6 +2403,180 @@ void MainWindow::onTemplateChosen(const QString &path) {
     m_editor->setFocus();
 }
 
+void MainWindow::insertImage() {
+    if (!m_vault || m_currentPath.isEmpty()) {
+        notify(tr("Open a note before inserting images"), 2500);
+        return;
+    }
+
+    QStringList patterns;
+    for (const QByteArray &fmt : QImageReader::supportedImageFormats()) {
+        const QString suffix = QString::fromLatin1(fmt).toLower();
+        const QString pattern = QStringLiteral("*.") + suffix;
+        if (!patterns.contains(pattern))
+            patterns.append(pattern);
+    }
+    patterns.sort(Qt::CaseInsensitive);
+    const QString filter =
+        tr("Images (%1);;All Files (*)").arg(patterns.join(QLatin1Char(' ')));
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, tr("Insert Image"), QFileInfo(m_currentPath).absolutePath(), filter);
+    insertImagesFromFiles(paths);
+}
+
+void MainWindow::insertImagesFromFiles(const QStringList &paths) {
+    if (paths.isEmpty())
+        return;
+    if (!m_vault || m_currentPath.isEmpty()) {
+        notify(tr("Open a note before inserting images"), 2500);
+        return;
+    }
+
+    QStringList lines;
+    int skipped = 0;
+    for (const QString &sourcePath : paths) {
+        const QFileInfo sourceInfo(sourcePath);
+        const QString attachedPath = attachImageFile(sourcePath);
+        if (attachedPath.isEmpty()) {
+            ++skipped;
+            continue;
+        }
+        lines.append(imageMarkdownForPath(attachedPath,
+                                          sourceInfo.completeBaseName()));
+    }
+
+    if (lines.isEmpty()) {
+        notify(tr("No readable image was inserted"), 3000);
+        return;
+    }
+
+    insertImageMarkdownLines(lines);
+    if (skipped > 0)
+        notify(tr("Inserted %n image(s); skipped %1", nullptr, lines.size())
+                   .arg(skipped),
+               3500);
+    else
+        notify(tr("Inserted %n image(s)", nullptr, lines.size()), 2500);
+}
+
+void MainWindow::insertPastedImage(const QImage &image) {
+    if (!m_vault || m_currentPath.isEmpty()) {
+        notify(tr("Open a note before inserting images"), 2500);
+        return;
+    }
+    const QString attachedPath = savePastedImageAttachment(image);
+    if (attachedPath.isEmpty()) {
+        notify(tr("Could not save pasted image"), 3000);
+        return;
+    }
+    insertImageMarkdownLines(
+        {imageMarkdownForPath(attachedPath, tr("Pasted image"))});
+    notify(tr("Inserted pasted image"), 2500);
+}
+
+QString MainWindow::attachImageFile(const QString &sourcePath) {
+    if (!m_vault)
+        return QString();
+
+    const QFileInfo sourceInfo(sourcePath);
+    QImageReader reader(sourcePath);
+    if (!sourceInfo.isFile() || !reader.canRead())
+        return QString();
+
+    const QString rootPath = QDir(m_vault->root()).canonicalPath();
+    const QString sourceCanonical = sourceInfo.canonicalFilePath();
+    if (!rootPath.isEmpty() && !sourceCanonical.isEmpty()) {
+#ifdef Q_OS_WIN
+        constexpr Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+        constexpr Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+        if (sourceCanonical.compare(rootPath, cs) == 0 ||
+            sourceCanonical.startsWith(rootPath + QLatin1Char('/'), cs)) {
+            return sourceInfo.absoluteFilePath();
+        }
+    }
+
+    QString suffix = sourceInfo.suffix().toLower();
+    if (suffix.isEmpty())
+        suffix = QString::fromLatin1(reader.format()).toLower();
+    const QString dest =
+        uniqueAttachmentPath(sourceInfo.completeBaseName(), suffix);
+    if (dest.isEmpty())
+        return QString();
+    if (!QDir().mkpath(QFileInfo(dest).absolutePath()))
+        return QString();
+    return QFile::copy(sourcePath, dest) ? dest : QString();
+}
+
+QString MainWindow::savePastedImageAttachment(const QImage &image) {
+    if (!m_vault || image.isNull())
+        return QString();
+
+    const QString base =
+        QStringLiteral("pasted-image-") +
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    const QString dest = uniqueAttachmentPath(base, QStringLiteral("png"));
+    if (dest.isEmpty())
+        return QString();
+    if (!QDir().mkpath(QFileInfo(dest).absolutePath()))
+        return QString();
+    return image.save(dest, "PNG") ? dest : QString();
+}
+
+QString MainWindow::uniqueAttachmentPath(const QString &baseName,
+                                         const QString &suffix) const {
+    if (!m_vault)
+        return QString();
+    QString ext = suffix.trimmed().toLower();
+    if (ext.isEmpty())
+        ext = QStringLiteral("png");
+    if (!ext.startsWith(QLatin1Char('.')))
+        ext.prepend(QLatin1Char('.'));
+
+    const QDir dir(QDir(m_vault->root()).filePath(QStringLiteral("_attachments")));
+    const QString base = attachmentBaseName(baseName);
+    QString candidate = dir.filePath(base + ext);
+    int n = 2;
+    while (QFileInfo::exists(candidate)) {
+        candidate = dir.filePath(QStringLiteral("%1-%2%3").arg(base).arg(n).arg(ext));
+        ++n;
+    }
+    return candidate;
+}
+
+QString MainWindow::imageMarkdownForPath(const QString &path,
+                                         const QString &altText) const {
+    if (!m_vault || path.isEmpty())
+        return QString();
+    const QString baseDir = m_currentPath.isEmpty()
+                                ? m_vault->root()
+                                : QFileInfo(m_currentPath).absolutePath();
+    const QString rel = QDir(baseDir).relativeFilePath(path);
+    return QStringLiteral("![%1](%2)")
+        .arg(markdownAltText(altText), markdownImageTarget(rel));
+}
+
+void MainWindow::insertImageMarkdownLines(const QStringList &lines) {
+    if (lines.isEmpty())
+        return;
+    QTextCursor c = m_editor->textCursor();
+    if (c.position() < m_editor->firstContentPosition())
+        c.setPosition(m_editor->firstContentPosition());
+
+    QString insertion = lines.join(QLatin1Char('\n'));
+    if (!c.atBlockStart())
+        insertion.prepend(QLatin1Char('\n'));
+    if (!c.atBlockEnd())
+        insertion.append(QLatin1Char('\n'));
+
+    c.beginEditBlock();
+    c.insertText(insertion);
+    c.endEditBlock();
+    m_editor->setTextCursor(c);
+    m_editor->setFocus();
+}
+
 void MainWindow::openFindInFile() {
     positionFindBar();
     m_findBar->show();
@@ -2522,6 +2750,7 @@ void MainWindow::reconcileAfterDeletion() {
     m_editor->clearFolds(); // drop the deleted note's folds before clearing
     m_loading = true;
     m_editor->clear();
+    m_editor->setImageBasePath(QString());
     m_editor->document()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);

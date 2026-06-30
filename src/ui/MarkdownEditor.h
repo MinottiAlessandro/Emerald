@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QImage>
 #include <QPlainTextEdit>
 #include <QRectF>
 #include <QStringList>
@@ -9,6 +10,7 @@
 
 class MarkdownHighlighter;
 class QCompleter;
+class QMimeData;
 class QPlainTextDocumentLayout;
 class QStringListModel;
 
@@ -25,6 +27,9 @@ public:
 
     // Set the editor body font (family + size) and keep heading scaling in sync.
     void applyFont(const QFont &font);
+
+    // Folder used to resolve relative Markdown image paths for inline previews.
+    void setImageBasePath(const QString &path);
 
     // Vertical spacing between rows, as a percent of the font's natural line
     // height (100 = normal). Persisted in settings. Handled by the document
@@ -60,6 +65,10 @@ signals:
     void navigateBack();
     void navigateForward();
     void noticeRequested(const QString &text); // transient feedback (e.g. "Copied")
+    // A pasted or dropped image should be attached by MainWindow, which knows
+    // the active vault and note path.
+    void imageFilesInserted(const QStringList &paths);
+    void imagePasted(const QImage &image);
     // The mascot seed changed — on load, on Generate/Delete, or when the user
     // hand-edits the revealed header line. 0 means the note now has no mascot.
     void mascotSeedChanged(quint64 seed);
@@ -68,6 +77,8 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    bool canInsertFromMimeData(const QMimeData *source) const override;
+    void insertFromMimeData(const QMimeData *source) override;
     // Draws real bullet glyphs over the (hidden) dash of list items.
     void paintEvent(QPaintEvent *event) override;
     // Keeps the top-visible line pinned when a width change rewraps the text,
@@ -208,6 +219,7 @@ private:
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
     quint64 m_mascotSeed = 0;    // last seen mascot seed, to detect changes
     QString m_mascotKind;        // last seen kind, so a kind-only change emits too
+    QString m_imageBasePath;     // current note folder for relative image links
     // The spacing-aware document layout (owned by the document). Held as the
     // base type; applyLineSpacing() downcasts to set the per-row padding.
     QPlainTextDocumentLayout *m_spacedLayout = nullptr;
