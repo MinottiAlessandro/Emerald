@@ -10,6 +10,7 @@
 
 #include <QAbstractItemView>
 #include <QAbstractItemModel>
+#include <QAbstractSpinBox>
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -54,6 +55,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPointer>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSizePolicy>
 #include <QTextCursor>
@@ -1335,22 +1337,85 @@ void MainWindow::loadSettings() {
 
 void MainWindow::openSettings() {
     QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("settingsDialog"));
     dlg.setWindowTitle(tr("Settings"));
-    auto *form = new QFormLayout(&dlg);
+    dlg.setFocusPolicy(Qt::StrongFocus);
+    dlg.setMinimumSize(660, 840);
+    dlg.resize(700, 880);
+    dlg.setSizeGripEnabled(true);
+
+    auto *root = new QVBoxLayout(&dlg);
+    root->setContentsMargins(24, 22, 24, 18);
+    root->setSpacing(16);
+
+    auto *heading = new QLabel(tr("Settings"), &dlg);
+    heading->setObjectName(QStringLiteral("settingsTitle"));
+    auto *subtitle = new QLabel(
+        tr("Tune the editor, vault defaults, and mascot behavior."), &dlg);
+    subtitle->setObjectName(QStringLiteral("settingsSubtitle"));
+    root->addWidget(heading);
+    root->addWidget(subtitle);
+
+    auto *sections = new QVBoxLayout();
+    sections->setContentsMargins(0, 0, 0, 0);
+    sections->setSpacing(14);
+    root->addLayout(sections);
+
+    auto addSection = [&dlg, sections](const QString &title,
+                                       const QString &description) {
+        auto *section = new QFrame(&dlg);
+        section->setObjectName(QStringLiteral("settingsSection"));
+        auto *layout = new QVBoxLayout(section);
+        layout->setContentsMargins(18, 16, 18, 18);
+        layout->setSpacing(10);
+
+        auto *titleLabel = new QLabel(title, section);
+        titleLabel->setObjectName(QStringLiteral("settingsSectionTitle"));
+        auto *descriptionLabel = new QLabel(description, section);
+        descriptionLabel->setObjectName(
+            QStringLiteral("settingsSectionDescription"));
+        descriptionLabel->setWordWrap(true);
+        layout->addWidget(titleLabel);
+        layout->addWidget(descriptionLabel);
+
+        auto *form = new QFormLayout();
+        form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+        form->setFormAlignment(Qt::AlignTop);
+        form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        form->setHorizontalSpacing(22);
+        form->setVerticalSpacing(16);
+        layout->addLayout(form);
+
+        sections->addWidget(section);
+        return form;
+    };
+    auto addSettingRow = [&dlg](QFormLayout *form, const QString &labelText,
+                                QWidget *field) {
+        auto *label = new QLabel(labelText, &dlg);
+        label->setObjectName(QStringLiteral("settingsFieldLabel"));
+        label->setMinimumWidth(130);
+        label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        form->addRow(label, field);
+    };
 
     QSettings s;
 
     auto *fontBox = new QFontComboBox(&dlg);
+    fontBox->setFontFilters(QFontComboBox::AllFonts);
+    fontBox->setEditable(false);
     fontBox->setCurrentFont(m_editor->font());
     auto *sizeBox = new QSpinBox(&dlg);
+    sizeBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     sizeBox->setRange(8, 32);
     sizeBox->setValue(m_editor->font().pointSize());
     auto *widthBox = new QSpinBox(&dlg);
+    widthBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     widthBox->setRange(500, 1600);
     widthBox->setSingleStep(20);
     widthBox->setSuffix(tr(" px"));
     widthBox->setValue(m_centerColumn->maximumWidth());
     auto *spacingBox = new QSpinBox(&dlg);
+    spacingBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spacingBox->setRange(100, 250);
     spacingBox->setSingleStep(10);
     spacingBox->setSuffix(tr(" %"));
@@ -1360,6 +1425,7 @@ void MainWindow::openSettings() {
     auto *mascotAutoBox = new QCheckBox(tr("Generate one automatically"), &dlg);
     mascotAutoBox->setChecked(s.value(QStringLiteral("mascotAuto"), false).toBool());
     auto *mascotThreshBox = new QSpinBox(&dlg);
+    mascotThreshBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     mascotThreshBox->setRange(0, 100000);
     mascotThreshBox->setSingleStep(50);
     mascotThreshBox->setSuffix(tr(" chars"));
@@ -1400,19 +1466,40 @@ void MainWindow::openSettings() {
         templatesBox->setEnabled(false);
     }
 
-    form->addRow(tr("Editor font"), fontBox);
-    form->addRow(tr("Font size"), sizeBox);
-    form->addRow(tr("Editor width"), widthBox);
-    form->addRow(tr("Line spacing"), spacingBox);
-    form->addRow(tr("New notes in"), folderBox);
-    form->addRow(tr("Home note"), homeBox);
-    form->addRow(tr("Templates folder"), templatesBox);
-    form->addRow(tr("Mascot"), mascotAutoBox);
-    form->addRow(tr("Mascot after"), mascotThreshBox);
+    auto *editorForm =
+        addSection(tr("Editor"), tr("Reading comfort and writing column size."));
+    addSettingRow(editorForm, tr("Font"), fontBox);
+    addSettingRow(editorForm, tr("Font size"), sizeBox);
+    addSettingRow(editorForm, tr("Column width"), widthBox);
+    addSettingRow(editorForm, tr("Line spacing"), spacingBox);
+
+    auto *vaultForm = addSection(
+        tr("Vault"), tr("Defaults used when creating or opening notes."));
+    addSettingRow(vaultForm, tr("New notes in"), folderBox);
+    addSettingRow(vaultForm, tr("Home note"), homeBox);
+    addSettingRow(vaultForm, tr("Templates folder"), templatesBox);
+
+    auto *mascotForm = addSection(
+        tr("Mascot"), tr("Optional automatic mascot generation for notes."));
+    addSettingRow(mascotForm, tr("Generate"), mascotAutoBox);
+    addSettingRow(mascotForm, tr("After"), mascotThreshBox);
 
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    form->addRow(buttons);
+    buttons->setObjectName(QStringLiteral("settingsButtons"));
+    if (auto *ok = buttons->button(QDialogButtonBox::Ok))
+    {
+        ok->setIcon(QIcon());
+        ok->setAutoDefault(false);
+        ok->setDefault(false);
+    }
+    if (auto *cancel = buttons->button(QDialogButtonBox::Cancel))
+    {
+        cancel->setIcon(QIcon());
+        cancel->setAutoDefault(false);
+        cancel->setDefault(false);
+    }
+    root->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
@@ -1432,6 +1519,9 @@ void MainWindow::openSettings() {
     const QFont originalFont = m_editor->font();
     const int originalWidth = m_centerColumn->maximumWidth();
     const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
+    dlg.setFocus(Qt::OtherFocusReason);
+    QTimer::singleShot(0, &dlg,
+                       [&dlg] { dlg.setFocus(Qt::OtherFocusReason); });
     if (dlg.exec() == QDialog::Accepted) {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());

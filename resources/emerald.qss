@@ -250,6 +250,89 @@ QMenu::separator {
     margin: 4px 8px;
 }
 
+/* Settings dialog */
+QDialog#settingsDialog {
+    background: #17181b;
+}
+QDialog#settingsDialog QLabel,
+QDialog#settingsDialog QCheckBox {
+    background: transparent;
+}
+QLabel#settingsTitle {
+    color: #d7eee2;
+    font-size: 24px;
+    font-weight: 700;
+}
+QLabel#settingsSubtitle {
+    color: #6f8e7e;
+    font-size: 13px;
+}
+QFrame#settingsSection {
+    background: #101113;
+    border: 1px solid #20382b;
+    border-radius: 8px;
+}
+QLabel#settingsSectionTitle {
+    color: #d7eee2;
+    font-size: 15px;
+    font-weight: 700;
+}
+QLabel#settingsSectionDescription {
+    color: #6f8e7e;
+    font-size: 12px;
+}
+QLabel#settingsFieldLabel {
+    color: #a9c8b8;
+    font-size: 13px;
+}
+QDialog#settingsDialog QComboBox,
+QDialog#settingsDialog QAbstractSpinBox {
+    background: #17181b;
+    color: #d7eee2;
+    border: 1px solid #254232;
+    border-radius: 6px;
+    padding: 6px 9px;
+    min-height: 28px;
+    selection-background-color: #1f4a33;
+}
+QDialog#settingsDialog QComboBox:focus,
+QDialog#settingsDialog QAbstractSpinBox:focus {
+    border: 1px solid #2bbf74;
+}
+QDialog#settingsDialog QComboBox::drop-down {
+    border: none;
+    width: 26px;
+}
+QDialog#settingsDialog QCheckBox {
+    color: #d7eee2;
+    spacing: 8px;
+}
+QDialog#settingsDialog QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #2f4a3b;
+    border-radius: 4px;
+    background: #17181b;
+}
+QDialog#settingsDialog QCheckBox::indicator:checked {
+    background: #2bbf74;
+    border: 1px solid #2bbf74;
+}
+QDialog#settingsDialog QPushButton {
+    background: #1f4733;
+    color: #d7eee2;
+    border: 1px solid #2f4a3b;
+    border-radius: 6px;
+    padding: 7px 16px;
+    min-width: 72px;
+}
+QDialog#settingsDialog QPushButton:hover {
+    background: #286044;
+}
+QDialog#settingsDialog QPushButton:pressed {
+    background: #183927;
+}
+
 /* Transient toast notice that floats over the bottom of the editor and
    auto-hides — replaces the old persistent status bar. */
 QLabel#toast {
