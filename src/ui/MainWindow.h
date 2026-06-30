@@ -28,6 +28,7 @@ class QSplitter;
 class QFrame;
 class QFileSystemWatcher;
 class QThread;
+class QImage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -98,6 +99,16 @@ private:
     void openSearch();
     void openQuickOpen();
     void insertTemplate(); // open the template picker (Ctrl+T)
+    void insertImage();    // copy/select an image and insert a Markdown link
+    void insertImagesFromFiles(const QStringList &paths);
+    void insertPastedImage(const QImage &image);
+    QString attachImageFile(const QString &sourcePath);
+    QString savePastedImageAttachment(const QImage &image);
+    QString uniqueAttachmentPath(const QString &baseName,
+                                 const QString &suffix) const;
+    QString imageMarkdownForPath(const QString &path,
+                                 const QString &altText) const;
+    void insertImageMarkdownLines(const QStringList &lines);
     // Insert the chosen template at the caret (or at the body start when the
     // caret isn't in the body), expanding {{date}} / {{time}} / {{title}}.
     void onTemplateChosen(const QString &path);
@@ -168,6 +179,7 @@ private:
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
     QAction *m_deleteAction = nullptr; // Delete Note (shared by menu + context menu)
+    QAction *m_insertImageAction = nullptr;
     QAction *m_genMascotAction = nullptr;
     QAction *m_delMascotAction = nullptr;
 

@@ -102,6 +102,9 @@ private:
     // formula, so the editor can paint it in the reserved space. Shared by the
     // single-line $$…$$ branch and the multi-line $$ fence's first body line.
     void reserveDisplayHeight(int len, const QString &body);
+    // Hide a standalone image line and reserve a preview-sized block for the
+    // editor painter.
+    void reserveImageHeight(int len);
     // True when the cursor sits anywhere inside the $$…$$ fenced region that
     // `block` belongs to, so the whole region shows raw source for editing.
     // `openingHere` means `block` is itself the opening fence.

@@ -8,6 +8,12 @@
 #include <QTextDocument>
 
 namespace {
+const QRegularExpression &imageLineRe() {
+    static const QRegularExpression re(QStringLiteral(
+        "^\\s*!\\[[^\\]\\n]*\\]\\((?:<([^>]+)>|([^\\)\\n]+))\\)\\s*$"));
+    return re;
+}
+
 double headingScale(int level) {
     switch (level) {
     case 1:  return 1.9;
@@ -268,6 +274,21 @@ void MarkdownHighlighter::reserveDisplayHeight(int len, const QString &body) {
     // the line or force a wrap.
     const double factor =
         lineH > 0 ? qBound(1.0, (formulaH + 0.5 * lineH) / lineH, 8.0) : 1.0;
+    QTextCharFormat hide;
+    hide.setForeground(QColor(0, 0, 0, 0));
+    hide.setFontPointSize(base.pointSizeF() * factor);
+    hide.setFontLetterSpacingType(QFont::PercentageSpacing);
+    hide.setFontLetterSpacing(1);
+    setFormat(0, len, hide);
+}
+
+void MarkdownHighlighter::reserveImageHeight(int len) {
+    const QFont base = document() ? document()->defaultFont() : QFont();
+    const double lineH = QFontMetricsF(base).lineSpacing();
+    const double targetH = qMax(160.0, lineH * 8.5);
+    const double factor =
+        lineH > 0 ? qBound(1.0, targetH / lineH, 12.0) : 8.5;
+
     QTextCharFormat hide;
     hide.setForeground(QColor(0, 0, 0, 0));
     hide.setFontPointSize(base.pointSizeF() * factor);
@@ -838,6 +859,14 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         for (int i = 0; i < text.size(); ++i)
             if (text[i] == QLatin1Char('|'))
                 setFormat(i, 1, m_tablePipe);
+        return;
+    }
+
+    // Standalone image lines render as local image previews when inactive. On
+    // the active line, keep the Markdown source visible and editable.
+    if (imageLineRe().match(text).hasMatch()) {
+        if (!reveal)
+            reserveImageHeight(text.size());
         return;
     }
 
