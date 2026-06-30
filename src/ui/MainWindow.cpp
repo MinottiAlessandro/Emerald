@@ -2131,7 +2131,8 @@ void MainWindow::markNoteMetaCurrent(const QString &path, const QString &title) 
     m_noteMeta.insert(path, noteFileMeta(note));
 }
 
-void MainWindow::openNoteByPath(const QString &path, bool record) {
+void MainWindow::openNoteByPath(const QString &path, bool record,
+                                bool saveBeforeOpen) {
     if (!m_vault || path.isEmpty())
         return;
     if (!QFileInfo::exists(path)) {
@@ -2145,7 +2146,8 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     // it (e.g. via the backlink history) lands back at the same spot.
     if (!m_currentPath.isEmpty() && m_currentPath != path)
         m_cursorPositions[m_currentPath] = m_editor->textCursor().position();
-    saveCurrent();
+    if (saveBeforeOpen)
+        saveCurrent();
 
     m_editor->clearFolds(); // the previous note's folds would dangle once its
                             // content is replaced below — drop them first
@@ -2440,6 +2442,11 @@ void MainWindow::onLinkClicked(const QString &target) {
 }
 
 void MainWindow::navigateBack() {
+    if (hasUnsavedDraft()) {
+        if (m_histIndex >= 0 && m_histIndex < m_history.size())
+            openNoteByPath(m_history.at(m_histIndex), false, false);
+        return;
+    }
     if (m_histIndex > 0) {
         --m_histIndex;
         openNoteByPath(m_history.at(m_histIndex), false);
@@ -2447,10 +2454,21 @@ void MainWindow::navigateBack() {
 }
 
 void MainWindow::navigateForward() {
+    if (hasUnsavedDraft()) {
+        if (m_histIndex >= 0 && m_histIndex < m_history.size() - 1) {
+            ++m_histIndex;
+            openNoteByPath(m_history.at(m_histIndex), false, false);
+        }
+        return;
+    }
     if (m_histIndex >= 0 && m_histIndex < m_history.size() - 1) {
         ++m_histIndex;
         openNoteByPath(m_history.at(m_histIndex), false);
     }
+}
+
+bool MainWindow::hasUnsavedDraft() const {
+    return m_currentPath.isEmpty() && !m_pendingNoteDir.isEmpty();
 }
 
 void MainWindow::pushHistory(const QString &path) {
@@ -2480,8 +2498,10 @@ void MainWindow::pruneHistory() {
 }
 
 void MainWindow::updateNavActions() {
+    const bool canLeaveDraft =
+        hasUnsavedDraft() && m_histIndex >= 0 && m_histIndex < m_history.size();
     if (m_backAction)
-        m_backAction->setEnabled(m_histIndex > 0);
+        m_backAction->setEnabled(canLeaveDraft || m_histIndex > 0);
     if (m_forwardAction)
         m_forwardAction->setEnabled(m_histIndex >= 0 &&
                                     m_histIndex < m_history.size() - 1);

@@ -66,7 +66,8 @@ private:
     // One-time upgrade: fold any legacy <vault>/.emerald/mascots.json seeds into
     // each note's inline header line, then remove the file (and empty folder).
     void migrateLegacyMascots(const QString &vaultRoot);
-    void openNoteByPath(const QString &path, bool record = true);
+    void openNoteByPath(const QString &path, bool record = true,
+                        bool saveBeforeOpen = true);
     void saveCurrent();
     void newNote();
     void renameCurrent(const QString &rawTitle);
@@ -141,6 +142,7 @@ private:
     void moveItems(const QStringList &srcPaths, const QString &destDir);
     void navigateBack();
     void navigateForward();
+    bool hasUnsavedDraft() const;
     void pushHistory(const QString &path);
     // Drop history entries whose file no longer exists (e.g. deleted notes),
     // keeping the index on the current note when it survived.
