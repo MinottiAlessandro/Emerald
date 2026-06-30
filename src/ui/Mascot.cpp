@@ -2,7 +2,9 @@
 
 #include "MascotCatalog.h"
 #include <QEnterEvent>
+#include <QFileInfo>
 #include <QImage>
+#include <QImageReader>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -1441,14 +1443,35 @@ static bool drawImageMascot(QPainter &p, quint64 seed, int w, int h, double bob)
     const QString path = MascotCatalog::shared().imageForSeed(seed);
     if (path.isEmpty())
         return false;
+    const qreal dpr = p.device() ? p.device()->devicePixelRatioF() : 1.0;
+    const QSize target(w, h);
+    const QSize deviceTarget = (QSizeF(target) * dpr).toSize();
+    const QFileInfo info(path);
+    const QString key =
+        QStringLiteral("mascot-image:") + path + QLatin1Char(':') +
+        QString::number(info.size()) + QLatin1Char(':') +
+        QString::number(info.lastModified().toMSecsSinceEpoch()) + QLatin1Char(':') +
+        QString::number(deviceTarget.width()) + QLatin1Char('x') +
+        QString::number(deviceTarget.height()) + QLatin1Char(':') +
+        QString::number(dpr, 'f', 2);
     QPixmap pm;
-    if (!QPixmapCache::find(path, &pm)) { // decode once — these are MB-sized PNGs
-        pm.load(path);
-        QPixmapCache::insert(path, pm);
+    if (!QPixmapCache::find(key, &pm)) {
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        const QSize sourceSize = reader.size();
+        if (sourceSize.isValid() && !deviceTarget.isEmpty())
+            reader.setScaledSize(sourceSize.scaled(deviceTarget, Qt::KeepAspectRatio));
+        const QImage image = reader.read();
+        if (image.isNull())
+            return false;
+        pm = QPixmap::fromImage(image);
+        pm.setDevicePixelRatio(dpr);
+        QPixmapCache::insert(key, pm);
     }
     if (pm.isNull())
         return false;
-    const QSize fit = pm.size().scaled(QSize(w, h), Qt::KeepAspectRatio);
+    const QSizeF logicalSize = pm.deviceIndependentSize();
+    const QSizeF fit = logicalSize.scaled(QSizeF(target), Qt::KeepAspectRatio);
     const QRectF r((w - fit.width()) / 2.0, (h - fit.height()) / 2.0 + bob,
                    fit.width(), fit.height());
     p.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
@@ -1456,7 +1479,7 @@ static bool drawImageMascot(QPainter &p, quint64 seed, int w, int h, double bob)
     clip.addRoundedRect(r, qMin(r.width(), r.height()) * 0.16,
                         qMin(r.width(), r.height()) * 0.16);
     p.setClipPath(clip);
-    p.drawPixmap(r, pm, QRectF(pm.rect()));
+    p.drawPixmap(r, pm, QRectF(QPointF(0, 0), logicalSize));
     return true;
 }
 

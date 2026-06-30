@@ -10,11 +10,10 @@ class Vault;
 
 // Fast in-memory full-text search.
 //
-// Keeps an inverted index (word -> set of note ids) plus a cached copy of each
-// note's text. A query is split into word prefixes; a note matches when it
-// contains every prefix (AND). Candidates come straight from the index, so a
-// query only touches the postings for its words — not the whole corpus — which
-// is what keeps it fast as the vault grows.
+// Keeps an inverted index (word -> note ids + frequency). A query is split into
+// word prefixes; a note matches when it contains every prefix (AND). Candidates
+// come straight from the index, so a query only touches the postings for its
+// words — not the whole corpus — which keeps it fast as the vault grows.
 class SearchIndex {
 public:
     struct Result {
@@ -46,18 +45,20 @@ private:
     struct Doc {
         QString path;
         QString title;
-        QString content;
         QStringList terms; // unique terms, kept so the doc can be un-indexed
-        QHash<QString, int> termFreq; // lowercased term -> token frequency
+    };
+    struct Posting {
+        int docId = 0;
+        int frequency = 0;
     };
 
-    void indexDoc(int id);
+    void indexDoc(int id, const QString &content);
     void unindexDoc(int id);
     void ensureSortedTerms() const;
 
     QHash<int, Doc> m_docs;
     QHash<QString, int> m_byPath;         // path -> doc id
-    QHash<QString, QVector<int>> m_postings; // term -> doc ids
+    QHash<QString, QVector<Posting>> m_postings; // term -> doc ids + frequency
     int m_nextId = 0;
 
     mutable QStringList m_sortedTerms; // vocabulary, sorted, for prefix lookup

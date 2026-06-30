@@ -11,11 +11,16 @@
     "startup_index_chunks": { "max": 120.0 },
     "search_p95": { "max": 30.0 },
     "search_update_note": { "max": 25.0 },
+    "rss_after_rebuild_current": { "max": 220000.0 },
+    "rss_search_rebuild_delta": { "max": 80000.0 },
+    "rss_after_search_current": { "max": 300000.0 },
     "editor_set_plain_text": { "max": 200.0 },
     "editor_render_viewport": { "max": 120.0 },
+    "rss_after_editor_current": { "max": 350000.0 },
     "math_measure_and_paint": { "max": 80.0 },
     "mascot_render_unique_500": { "max": 1500.0 },
     "mascot_render_repeated_500": { "max": 120.0 },
+    "rss_after_mascot_current": { "max": 450000.0 },
     "rss_final": { "max": 450000.0 }
   },
   "relative": {
@@ -24,11 +29,16 @@
     "startup_index_complete": { "max_regression_percent": 15.0, "min_absolute_delta": 15.0 },
     "search_p95": { "max_regression_percent": 15.0, "min_absolute_delta": 1.0 },
     "search_update_note": { "max_regression_percent": 15.0, "min_absolute_delta": 0.5 },
+    "rss_after_rebuild_current": { "max_regression_percent": 15.0, "min_absolute_delta": 10240.0 },
+    "rss_search_rebuild_delta": { "max_regression_percent": 20.0, "min_absolute_delta": 8192.0 },
+    "rss_after_search_current": { "max_regression_percent": 15.0, "min_absolute_delta": 10240.0 },
     "editor_set_plain_text": { "max_regression_percent": 15.0, "min_absolute_delta": 5.0 },
     "editor_render_viewport": { "max_regression_percent": 15.0, "min_absolute_delta": 3.0 },
+    "rss_after_editor_current": { "max_regression_percent": 15.0, "min_absolute_delta": 20480.0 },
     "math_measure_and_paint": { "max_regression_percent": 15.0, "min_absolute_delta": 2.0 },
     "mascot_render_unique_500": { "max_regression_percent": 15.0, "min_absolute_delta": 25.0 },
     "mascot_render_repeated_500": { "max_regression_percent": 20.0, "min_absolute_delta": 2.0 },
+    "rss_after_mascot_current": { "max_regression_percent": 15.0, "min_absolute_delta": 20480.0 },
     "rss_final": { "max_regression_percent": 15.0, "min_absolute_delta": 20480.0 }
   }
 }

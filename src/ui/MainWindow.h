@@ -55,6 +55,7 @@ private:
     void chooseVault();
     void openVaultSwitcher(); // quick picker for sibling vaults (Ctrl+Shift+O)
     void openVault(const QString &path);
+    void updateVaultTitle();
     void startIndexRebuild();
     void openInitialNote(); // open Home or the last-edited note on launch
     // Rebuild the sidebar from the vault. Folder expansion is preserved across
@@ -150,6 +151,7 @@ private:
     QWidget *m_splitHandle = nullptr;  // its drag handle (click to toggle)
     QPoint m_handlePressPos;
     QLineEdit *m_titleEdit = nullptr;
+    QLabel *m_sideTitle = nullptr;
     QLabel *m_toast = nullptr;         // auto-hiding notice (replaces status bar)
     QTimer *m_toastTimer = nullptr;
     QFrame *m_findBar = nullptr;       // in-note find overlay
@@ -174,7 +176,7 @@ private:
     QFileSystemWatcher *m_watcher = nullptr;
     QString m_currentPath;
     QString m_currentTitle;
-    QString m_lastSavedContent; // body as last written/loaded, to spot extern edits
+    quint64 m_lastSavedFingerprint = 0; // body fingerprint as last written/loaded
     bool m_loading = false;
 
     QStringList m_history; // visited note paths (browser-style)

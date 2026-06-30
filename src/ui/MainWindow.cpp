@@ -55,6 +55,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QThread>
@@ -562,6 +563,7 @@ protected:
 
     void drawBranches(QPainter *painter, const QRect &rect,
                       const QModelIndex &index) const override {
+        painter->fillRect(rect, QColor(0x10, 0x11, 0x13));
         QTreeView::drawBranches(painter, rect, index);
         int depth = 0;
         for (QModelIndex a = index.parent(); a.isValid(); a = a.parent())
@@ -660,6 +662,12 @@ QString readNoteForIndex(const QString &path) {
     text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
     return text;
+}
+
+quint64 contentFingerprint(const QString &content) {
+    const quint64 hi = qHash(content, 0x9e3779b97f4a7c15ULL);
+    const quint64 lo = qHash(content, 0x2545f4914f6cdd1ULL);
+    return (hi << 32) ^ lo ^ (hi >> 16);
 }
 }
 
@@ -819,15 +827,16 @@ void MainWindow::buildUi() {
                 model->setDirExpanded(idx.data(kDirRole).toString(), false);
             });
 
-    // Sidebar header: a big "Notes" title with the back/forward arrows on the
-    // right (replaces the old top toolbar).
+    // Sidebar header: the current vault name with the back/forward arrows on
+    // the right (replaces the old top toolbar).
     auto *header = new QWidget(this);
     header->setObjectName(QStringLiteral("sideHeader"));
     auto *hrow = new QHBoxLayout(header);
     hrow->setContentsMargins(10, 4, 4, 4);
     hrow->setSpacing(2);
-    auto *title = new QLabel(tr("Notes"), header);
-    title->setObjectName(QStringLiteral("sideTitle"));
+    m_sideTitle = new QLabel(tr("Notes"), header);
+    m_sideTitle->setObjectName(QStringLiteral("sideTitle"));
+    m_sideTitle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *backBtn = new QToolButton(header);
     backBtn->setObjectName(QStringLiteral("navButton"));
     backBtn->setDefaultAction(m_backAction);
@@ -836,7 +845,7 @@ void MainWindow::buildUi() {
     fwdBtn->setObjectName(QStringLiteral("navButton"));
     fwdBtn->setDefaultAction(m_forwardAction);
     fwdBtn->setIconSize(QSize(22, 22));
-    hrow->addWidget(title);
+    hrow->addWidget(m_sideTitle);
     hrow->addStretch();
     hrow->addWidget(backBtn);
     hrow->addWidget(fwdBtn);
@@ -1064,7 +1073,10 @@ void MainWindow::maybeAutoGenerateMascot() {
         return; // user deleted this note's mascot — leave it manual-only
     const int threshold =
         s.value(QStringLiteral("mascotThreshold"), 100).toInt();
-    if (m_editor->bodyText().size() < threshold)
+    const int bodyChars =
+        qMax(0, m_editor->document()->characterCount() - 1 -
+                    m_editor->firstContentPosition());
+    if (bodyChars < threshold)
         return;
     generateMascot(); // crosses the threshold once
 }
@@ -1226,7 +1238,14 @@ void MainWindow::buildActions() {
     connect(quit, &QAction::triggered, this, &QWidget::close);
     addAction(quit);
 
-    // Requested order: app → file ops → search → quit, grouped by separators.
+    auto *mascotMenu = new QMenu(tr("Mascot"), m_gearMenu);
+    mascotMenu->addAction(m_genMascotAction);
+    mascotMenu->addAction(m_delMascotAction);
+    mascotMenu->addAction(gallery);
+    mascotMenu->addAction(imageMode);
+
+    // Requested order: app → file ops → search → mascot → quit, grouped by
+    // separators.
     m_gearMenu->addAction(settings);
     m_gearMenu->addAction(manual);
     m_gearMenu->addAction(update);
@@ -1245,10 +1264,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(findHere);
     m_gearMenu->addAction(search);
     m_gearMenu->addSeparator();
-    m_gearMenu->addAction(m_genMascotAction);
-    m_gearMenu->addAction(m_delMascotAction);
-    m_gearMenu->addAction(gallery);
-    m_gearMenu->addAction(imageMode);
+    m_gearMenu->addMenu(mascotMenu);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(quit);
 
@@ -1572,6 +1588,7 @@ void MainWindow::openVault(const QString &path) {
     saveCurrent();
     delete m_vault;
     m_vault = new Vault(path);
+    updateVaultTitle();
     migrateLegacyMascots(path); // fold any legacy .emerald/mascots.json into notes
     m_vault->scan();
     m_noteMeta = scannedNoteMeta();
@@ -1579,12 +1596,14 @@ void MainWindow::openVault(const QString &path) {
 
     m_currentPath.clear();
     m_currentTitle.clear();
+    m_lastSavedFingerprint = 0;
     m_history.clear();
     m_histIndex = -1;
     updateNavActions();
     m_editor->clearFolds(); // drop the previous note's folds before clearing
     m_loading = true;
     m_editor->clear();
+    m_editor->document()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);
     m_titleEdit->clear();
@@ -1595,6 +1614,19 @@ void MainWindow::openVault(const QString &path) {
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
     openInitialNote();
     refreshMascot(); // hide a stale mascot if the new vault opened no note
+}
+
+void MainWindow::updateVaultTitle() {
+    if (!m_sideTitle)
+        return;
+    QString title;
+    if (m_vault)
+        title = QFileInfo(m_vault->root()).fileName();
+    if (title.isEmpty())
+        title = tr("Notes");
+    m_sideTitle->setText(title);
+    m_sideTitle->setToolTip(m_vault ? QDir::toNativeSeparators(m_vault->root())
+                                    : QString());
 }
 
 void MainWindow::startIndexRebuild() {
@@ -1813,10 +1845,11 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     m_loading = true;
     const QString body = m_vault->read(path);
     m_editor->setPlainText(body);
+    m_editor->document()->setModified(false);
     m_loading = false;
 
     m_currentPath = path;
-    m_lastSavedContent = body;
+    m_lastSavedFingerprint = contentFingerprint(body);
     m_currentTitle = Vault::titleFromPath(path);
     watchCurrent();
     m_titleEdit->blockSignals(true);
@@ -1931,7 +1964,8 @@ void MainWindow::saveCurrent() {
         m_currentTitle = title;
         const QString content = m_editor->toPlainText();
         m_vault->write(note.path, content);
-        m_lastSavedContent = content;
+        m_lastSavedFingerprint = contentFingerprint(content);
+        m_editor->document()->setModified(false);
         m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, content);
         markNoteMetaCurrent(note.path, note.title);
@@ -1945,11 +1979,17 @@ void MainWindow::saveCurrent() {
         notify(tr("Created “%1”").arg(title), 2000);
         return;
     }
+    if (!m_editor->document()->isModified())
+        return;
     const QString content = m_editor->toPlainText();
-    if (content == m_lastSavedContent)
+    const quint64 fingerprint = contentFingerprint(content);
+    if (fingerprint == m_lastSavedFingerprint) {
+        m_editor->document()->setModified(false);
         return; // nothing new to flush; avoid a self-triggered watcher event
+    }
     m_vault->write(m_currentPath, content);
-    m_lastSavedContent = content;
+    m_lastSavedFingerprint = fingerprint;
+    m_editor->document()->setModified(false);
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, content);
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
 }
@@ -2024,12 +2064,17 @@ void MainWindow::syncOpenNoteFromDisk() {
     }
 
     const QString disk = m_vault->read(m_currentPath);
-    if (disk == m_lastSavedContent)
+    const quint64 diskFingerprint = contentFingerprint(disk);
+    if (diskFingerprint == m_lastSavedFingerprint)
         return; // our own write, or no real change
 
-    if (m_editor->toPlainText() != m_lastSavedContent) {
-        notify(tr("Changed on disk — saving will keep your version"), 5000);
-        return;
+    if (m_editor->document()->isModified()) {
+        if (contentFingerprint(m_editor->toPlainText()) == m_lastSavedFingerprint) {
+            m_editor->document()->setModified(false);
+        } else {
+            notify(tr("Changed on disk — saving will keep your version"), 5000);
+            return;
+        }
     }
 
     // No local edits: reload, keeping the caret roughly where it was.
@@ -2037,8 +2082,9 @@ void MainWindow::syncOpenNoteFromDisk() {
     m_editor->clearFolds(); // reloading replaces the content; drop stale folds
     m_loading = true;
     m_editor->setPlainText(disk);
+    m_editor->document()->setModified(false);
     m_loading = false;
-    m_lastSavedContent = disk;
+    m_lastSavedFingerprint = diskFingerprint;
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, disk);
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
 
@@ -2378,6 +2424,7 @@ void MainWindow::reconcileAfterDeletion() {
     }
     m_currentPath.clear();
     m_currentTitle.clear();
+    m_lastSavedFingerprint = 0;
     // Empty the editor + title buffer now. Otherwise the pre-load save that
     // openNoteByPath() runs below would see an empty m_currentPath next to the
     // deleted note's still-present title/body and re-create it as a new note —
@@ -2385,6 +2432,7 @@ void MainWindow::reconcileAfterDeletion() {
     m_editor->clearFolds(); // drop the deleted note's folds before clearing
     m_loading = true;
     m_editor->clear();
+    m_editor->document()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);
     m_titleEdit->clear();

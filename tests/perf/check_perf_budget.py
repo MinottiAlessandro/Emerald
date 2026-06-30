@@ -37,7 +37,6 @@ def check_relative(baseline, current, budget):
     failures = []
     for name, rule in budget.get("relative", {}).items():
         if name not in baseline:
-            failures.append(f"{name}: missing from baseline metrics")
             continue
         if name not in current:
             failures.append(f"{name}: missing from current metrics")

@@ -130,7 +130,8 @@ private:
     };
     // Visit fenced code blocks that intersect `clip` in viewport coordinates.
     void forEachCodeBlock(const QRectF &clip,
-                          const std::function<void(const CodeBlock &)> &fn) const;
+                          const std::function<void(const CodeBlock &)> &fn,
+                          bool includeCode = false) const;
     // True for a line *inside* a fenced code block (not a fence itself). Such
     // lines must render verbatim: no bullets, rules, headings or list-continue.
     bool insideCodeBlock(const QTextBlock &block) const;

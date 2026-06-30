@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QHash>
 #include <QPointF>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -82,7 +83,11 @@ private:
     QByteArray rawPart(const QString &slot, const QString &name) const;
 
     QStringList m_roots; // search order, highest priority first; ":/art" last
-    mutable QHash<QString, QByteArray> m_rawCache; // "slot/name" -> svg ("" miss)
+    mutable QHash<QString, QByteArray> m_rawCache; // "slot/name" -> svg bytes
+    mutable QStringList m_rawCacheOrder;
+    mutable qsizetype m_rawCacheBytes = 0;
+    mutable QSet<QString> m_rawMisses;
+    mutable QStringList m_rawMissOrder;
     QHash<QString, BodyAnchors> m_anchors;
     bool m_anchorsLoaded = false;
     mutable QStringList m_kinds;       // discovered user creatures, sorted

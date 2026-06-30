@@ -15,6 +15,8 @@
 #include <QXmlStreamWriter>
 
 namespace {
+constexpr qsizetype kMaxRawCacheBytes = 512 * 1024;
+constexpr int kMaxRawMisses = 1024;
 
 // Rewrite every element tagged data-slot="X" so its fill becomes tint["X"]
 // (splitting alpha into fill-opacity, which SVG Tiny understands). Namespace
@@ -96,6 +98,10 @@ void MascotCatalog::addRoot(const QString &dir) {
 
 void MascotCatalog::refresh() {
     m_rawCache.clear();
+    m_rawCacheOrder.clear();
+    m_rawCacheBytes = 0;
+    m_rawMisses.clear();
+    m_rawMissOrder.clear();
     m_anchors.clear();
     m_anchorsLoaded = false;
     m_kinds.clear();
@@ -161,6 +167,8 @@ QByteArray MascotCatalog::rawPart(const QString &slot, const QString &name) cons
     const auto it = m_rawCache.constFind(key);
     if (it != m_rawCache.constEnd())
         return *it;
+    if (m_rawMisses.contains(key))
+        return QByteArray();
     QByteArray bytes;
     for (const QString &root : m_roots) {
         QFile f(root + QLatin1Char('/') + key + QStringLiteral(".svg"));
@@ -169,7 +177,26 @@ QByteArray MascotCatalog::rawPart(const QString &slot, const QString &name) cons
             break;
         }
     }
-    m_rawCache.insert(key, bytes); // cache misses too (empty)
+    if (bytes.isEmpty()) {
+        m_rawMisses.insert(key);
+        m_rawMissOrder << key;
+        while (m_rawMissOrder.size() > kMaxRawMisses)
+            m_rawMisses.remove(m_rawMissOrder.takeFirst());
+        return bytes;
+    }
+    if (bytes.size() <= kMaxRawCacheBytes) {
+        m_rawCacheBytes += bytes.size();
+        m_rawCache.insert(key, bytes);
+        m_rawCacheOrder << key;
+        while (m_rawCacheBytes > kMaxRawCacheBytes && !m_rawCacheOrder.isEmpty()) {
+            const QString evict = m_rawCacheOrder.takeFirst();
+            const auto old = m_rawCache.constFind(evict);
+            if (old != m_rawCache.constEnd()) {
+                m_rawCacheBytes -= old->size();
+                m_rawCache.erase(old);
+            }
+        }
+    }
     return bytes;
 }
 

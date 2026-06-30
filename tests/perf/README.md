@@ -55,6 +55,12 @@ Metrics:
 - `mascot_render_unique_500`: render 500 different deterministic mascot pixmaps.
 - `mascot_render_repeated_500`: render the same mascot 500 times to measure cache reuse.
 - `rss_after_rebuild` / `rss_final`: peak RSS where the platform exposes it.
+- `rss_after_scan_current`, `rss_after_rebuild_current`,
+  `rss_after_search_current`, `rss_after_editor_current`,
+  `rss_after_mascot_current`: current resident memory snapshots after each
+  major phase, where the platform exposes it.
+- `rss_search_rebuild_delta`: current resident memory added by full search
+  indexing, measured from just before to just after `search_rebuild`.
 
 For consistent release comparisons, run on the same machine, same Qt version,
 same build type, and close unrelated heavy processes. Use Release builds.

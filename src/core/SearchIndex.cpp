@@ -3,7 +3,7 @@
 #include "MascotSeed.h"
 #include "Perf.h"
 #include "Vault.h"
-#include <QRegularExpression>
+#include <QFile>
 #include <QSet>
 #include <algorithm>
 
@@ -21,25 +21,52 @@ QString makeSnippet(const QString &content, const QString &token) {
         line = line.left(117) + QStringLiteral("…");
     return line;
 }
+
+QString readSnippetContent(const QString &path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return QString();
+    QString content = QString::fromUtf8(f.readAll());
+    content.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    content.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    return MascotSeed::strip(content);
+}
+
+template <typename Fn>
+void forEachToken(const QString &text, Fn fn) {
+    QString token;
+    for (const QChar ch : text) {
+        if (ch.isLetterOrNumber()) {
+            token.append(ch.toLower());
+        } else if (!token.isEmpty()) {
+            fn(token);
+            token.clear();
+        }
+    }
+    if (!token.isEmpty())
+        fn(token);
+}
 } // namespace
 
 QStringList SearchIndex::tokenize(const QString &text) {
-    static const QRegularExpression sep(QStringLiteral("[^\\p{L}\\p{N}]+"));
-    return text.toLower().split(sep, Qt::SkipEmptyParts);
+    QStringList tokens;
+    forEachToken(text, [&](const QString &token) { tokens << token; });
+    return tokens;
 }
 
-void SearchIndex::indexDoc(int id) {
+void SearchIndex::indexDoc(int id, const QString &content) {
     Doc &doc = m_docs[id];
-    const QStringList all = tokenize(doc.title + QLatin1Char(' ') + doc.content);
-    doc.termFreq.clear();
-    for (const QString &term : all)
-        ++doc.termFreq[term];
-    doc.terms = QStringList(doc.termFreq.keyBegin(), doc.termFreq.keyEnd());
+    QHash<QString, int> termFreq;
+    auto count = [&](const QString &term) { ++termFreq[term]; };
+    forEachToken(doc.title, count);
+    forEachToken(content, count);
+
+    doc.terms = QStringList(termFreq.keyBegin(), termFreq.keyEnd());
     for (const QString &term : doc.terms) {
-        QVector<int> &posting = m_postings[term];
+        QVector<Posting> &posting = m_postings[term];
         if (posting.isEmpty())
             m_termsDirty = true; // a new word entered the vocabulary
-        posting.append(id);
+        posting.append({id, termFreq.value(term)});
     }
 }
 
@@ -49,7 +76,11 @@ void SearchIndex::unindexDoc(int id) {
         auto it = m_postings.find(term);
         if (it == m_postings.end())
             continue;
-        it->removeAll(id);
+        it->erase(std::remove_if(it->begin(), it->end(),
+                                 [id](const Posting &p) {
+                                     return p.docId == id;
+                                 }),
+                  it->end());
         if (it->isEmpty()) {
             m_postings.erase(it);
             m_termsDirty = true;
@@ -63,10 +94,10 @@ void SearchIndex::rebuild(const Vault &vault) {
     for (const Note &n : vault.notes()) {
         const int id = m_nextId++;
         // Drop a leading mascot header line so it doesn't pollute the index.
-        m_docs.insert(id, Doc{n.path, n.title,
-                              MascotSeed::strip(vault.read(n.path)), {}, {}});
+        const QString body = MascotSeed::strip(vault.read(n.path));
+        m_docs.insert(id, Doc{n.path, n.title, {}});
         m_byPath.insert(n.path, id);
-        indexDoc(id);
+        indexDoc(id, body);
     }
 }
 
@@ -89,15 +120,13 @@ void SearchIndex::updateNote(const QString &path, const QString &title,
         unindexDoc(id);
         Doc &doc = m_docs[id];
         doc.title = title;
-        doc.content = body;
         doc.terms.clear();
-        doc.termFreq.clear();
     } else {
         id = m_nextId++;
-        m_docs.insert(id, Doc{path, title, body, {}, {}});
+        m_docs.insert(id, Doc{path, title, {}});
         m_byPath.insert(path, id);
     }
-    indexDoc(id);
+    indexDoc(id, body);
 }
 
 void SearchIndex::removeNote(const QString &path) {
@@ -156,11 +185,9 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
             const auto posting = m_postings.constFind(term);
             if (posting == m_postings.constEnd())
                 continue;
-            for (int id : *posting) {
-                forToken.insert(id);
-                const auto doc = m_docs.constFind(id);
-                if (doc != m_docs.constEnd())
-                    frequencyScore[id] += doc->termFreq.value(term);
+            for (const Posting &p : *posting) {
+                forToken.insert(p.docId);
+                frequencyScore[p.docId] += p.frequency;
             }
         }
         if (first) {
@@ -193,9 +220,7 @@ QList<SearchIndex::Result> SearchIndex::search(const QString &query,
     if (results.size() > limit)
         results.erase(results.begin() + limit, results.end());
     for (Result &r : results) {
-        const auto it = m_byPath.constFind(r.path);
-        if (it != m_byPath.constEnd())
-            r.snippet = makeSnippet(m_docs[*it].content, tokens.first());
+        r.snippet = makeSnippet(readSnippetContent(r.path), tokens.first());
     }
     return results;
 }

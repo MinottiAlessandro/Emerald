@@ -18,6 +18,7 @@
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QUrl>
+#include <memory>
 
 namespace {
 
@@ -170,6 +171,16 @@ void Updater::startDownload(const QString &url, const QString &assetName,
         savePath = QDir(dir).filePath(assetName);
     }
 
+    auto *out = new QFile(savePath, this);
+    if (!out->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        delete out;
+        m_busy = false;
+        QMessageBox::warning(
+            m_window, tr("Download Failed"),
+            tr("Couldn't save the download to:\n%1").arg(savePath));
+        return;
+    }
+
     auto *progress = new QProgressDialog(
         tr("Downloading Emerald v%1…").arg(version), tr("Cancel"), 0, 100, m_window);
     progress->setWindowModality(Qt::WindowModal);
@@ -181,35 +192,43 @@ void Updater::startDownload(const QString &url, const QString &assetName,
     QNetworkRequest req((QUrl(url)));
     prepare(req);
     QNetworkReply *reply = m_net->get(req);
+    const auto writeFailed = std::make_shared<bool>(false);
 
     connect(reply, &QNetworkReply::downloadProgress, progress,
             [progress](qint64 received, qint64 total) {
                 if (total > 0)
                     progress->setValue(int(received * 100 / total));
             });
+    connect(reply, &QNetworkReply::readyRead, out, [reply, out, writeFailed] {
+        if (out->write(reply->readAll()) < 0)
+            *writeFailed = true;
+    });
     connect(progress, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, progress, savePath, version] {
+            [this, reply, progress, out, writeFailed, savePath, version] {
+                if (reply->bytesAvailable() > 0 && out->write(reply->readAll()) < 0)
+                    *writeFailed = true;
+                out->close();
+                out->deleteLater();
                 reply->deleteLater();
                 progress->deleteLater();
                 m_busy = false;
 
                 if (reply->error() != QNetworkReply::NoError) {
+                    QFile::remove(savePath);
                     if (reply->error() != QNetworkReply::OperationCanceledError)
                         QMessageBox::warning(m_window, tr("Download Failed"),
                                              reply->errorString());
                     return;
                 }
 
-                QFile f(savePath);
-                if (!f.open(QIODevice::WriteOnly) ||
-                    f.write(reply->readAll()) < 0) {
+                if (*writeFailed) {
+                    QFile::remove(savePath);
                     QMessageBox::warning(
                         m_window, tr("Download Failed"),
                         tr("Couldn't save the download to:\n%1").arg(savePath));
                     return;
                 }
-                f.close();
                 finishDownload(savePath, version);
             });
 }

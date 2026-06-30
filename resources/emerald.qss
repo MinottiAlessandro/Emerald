@@ -52,13 +52,16 @@ QListWidget::item:selected {
 }
 
 /* Sidebar note tree (folders + notes) */
-QTreeWidget {
+QTreeView {
     background: #101113;
     color: #92b3a2;
     border: none;
     outline: 0;
     padding: 6px;
     font-size: 14px;
+}
+QTreeView::viewport {
+    background: #101113;
 }
 QTreeView::item {
     padding: 8px 8px;

@@ -1131,7 +1131,8 @@ void MarkdownEditor::moveLines(bool up) {
 
 void MarkdownEditor::forEachCodeBlock(
     const QRectF &clip,
-    const std::function<void(const CodeBlock &)> &fn) const {
+    const std::function<void(const CodeBlock &)> &fn,
+    bool includeCode) const {
     const qreal docMargin = document()->documentMargin();
     const qreal left = docMargin * 0.5;
     const qreal right = viewport()->width() - docMargin * 0.5;
@@ -1171,7 +1172,8 @@ void MarkdownEditor::forEachCodeBlock(
         cb.copyBtn = QRectF(cb.header.right() - s - 8,
                             cb.header.center().y() - s / 2, s, s);
         cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang;
-        cb.code = code.join(QLatin1Char('\n'));
+        if (includeCode)
+            cb.code = code.join(QLatin1Char('\n'));
         // The caret or selection touching the block (see selFirst/selLast above)
         // means it's being edited; callers then show raw markup instead of the
         // header bar (which would overlap the now-visible ``` fence).
@@ -1196,7 +1198,8 @@ void MarkdownEditor::forEachCodeBlock(
             lang = m.hasMatch() ? m.captured(1) : QString();
             code.clear();
         } else if (isCode && inCode) { // inner code line
-            code << b.text();
+            if (includeCode)
+                code << b.text();
         } else if (!isCode && inCode) { // closing fence
             emitRegion(geo.bottom(), b.blockNumber());
             inCode = false;
@@ -1217,7 +1220,7 @@ bool MarkdownEditor::copyCodeBlockAt(const QPoint &pos) {
             QApplication::clipboard()->setText(cb.code);
             copied = true;
         }
-    });
+    }, true);
     if (copied)
         emit noticeRequested(tr("Copied code to clipboard"));
     return copied;

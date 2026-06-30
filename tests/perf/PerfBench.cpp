@@ -22,6 +22,7 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #elif defined(Q_OS_MACOS)
+#include <mach/mach.h>
 #include <sys/resource.h>
 #endif
 
@@ -36,19 +37,28 @@ struct Sample {
     double ms = 0.0;
 };
 
-qint64 peakRssKb() {
+qint64 linuxStatusKb(const char *field) {
 #if defined(Q_OS_LINUX) || defined(__linux__)
     QFile f(QStringLiteral("/proc/self/status"));
-    if (f.open(QIODevice::ReadOnly)) {
-        while (!f.atEnd()) {
-            const QByteArray line = f.readLine();
-            if (line.startsWith("VmHWM:")) {
-                const QList<QByteArray> parts = line.simplified().split(' ');
-                if (parts.size() >= 2)
-                    return parts.at(1).toLongLong();
-            }
-        }
+    if (!f.open(QIODevice::ReadOnly))
+        return -1;
+    const QByteArray prefix = QByteArray(field) + ':';
+    while (!f.atEnd()) {
+        const QList<QByteArray> parts = f.readLine().simplified().split(' ');
+        if (parts.size() >= 2 && parts.at(0) == prefix)
+            return parts.at(1).toLongLong();
     }
+#else
+    Q_UNUSED(field);
+#endif
+    return -1;
+}
+
+qint64 peakRssKb() {
+#if defined(Q_OS_LINUX) || defined(__linux__)
+    const qint64 hwm = linuxStatusKb("VmHWM");
+    if (hwm >= 0)
+        return hwm;
     struct rusage usage;
     if (getrusage(RUSAGE_SELF, &usage) != 0)
         return -1;
@@ -58,6 +68,30 @@ qint64 peakRssKb() {
     if (getrusage(RUSAGE_SELF, &usage) != 0)
         return -1;
     return usage.ru_maxrss;
+#else
+    return -1;
+#endif
+}
+
+qint64 currentRssKb() {
+#if defined(Q_OS_LINUX) || defined(__linux__)
+    QFile f(QStringLiteral("/proc/self/statm"));
+    if (!f.open(QIODevice::ReadOnly))
+        return linuxStatusKb("VmRSS");
+    const QList<QByteArray> parts = f.readAll().simplified().split(' ');
+    if (parts.size() < 2)
+        return linuxStatusKb("VmRSS");
+    const qint64 residentPages = parts.at(1).toLongLong();
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    return pageSize > 0 ? residentPages * qint64(pageSize) / 1024
+                        : linuxStatusKb("VmRSS");
+#elif defined(Q_OS_MACOS)
+    mach_task_basic_info_data_t info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
+        return -1;
+    return static_cast<qint64>(info.resident_size / 1024);
 #else
     return -1;
 #endif
@@ -222,11 +256,22 @@ int main(int argc, char **argv) {
               timeMs([&] { vault.scan(); }), QStringLiteral("ms"));
     addMetric(metrics, QStringLiteral("notes_indexed"), vault.notes().size(),
               QStringLiteral("count"));
+    addMetric(metrics, QStringLiteral("rss_after_scan_current"), currentRssKb(),
+              QStringLiteral("KiB"));
 
     SearchIndex index;
+    const qint64 rssBeforeSearch = currentRssKb();
     addMetric(metrics, QStringLiteral("search_rebuild"),
               timeMs([&] { index.rebuild(vault); }), QStringLiteral("ms"));
+    const qint64 rssAfterSearch = currentRssKb();
     addMetric(metrics, QStringLiteral("rss_after_rebuild"), peakRssKb(),
+              QStringLiteral("KiB"));
+    addMetric(metrics, QStringLiteral("rss_after_rebuild_current"), rssAfterSearch,
+              QStringLiteral("KiB"));
+    addMetric(metrics, QStringLiteral("rss_search_rebuild_delta"),
+              (rssBeforeSearch >= 0 && rssAfterSearch >= 0)
+                  ? rssAfterSearch - rssBeforeSearch
+                  : -1,
               QStringLiteral("KiB"));
 
     const ChunkedIndexResult chunked = chunkedIndex(vault);
@@ -248,6 +293,8 @@ int main(int argc, char **argv) {
     }
     addMetric(metrics, QStringLiteral("search_p50"), median(searchTimes), QStringLiteral("ms"));
     addMetric(metrics, QStringLiteral("search_p95"), percentile(searchTimes, 0.95), QStringLiteral("ms"));
+    addMetric(metrics, QStringLiteral("rss_after_search_current"), currentRssKb(),
+              QStringLiteral("KiB"));
 
     const Note updateNote = vault.notes().at(qMin(10, vault.notes().size() - 1));
     QString updated = vault.read(updateNote.path);
@@ -273,6 +320,8 @@ int main(int argc, char **argv) {
                   editor.render(&p);
               }),
               QStringLiteral("ms"));
+    addMetric(metrics, QStringLiteral("rss_after_editor_current"), currentRssKb(),
+              QStringLiteral("KiB"));
 
     const QStringList formulas{
         QStringLiteral("\\frac{a+b}{\\sqrt{x^2+y^2}}"),
@@ -309,6 +358,8 @@ int main(int argc, char **argv) {
                       Mascot::renderPixmap(seed, QString(), QSize(176, 196));
               }),
               QStringLiteral("ms"));
+    addMetric(metrics, QStringLiteral("rss_after_mascot_current"), currentRssKb(),
+              QStringLiteral("KiB"));
     addMetric(metrics, QStringLiteral("rss_final"), peakRssKb(), QStringLiteral("KiB"));
 
     QJsonObject root;
