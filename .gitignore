@@ -1,5 +1,6 @@
 build/
 build-appimage/
+build-heaptrack/
 build-perf*/
 *.AppImage
 *.user

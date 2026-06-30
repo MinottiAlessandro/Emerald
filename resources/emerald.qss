@@ -286,7 +286,8 @@ QLabel#settingsFieldLabel {
     font-size: 13px;
 }
 QDialog#settingsDialog QComboBox,
-QDialog#settingsDialog QAbstractSpinBox {
+QDialog#settingsDialog QAbstractSpinBox,
+QDialog#settingsDialog QLineEdit {
     background: #17181b;
     color: #d7eee2;
     border: 1px solid #254232;
@@ -296,7 +297,8 @@ QDialog#settingsDialog QAbstractSpinBox {
     selection-background-color: #1f4a33;
 }
 QDialog#settingsDialog QComboBox:focus,
-QDialog#settingsDialog QAbstractSpinBox:focus {
+QDialog#settingsDialog QAbstractSpinBox:focus,
+QDialog#settingsDialog QLineEdit:focus {
     border: 1px solid #2bbf74;
 }
 QDialog#settingsDialog QComboBox::drop-down {
@@ -331,6 +333,11 @@ QDialog#settingsDialog QPushButton:hover {
 }
 QDialog#settingsDialog QPushButton:pressed {
     background: #183927;
+}
+QDialog#settingsDialog QPushButton:disabled {
+    background: #16241c;
+    color: #4f6555;
+    border: 1px solid #20382b;
 }
 
 /* Transient toast notice that floats over the bottom of the editor and

@@ -188,6 +188,7 @@ private:
     QFileSystemWatcher *m_watcher = nullptr;
     QString m_currentPath;
     QString m_currentTitle;
+    QString m_pendingNoteDir; // target folder for an unsaved New Note draft
     quint64 m_lastSavedFingerprint = 0; // body fingerprint as last written/loaded
     bool m_loading = false;
 

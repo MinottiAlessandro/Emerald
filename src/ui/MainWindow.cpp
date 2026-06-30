@@ -27,6 +27,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QFontMetrics>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFontComboBox>
@@ -712,6 +713,147 @@ QString markdownAltText(QString text) {
     text = text.trimmed();
     return text.isEmpty() ? QStringLiteral("Image") : text;
 }
+
+QString elideRightAscii(const QString &text, const QFontMetrics &fm, int width) {
+    if (text.isEmpty() || fm.horizontalAdvance(text) <= width)
+        return text;
+    const QString dots = QStringLiteral("...");
+    const int dotsWidth = fm.horizontalAdvance(dots);
+    if (dotsWidth >= width)
+        return dots;
+
+    int lo = 0;
+    int hi = text.size();
+    while (lo < hi) {
+        const int mid = (lo + hi + 1) / 2;
+        if (fm.horizontalAdvance(text.left(mid)) + dotsWidth <= width)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+    return text.left(lo) + dots;
+}
+
+class ElidedLabel : public QLabel {
+public:
+    explicit ElidedLabel(const QString &text, QWidget *parent = nullptr)
+        : QLabel(parent), m_fullText(text) {
+        updateText();
+    }
+
+    void setFullText(const QString &text) {
+        if (m_fullText == text)
+            return;
+        m_fullText = text;
+        updateText();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QLabel::resizeEvent(event);
+        updateText();
+    }
+
+private:
+    void updateText() {
+        QLabel::setText(elideRightAscii(m_fullText, fontMetrics(), width()));
+    }
+
+    QString m_fullText;
+};
+
+void prepareDialogButtons(QDialogButtonBox *buttons) {
+    for (auto *button : buttons->findChildren<QPushButton *>()) {
+        button->setIcon(QIcon());
+        button->setAutoDefault(false);
+        button->setDefault(false);
+    }
+}
+
+QVBoxLayout *createEmeraldDialogRoot(QDialog *dlg, const QString &title,
+                                     const QString &subtitle = QString()) {
+    dlg->setObjectName(QStringLiteral("settingsDialog"));
+    dlg->setWindowTitle(title);
+    dlg->setSizeGripEnabled(false);
+
+    auto *root = new QVBoxLayout(dlg);
+    root->setContentsMargins(24, 22, 24, 20);
+    root->setSpacing(12);
+    root->setAlignment(Qt::AlignCenter);
+
+    auto *heading = new QLabel(title, dlg);
+    heading->setObjectName(QStringLiteral("settingsTitle"));
+    heading->setAlignment(Qt::AlignCenter);
+    root->addWidget(heading);
+
+    if (!subtitle.isEmpty()) {
+        auto *sub = new QLabel(subtitle, dlg);
+        sub->setObjectName(QStringLiteral("settingsSubtitle"));
+        sub->setAlignment(Qt::AlignCenter);
+        sub->setWordWrap(true);
+        root->addWidget(sub);
+    }
+    return root;
+}
+
+bool runFolderNameDialog(QWidget *parent, QString *out) {
+    QDialog dlg(parent);
+    auto *root = createEmeraldDialogRoot(&dlg, QObject::tr("New Folder"));
+
+    auto *input = new QLineEdit(&dlg);
+    input->setObjectName(QStringLiteral("dialogInput"));
+    input->setPlaceholderText(QObject::tr("Folder name"));
+    input->setFixedWidth(300);
+    root->addWidget(input, 0, Qt::AlignCenter);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    if (auto *ok = buttons->button(QDialogButtonBox::Ok)) {
+        ok->setText(QObject::tr("Ok"));
+        ok->setEnabled(false);
+    }
+    buttons->setCenterButtons(true);
+    prepareDialogButtons(buttons);
+    root->addWidget(buttons, 0, Qt::AlignCenter);
+
+    QObject::connect(input, &QLineEdit::textChanged, &dlg, [buttons](const QString &text) {
+        if (auto *ok = buttons->button(QDialogButtonBox::Ok))
+            ok->setEnabled(!text.trimmed().isEmpty());
+    });
+    QObject::connect(input, &QLineEdit::returnPressed, &dlg, [&dlg, buttons] {
+        if (auto *ok = buttons->button(QDialogButtonBox::Ok); ok && ok->isEnabled())
+            dlg.accept();
+    });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    dlg.adjustSize();
+    dlg.setFixedSize(dlg.sizeHint());
+    input->setFocus();
+    if (dlg.exec() != QDialog::Accepted)
+        return false;
+    *out = input->text().trimmed();
+    return true;
+}
+
+bool runTrashDialog(QWidget *parent, const QString &question) {
+    QDialog dlg(parent);
+    auto *root = createEmeraldDialogRoot(&dlg, question);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    if (auto *ok = buttons->button(QDialogButtonBox::Ok))
+        ok->setText(QObject::tr("Ok"));
+    buttons->setCenterButtons(true);
+    prepareDialogButtons(buttons);
+    root->addWidget(buttons, 0, Qt::AlignCenter);
+
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    dlg.adjustSize();
+    dlg.setFixedSize(dlg.sizeHint());
+    return dlg.exec() == QDialog::Accepted;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -813,6 +955,20 @@ void MainWindow::buildUi() {
             [this] { renameCurrent(m_titleEdit->text()); });
     // Enter on the title drops the caret onto the first body line, ready to type.
     connect(m_titleEdit, &QLineEdit::returnPressed, this, [this] {
+        if (m_currentPath.isEmpty()) {
+            const QString title = m_titleEdit->text().trimmed();
+            if (!Vault::isValidTitle(title)) {
+                notify(tr("Enter a valid note title"), 2500);
+                m_titleEdit->setFocus();
+                return;
+            }
+            saveCurrent();
+            if (m_currentPath.isEmpty()) {
+                m_titleEdit->setFocus();
+                m_titleEdit->selectAll();
+                return;
+            }
+        }
         QTextCursor c = m_editor->textCursor();
         c.setPosition(m_editor->firstContentPosition()); // skip a hidden header line
         m_editor->setTextCursor(c);
@@ -881,7 +1037,7 @@ void MainWindow::buildUi() {
     auto *hrow = new QHBoxLayout(header);
     hrow->setContentsMargins(10, 4, 4, 4);
     hrow->setSpacing(2);
-    m_sideTitle = new QLabel(tr("Notes"), header);
+    m_sideTitle = new ElidedLabel(tr("Notes"), header);
     m_sideTitle->setObjectName(QStringLiteral("sideTitle"));
     m_sideTitle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *backBtn = new QToolButton(header);
@@ -892,8 +1048,7 @@ void MainWindow::buildUi() {
     fwdBtn->setObjectName(QStringLiteral("navButton"));
     fwdBtn->setDefaultAction(m_forwardAction);
     fwdBtn->setIconSize(QSize(22, 22));
-    hrow->addWidget(m_sideTitle);
-    hrow->addStretch();
+    hrow->addWidget(m_sideTitle, 1);
     hrow->addWidget(backBtn);
     hrow->addWidget(fwdBtn);
 
@@ -1738,6 +1893,7 @@ void MainWindow::openVault(const QString &path) {
 
     m_currentPath.clear();
     m_currentTitle.clear();
+    m_pendingNoteDir.clear();
     m_lastSavedFingerprint = 0;
     m_history.clear();
     m_histIndex = -1;
@@ -1767,7 +1923,15 @@ void MainWindow::updateVaultTitle() {
         title = QFileInfo(m_vault->root()).fileName();
     if (title.isEmpty())
         title = tr("Notes");
-    m_sideTitle->setText(title);
+    if (auto *label = dynamic_cast<ElidedLabel *>(m_sideTitle))
+        label->setFullText(title);
+    else
+        m_sideTitle->setText(title);
+    const QString minText =
+        title.size() > 10 ? title.left(10) + QStringLiteral("...")
+                          : title;
+    m_sideTitle->setMinimumWidth(
+        qMax(80, m_sideTitle->fontMetrics().horizontalAdvance(minText)));
     m_sideTitle->setToolTip(m_vault ? QDir::toNativeSeparators(m_vault->root())
                                     : QString());
 }
@@ -1993,6 +2157,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record) {
     m_loading = false;
 
     m_currentPath = path;
+    m_pendingNoteDir.clear();
     m_lastSavedFingerprint = contentFingerprint(body);
     m_currentTitle = Vault::titleFromPath(path);
     watchCurrent();
@@ -2092,20 +2257,24 @@ void MainWindow::saveCurrent() {
             notify(tr("A note named “%1” already exists").arg(title), 3000);
             return;
         }
-        // Honour the configured new-note folder (default: the vault root).
-        QString dir = m_vault->root();
-        const QString rel =
-            QSettings().value(QStringLiteral("newNoteFolder")).toString();
-        if (!rel.isEmpty()) {
-            const QString candidate = QDir(m_vault->root()).filePath(rel);
-            if (QDir(candidate).exists())
-                dir = candidate;
+        QString dir = m_pendingNoteDir;
+        if (dir.isEmpty() || !QDir(dir).exists()) {
+            // Honour the configured new-note folder (default: the vault root).
+            dir = m_vault->root();
+            const QString rel =
+                QSettings().value(QStringLiteral("newNoteFolder")).toString();
+            if (!rel.isEmpty()) {
+                const QString candidate = QDir(m_vault->root()).filePath(rel);
+                if (QDir(candidate).exists())
+                    dir = candidate;
+            }
         }
         const Note note = m_vault->createNoteIn(dir, title);
         if (note.path.isEmpty())
             return;
         m_currentPath = note.path;
         m_currentTitle = title;
+        m_pendingNoteDir.clear();
         const QString content = m_editor->toPlainText();
         m_vault->write(note.path, content);
         m_lastSavedFingerprint = contentFingerprint(content);
@@ -2742,6 +2911,7 @@ void MainWindow::reconcileAfterDeletion() {
     }
     m_currentPath.clear();
     m_currentTitle.clear();
+    m_pendingNoteDir.clear();
     m_lastSavedFingerprint = 0;
     // Empty the editor + title buffer now. Otherwise the pre-load save that
     // openNoteByPath() runs below would see an empty m_currentPath next to the
@@ -2786,19 +2956,12 @@ void MainWindow::deleteEntries(const QStringList &pathsIn) {
     if (paths.size() == 1) {
         const QString p = paths.first();
         const bool isFolder = QFileInfo(p).isDir();
-        const QString name =
-            isFolder ? QFileInfo(p).fileName() : Vault::titleFromPath(p);
-        question =
-            isFolder
-                ? tr("Move the folder “%1” and everything inside it to the trash?")
-                      .arg(name)
-                : tr("Move the note “%1” to the trash?").arg(name);
+        question = isFolder ? tr("Move the folder to the trash?")
+                            : tr("Move the note to the trash?");
     } else {
-        question =
-            tr("Move the %1 selected items to the trash?").arg(paths.size());
+        question = tr("Move the selected items to the trash?");
     }
-    if (QMessageBox::question(this, tr("Move to Trash"), question) !=
-        QMessageBox::Yes)
+    if (!runTrashDialog(this, question))
         return;
 
     int removed = 0;
@@ -2833,19 +2996,31 @@ void MainWindow::deleteEntries(const QStringList &pathsIn) {
 }
 
 void MainWindow::newNoteIn(const QString &dir) {
-    bool ok = false;
-    const QString name =
-        QInputDialog::getText(this, tr("New Note"), tr("Title:"),
-                              QLineEdit::Normal, QString(), &ok)
-            .trimmed();
-    if (!ok || !Vault::isValidTitle(name))
+    if (!m_vault)
         return;
-    const Note note = m_vault->createNoteIn(dir, name);
-    m_vault->scan();
-    m_searchIndex.updateNote(note.path, note.title, m_vault->read(note.path));
-    markNoteMetaCurrent(note.path, note.title);
-    refreshTree();
-    openNoteByPath(note.path);
+    saveCurrent();
+
+    m_currentPath.clear();
+    m_currentTitle.clear();
+    m_pendingNoteDir = QDir(dir).exists() ? dir : m_vault->root();
+    m_lastSavedFingerprint = 0;
+
+    m_editor->clearFolds();
+    m_loading = true;
+    m_editor->clear();
+    m_editor->setImageBasePath(m_pendingNoteDir);
+    m_editor->document()->setModified(false);
+    m_loading = false;
+
+    m_titleEdit->blockSignals(true);
+    m_titleEdit->clear();
+    m_titleEdit->blockSignals(false);
+    m_titleEdit->setFocus();
+
+    if (m_noteTree && m_noteTree->selectionModel())
+        m_noteTree->selectionModel()->clearSelection();
+    setWindowTitle(QStringLiteral("Emerald — New Note"));
+    updateNavActions();
 }
 
 void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn) {
@@ -2906,12 +3081,8 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
 }
 
 void MainWindow::newFolderIn(const QString &dir) {
-    bool ok = false;
-    const QString name =
-        QInputDialog::getText(this, tr("New Folder"), tr("Folder name:"),
-                              QLineEdit::Normal, QString(), &ok)
-            .trimmed();
-    if (!ok || name.isEmpty())
+    QString name;
+    if (!runFolderNameDialog(this, &name))
         return;
     if (!m_vault->createFolder(dir, name)) {
         notify(tr("Couldn't create that folder"), 3000);

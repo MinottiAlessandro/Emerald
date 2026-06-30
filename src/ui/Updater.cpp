@@ -1,10 +1,13 @@
 #include "Updater.h"
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileDevice>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -60,6 +63,98 @@ QString platformAssetName() {
                : QStringLiteral("Emerald-x86_64.AppImage");
 #endif
 }
+
+#if defined(Q_OS_MACOS)
+QString currentMacAppBundlePath() {
+    QDir dir(QCoreApplication::applicationDirPath());
+    if (!dir.cdUp() || !dir.cdUp())
+        return {};
+    const QString bundlePath = dir.absolutePath();
+    return bundlePath.endsWith(QStringLiteral(".app")) ? bundlePath : QString();
+}
+
+QString macUpdateStagePath() {
+    const QString name = QStringLiteral("EmeraldUpdate-%1-%2")
+                             .arg(QCoreApplication::applicationPid())
+                             .arg(QDateTime::currentMSecsSinceEpoch());
+    const QString path = QDir(QDir::tempPath()).filePath(name);
+    return QDir().mkpath(path) ? path : QString();
+}
+
+QByteArray macInstallerScript() {
+    return R"SH(#!/bin/sh
+set -u
+
+pid="$1"
+dmg="$2"
+target="$3"
+version="$4"
+log="$5"
+
+exec >>"$log" 2>&1
+
+fail() {
+    echo "ERROR: $*"
+    /usr/bin/osascript -e 'display dialog "Emerald update failed. Please install the downloaded update manually." buttons {"OK"} default button 1 with icon caution' >/dev/null 2>&1 || true
+    exit 1
+}
+
+echo "Installing Emerald $version"
+[ -f "$dmg" ] || fail "Missing dmg: $dmg"
+[ -n "$target" ] || fail "Missing target app path"
+
+while /bin/kill -0 "$pid" >/dev/null 2>&1; do
+    /bin/sleep 0.2
+done
+
+mount_point="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/emerald-update-mount.XXXXXX")" || fail "Could not create mount point"
+attached=0
+cleanup() {
+    if [ "$attached" -eq 1 ]; then
+        /usr/bin/hdiutil detach "$mount_point" -quiet || /usr/bin/hdiutil detach "$mount_point" -force -quiet || true
+    fi
+    /bin/rm -rf "$mount_point"
+}
+trap cleanup EXIT INT TERM
+
+/usr/bin/hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point" || fail "Could not mount dmg"
+attached=1
+
+source_app="$mount_point/Emerald.app"
+if [ ! -d "$source_app" ]; then
+    source_app="$(/usr/bin/find "$mount_point" -maxdepth 1 -name "*.app" -type d -print -quit)"
+fi
+[ -n "$source_app" ] && [ -d "$source_app" ] || fail "No app bundle found in dmg"
+
+parent="$(/usr/bin/dirname "$target")"
+[ -d "$parent" ] || fail "Target parent does not exist: $parent"
+
+backup="${target}.previous-update"
+/bin/rm -rf "$backup" || fail "Could not clear previous backup"
+if [ -e "$target" ]; then
+    /bin/mv "$target" "$backup" || fail "Could not move existing app bundle"
+fi
+
+if /usr/bin/ditto "$source_app" "$target"; then
+    /bin/rm -rf "$backup"
+else
+    copy_rc=$?
+    /bin/rm -rf "$target"
+    if [ -e "$backup" ]; then
+        /bin/mv "$backup" "$target"
+    fi
+    fail "Could not copy new app bundle: $copy_rc"
+fi
+
+/usr/bin/xattr -dr com.apple.quarantine "$target" >/dev/null 2>&1 || true
+/usr/bin/open "$target" || fail "Could not restart Emerald"
+
+/bin/rm -f "$dmg"
+/bin/rm -f "$0"
+exit 0
+)SH";
+}
+#endif
 
 } // namespace
 
@@ -142,6 +237,8 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
     const bool inPlace = !qEnvironmentVariableIsEmpty("APPIMAGE");
     QPushButton *go = box.addButton(
         inPlace ? tr("Install && Restart") : tr("Download"), QMessageBox::AcceptRole);
+#elif defined(Q_OS_MACOS)
+    QPushButton *go = box.addButton(tr("Install && Restart"), QMessageBox::AcceptRole);
 #else
     QPushButton *go = box.addButton(tr("Download"), QMessageBox::AcceptRole);
 #endif
@@ -156,14 +253,18 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                             const QString &version) {
     m_busy = true;
 
-    // Linux AppImage: stage the download beside the running file so the final
-    // rename is a same-filesystem atomic replace. Everything else goes to the
-    // user's Downloads folder, to be opened when finished.
+    // Linux AppImage stages beside the running file so the final rename is a
+    // same-filesystem atomic replace. macOS stages in temp for the helper script.
+    // Everything else goes to Downloads, to be opened when finished.
     QString savePath;
 #if defined(Q_OS_LINUX)
     const QByteArray appimage = qgetenv("APPIMAGE");
     if (!appimage.isEmpty())
         savePath = QString::fromLocal8Bit(appimage) + QStringLiteral(".download");
+#elif defined(Q_OS_MACOS)
+    const QString stagePath = macUpdateStagePath();
+    if (!stagePath.isEmpty())
+        savePath = QDir(stagePath).filePath(assetName);
 #endif
     if (savePath.isEmpty()) {
         const QString dir =
@@ -233,6 +334,77 @@ void Updater::startDownload(const QString &url, const QString &assetName,
             });
 }
 
+bool Updater::installMacUpdate(const QString &dmgPath, const QString &version) {
+#if defined(Q_OS_MACOS)
+    const QString appBundle = currentMacAppBundlePath();
+    if (appBundle.isEmpty()) {
+        QMessageBox::warning(
+            m_window, tr("Update Downloaded"),
+            tr("Emerald isn't running from a macOS app bundle, so it can't install "
+               "this update automatically.\n\nThe disk image will open now."));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dmgPath));
+        return true;
+    }
+
+    const QFileInfo appInfo(appBundle);
+    const QFileInfo parentInfo(appInfo.absolutePath());
+    if (!parentInfo.isWritable()) {
+        QMessageBox::warning(
+            m_window, tr("Update Downloaded"),
+            tr("Emerald can't write to:\n%1\n\nThe disk image will open now so you "
+               "can install the update manually.")
+                .arg(parentInfo.absoluteFilePath()));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dmgPath));
+        return true;
+    }
+
+    const QDir stageDir(QFileInfo(dmgPath).absolutePath());
+    const QString scriptPath = stageDir.filePath(QStringLiteral("install-emerald-update.sh"));
+    const QString logPath = stageDir.filePath(QStringLiteral("install.log"));
+
+    QFile script(scriptPath);
+    if (!script.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(
+            m_window, tr("Update Failed"),
+            tr("Couldn't stage the macOS installer helper.\n\nThe disk image will "
+               "open now."));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dmgPath));
+        return true;
+    }
+    script.write(macInstallerScript());
+    script.close();
+    QFile::setPermissions(scriptPath,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                              QFileDevice::ExeOwner | QFileDevice::ReadGroup |
+                              QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                              QFileDevice::ExeOther);
+
+    const QStringList args{scriptPath,
+                           QString::number(QCoreApplication::applicationPid()),
+                           dmgPath,
+                           appBundle,
+                           version,
+                           logPath};
+    if (!QProcess::startDetached(QStringLiteral("/bin/sh"), args)) {
+        QMessageBox::warning(
+            m_window, tr("Update Failed"),
+            tr("Couldn't start the macOS installer helper.\n\nThe disk image will "
+               "open now."));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dmgPath));
+        return true;
+    }
+
+    if (m_window)
+        m_window->close();
+    QApplication::quit();
+    return true;
+#else
+    Q_UNUSED(dmgPath)
+    Q_UNUSED(version)
+    return false;
+#endif
+}
+
 void Updater::finishDownload(const QString &savedPath, const QString &version) {
 #if defined(Q_OS_LINUX)
     const QByteArray appimage = qgetenv("APPIMAGE");
@@ -262,6 +434,11 @@ void Updater::finishDownload(const QString &savedPath, const QString &version) {
         }
         return;
     }
+#endif
+#if defined(Q_OS_MACOS)
+    if (savedPath.endsWith(QStringLiteral(".dmg"), Qt::CaseInsensitive) &&
+        installMacUpdate(savedPath, version))
+        return;
 #endif
     // macOS / Windows / non-AppImage Linux: hand the installer to the OS.
     QMessageBox::information(

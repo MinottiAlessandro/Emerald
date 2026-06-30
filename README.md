@@ -98,7 +98,7 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 **Polish**
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
 - **Adjustable editor font** (family + size, persisted) and **line spacing**; heading sizes scale with the font.
-- **Self-updating** — **Check for Updates…** pulls the latest release from GitHub (installs in place on Linux AppImage).
+- **Self-updating** — **Check for Updates…** pulls the latest release from GitHub and installs in place on macOS and Linux AppImage builds.
 - **Dark theme**, embedded in the binary.
 
 ---
