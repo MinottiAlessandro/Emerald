@@ -35,9 +35,23 @@ Useful knobs:
 QT_QPA_PLATFORM=offscreen ./build-perf/emerald_perf_tests \
   --notes 10000 \
   --words 250 \
+  --profile heavy \
   --queries 200 \
   --json perf-large.json
 ```
+
+Profiles:
+
+- `classic`: the original benchmark vault shape and the default used by CI;
+  Markdown notes with links, occasional math/code blocks, task/list markup, and
+  shallow nested folders.
+- `light`: mostly plain Markdown notes, shallow folders, a small amount of
+  linking and task/list markup.
+- `mixed`: frontmatter, tags, aliases, nested folders, links, math, code blocks,
+  task/list markup, and local attachment image references.
+- `heavy`: the mixed profile plus deeper folders, more links, more unique
+  tokens, longer notes, more math/code/tables, and more generated local image
+  attachments.
 
 Metrics:
 
@@ -54,7 +68,9 @@ Metrics:
 - `math_measure_and_paint`: repeated formula measure/paint loop.
 - `mascot_render_unique_500`: render 500 different deterministic mascot pixmaps.
 - `mascot_render_repeated_500`: render the same mascot 500 times to measure cache reuse.
-- `rss_after_rebuild` / `rss_final`: peak RSS where the platform exposes it.
+- `rss_start_current`: resident memory after the benchmark creates `QApplication`.
+- `rss_after_rebuild` / `rss_final`: observed peak RSS, using the higher value
+  of the platform peak and the benchmark's own current-RSS snapshots.
 - `rss_after_scan_current`, `rss_after_rebuild_current`,
   `rss_after_search_current`, `rss_after_editor_current`,
   `rss_after_mascot_current`: current resident memory snapshots after each
@@ -64,5 +80,5 @@ Metrics:
 
 For consistent release comparisons, run on the same machine, same Qt version,
 same build type, and close unrelated heavy processes. Use Release builds.
-CI uses the profile in `perf-budget.json`: 2500 notes, 220 words per note, and
-80 query repetitions.
+CI uses the `classic` profile in `perf-budget.json`: 2500 notes, 220 words per
+note, and 80 query repetitions.

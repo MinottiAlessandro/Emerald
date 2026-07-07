@@ -543,6 +543,10 @@ bool MarkdownEditor::followsLink(const QPoint &pos,
         return false;
     if (mods & Qt::ControlModifier)
         return true;
+#ifdef Q_OS_MACOS
+    if (mods & Qt::MetaModifier)
+        return true;
+#endif
     // A plain click follows the link only when it is rendered, i.e. on a line
     // other than the one the cursor (active line) is on, where the markup is
     // still visible for editing.

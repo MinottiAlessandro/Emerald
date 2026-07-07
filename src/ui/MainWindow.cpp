@@ -951,12 +951,20 @@ void MainWindow::buildUi() {
     m_titleEdit->setObjectName(QStringLiteral("noteTitle"));
     m_titleEdit->setPlaceholderText(tr("Untitled"));
     m_titleEdit->setFrame(false);
+    m_titleEdit->installEventFilter(this);
     connect(m_titleEdit, &QLineEdit::editingFinished, this,
             [this] { renameCurrent(m_titleEdit->text()); });
     // Enter on the title drops the caret onto the first body line, ready to type.
     connect(m_titleEdit, &QLineEdit::returnPressed, this, [this] {
         if (m_currentPath.isEmpty()) {
             const QString title = m_titleEdit->text().trimmed();
+            if (title.isEmpty()) {
+                QTextCursor c = m_editor->textCursor();
+                c.setPosition(m_editor->firstContentPosition());
+                m_editor->setTextCursor(c);
+                m_editor->setFocus();
+                return;
+            }
             if (!Vault::isValidTitle(title)) {
                 notify(tr("Enter a valid note title"), 2500);
                 m_titleEdit->setFocus();
@@ -1393,7 +1401,7 @@ void MainWindow::buildActions() {
     auto *rename = new QAction(tr("Rename Note"), this);
     rename->setShortcut(QKeySequence(Qt::Key_F2));
     connect(rename, &QAction::triggered, this, [this] {
-        if (m_currentPath.isEmpty())
+        if (!m_vault || (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()))
             return;
         m_titleEdit->setFocus();
         m_titleEdit->selectAll();
@@ -2810,6 +2818,43 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             findInFile(!(ke->modifiers() & Qt::ShiftModifier));
             return true;
         }
+    } else if (watched == m_titleEdit && event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        const Qt::KeyboardModifiers mods = ke->modifiers();
+        if ((mods & Qt::AltModifier) &&
+            !(mods & (Qt::ControlModifier | Qt::MetaModifier |
+                      Qt::ShiftModifier)) &&
+            (ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Right)) {
+            if (ke->key() == Qt::Key_Left)
+                navigateBack();
+            else
+                navigateForward();
+            return true;
+        }
+        if ((mods & Qt::ControlModifier) &&
+            !(mods & (Qt::AltModifier | Qt::MetaModifier |
+                      Qt::ShiftModifier)) &&
+            (ke->key() == Qt::Key_BracketLeft ||
+             ke->key() == Qt::Key_BracketRight)) {
+            if (ke->key() == Qt::Key_BracketLeft)
+                navigateBack();
+            else
+                navigateForward();
+            return true;
+        }
+#ifdef Q_OS_MACOS
+        if ((mods & Qt::MetaModifier) &&
+            !(mods & (Qt::AltModifier | Qt::ControlModifier |
+                      Qt::ShiftModifier)) &&
+            (ke->key() == Qt::Key_BracketLeft ||
+             ke->key() == Qt::Key_BracketRight)) {
+            if (ke->key() == Qt::Key_BracketLeft)
+                navigateBack();
+            else
+                navigateForward();
+            return true;
+        }
+#endif
     } else if (watched == m_editor && event->type() == QEvent::Resize) {
         if (m_findBar && m_findBar->isVisible())
             positionFindBar();

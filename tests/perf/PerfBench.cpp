@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
@@ -13,6 +14,7 @@
 #include <QJsonObject>
 #include <QLoggingCategory>
 #include <QPainter>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -37,6 +39,71 @@ struct Sample {
     double ms = 0.0;
 };
 
+enum class VaultProfile {
+    Classic,
+    Light,
+    Mixed,
+    Heavy,
+};
+
+VaultProfile parseProfile(const QString &value, bool *ok) {
+    const QString normalized = value.toLower();
+    if (normalized == QStringLiteral("classic")) {
+        *ok = true;
+        return VaultProfile::Classic;
+    }
+    if (normalized == QStringLiteral("light")) {
+        *ok = true;
+        return VaultProfile::Light;
+    }
+    if (normalized == QStringLiteral("mixed")) {
+        *ok = true;
+        return VaultProfile::Mixed;
+    }
+    if (normalized == QStringLiteral("heavy")) {
+        *ok = true;
+        return VaultProfile::Heavy;
+    }
+    *ok = false;
+    return VaultProfile::Mixed;
+}
+
+QString profileName(VaultProfile profile) {
+    switch (profile) {
+    case VaultProfile::Classic:
+        return QStringLiteral("classic");
+    case VaultProfile::Light:
+        return QStringLiteral("light");
+    case VaultProfile::Mixed:
+        return QStringLiteral("mixed");
+    case VaultProfile::Heavy:
+        return QStringLiteral("heavy");
+    }
+    return QStringLiteral("mixed");
+}
+
+bool richProfile(VaultProfile profile) {
+    return profile == VaultProfile::Mixed || profile == VaultProfile::Heavy;
+}
+
+bool heavyProfile(VaultProfile profile) {
+    return profile == VaultProfile::Heavy;
+}
+
+int attachmentCount(VaultProfile profile) {
+    switch (profile) {
+    case VaultProfile::Classic:
+        return 0;
+    case VaultProfile::Light:
+        return 0;
+    case VaultProfile::Mixed:
+        return 12;
+    case VaultProfile::Heavy:
+        return 48;
+    }
+    return 0;
+}
+
 qint64 linuxStatusKb(const char *field) {
 #if defined(Q_OS_LINUX) || defined(__linux__)
     QFile f(QStringLiteral("/proc/self/status"));
@@ -54,9 +121,14 @@ qint64 linuxStatusKb(const char *field) {
     return -1;
 }
 
+qint64 currentRssKb();
+
 qint64 peakRssKb() {
 #if defined(Q_OS_LINUX) || defined(__linux__)
     const qint64 hwm = linuxStatusKb("VmHWM");
+    const qint64 rss = currentRssKb();
+    if (hwm >= 0 && rss >= 0)
+        return qMax(hwm, rss);
     if (hwm >= 0)
         return hwm;
     struct rusage usage;
@@ -97,7 +169,82 @@ qint64 currentRssKb() {
 #endif
 }
 
-QString noteBody(int index, int wordsPerNote) {
+QString folderForNote(int index, VaultProfile profile) {
+    if (profile == VaultProfile::Light)
+        return index % 8 == 0 ? QStringLiteral("reference") : QString();
+    if (profile == VaultProfile::Classic || profile == VaultProfile::Mixed) {
+        if (index % 3 == 1)
+            return QStringLiteral("area-a");
+        if (index % 3 == 2)
+            return QStringLiteral("area-b/nested");
+        return QString();
+    }
+
+    switch (index % 8) {
+    case 0:
+        return QString();
+    case 1:
+        return QStringLiteral("projects/alpha");
+    case 2:
+        return QStringLiteral("projects/beta/research");
+    case 3:
+        return QStringLiteral("daily/2026/q3/week-01");
+    case 4:
+        return QStringLiteral("resources/books/technical");
+    case 5:
+        return QStringLiteral("resources/images/contact-sheets");
+    case 6:
+        return QStringLiteral("archive/clients/acme/meetings");
+    default:
+        return QStringLiteral("archive/clients/zephyr/notes/deep");
+    }
+}
+
+QString attachmentRef(const QString &folder, int index) {
+    QString prefix;
+    if (!folder.isEmpty()) {
+        const int depth = folder.count(QLatin1Char('/')) + 1;
+        for (int i = 0; i < depth; ++i)
+            prefix += QStringLiteral("../");
+    }
+    return prefix + QStringLiteral("_attachments/image-%1.png")
+                        .arg(index, 2, 10, QLatin1Char('0'));
+}
+
+void makeAttachments(const QString &root, VaultProfile profile) {
+    const int count = attachmentCount(profile);
+    if (count == 0)
+        return;
+
+    QDir dir(root);
+    dir.mkpath(QStringLiteral("_attachments"));
+    const QSize size = heavyProfile(profile) ? QSize(960, 540) : QSize(480, 270);
+    for (int i = 0; i < count; ++i) {
+        QImage image(size, QImage::Format_RGB32);
+        QPainter painter(&image);
+        const QColor base = QColor::fromHsv((i * 37) % 360, 130, 48);
+        const QColor accent = QColor::fromHsv((i * 37 + 120) % 360, 170, 210);
+        painter.fillRect(image.rect(), base);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(accent);
+        painter.drawEllipse(QRect(size.width() / 8, size.height() / 8,
+                                  size.width() / 2, size.height() / 2));
+        painter.setBrush(QColor(245, 245, 245, 190));
+        painter.drawRect(QRect(size.width() / 2, size.height() / 3,
+                               size.width() / 3, size.height() / 3));
+        painter.setPen(QColor(20, 28, 25));
+        painter.drawText(image.rect().adjusted(24, 24, -24, -24),
+                         Qt::AlignBottom | Qt::AlignRight,
+                         QStringLiteral("attachment %1").arg(i));
+        painter.end();
+        image.save(dir.filePath(QStringLiteral("_attachments/image-%1.png")
+                                    .arg(i, 2, 10, QLatin1Char('0'))),
+                   "PNG");
+    }
+}
+
+QString noteBody(int index, int wordsPerNote, int noteCount,
+                 VaultProfile profile, const QString &folder) {
     static const QStringList words{
         QStringLiteral("emerald"), QStringLiteral("vault"), QStringLiteral("markdown"),
         QStringLiteral("search"), QStringLiteral("index"), QStringLiteral("render"),
@@ -110,16 +257,71 @@ QString noteBody(int index, int wordsPerNote) {
     QTextStream out(&body);
     if (index % 7 == 0)
         out << "<!-- mascot: " << quint64(index + 1) * 2654435761ULL << " -->\n";
+
+    if (richProfile(profile)) {
+        out << "---\n";
+        out << "title: Synthetic Note " << index << "\n";
+        out << "created: 2026-07-"
+            << QStringLiteral("%1").arg(index % 28 + 1, 2, 10, QLatin1Char('0'))
+            << "\n";
+        out << "tags: [emerald, perf, vault-" << index % 17
+            << ", area-" << index % 9 << "]\n";
+        out << "aliases: [Synthetic " << index << ", Benchmark " << index % 101
+            << "]\n";
+        if (heavyProfile(profile)) {
+            const char *status = index % 4 == 0
+                                     ? "draft"
+                                     : index % 4 == 1
+                                           ? "active"
+                                           : index % 4 == 2 ? "waiting" : "done";
+            out << "reviewers: [alice, bob, casey]\n";
+            out << "status: " << status << "\n";
+            out << "unique_key: entity" << index << " checkpoint" << index * 13
+                << "\n";
+        }
+        out << "---\n\n";
+    }
+
     out << "# Synthetic Note " << index << "\n\n";
-    out << "Linked to [[Note " << ((index + 1) % 997) << "]] and [[Note "
-        << ((index + 17) % 997) << "|alias]].\n\n";
-    if (index % 5 == 0)
+    const int targetBase =
+        profile == VaultProfile::Classic ? 997 : qMax(1, noteCount);
+    out << "Linked to [[Note " << ((index + 1) % targetBase)
+        << "]] and [[Note " << ((index + 17) % targetBase) << "|alias]].\n";
+    if (heavyProfile(profile)) {
+        for (int i = 0; i < 6; ++i)
+            out << "Cross reference [[Note "
+                << ((index + 37 + i * 19) % targetBase) << "#heading-" << i
+                << "|ref " << i << "]].\n";
+    }
+    out << "\n";
+
+    if (richProfile(profile))
+        out << "#tag" << index % 41 << " #project/" << index % 13 << " [[MOC "
+            << index % 23 << "]]\n\n";
+
+    if (index % 5 == 0 || heavyProfile(profile))
         out << "Inline math $x_" << index % 13 << "^2 + \\frac{a}{b}$ appears here.\n\n";
-    if (index % 11 == 0)
+    if (index % 11 == 0 || (heavyProfile(profile) && index % 2 == 0))
         out << "```cpp\nint value = " << index << ";\nreturn value;\n```\n\n";
-    if (index % 13 == 0)
+    if (index % 13 == 0 || heavyProfile(profile))
         out << "$$\\sum_{i=1}^{n} \\frac{i^2}{n}$$\n\n";
 
+    if (richProfile(profile) && index % 9 == 0) {
+        const int imageCount = qMax(1, attachmentCount(profile));
+        out << "![Synthetic attachment]("
+            << attachmentRef(folder, index % imageCount) << ")\n\n";
+    }
+
+    if (heavyProfile(profile) && index % 3 == 0) {
+        out << "| Field | Value | Notes |\n";
+        out << "| --- | ---: | --- |\n";
+        out << "| score | " << index % 100 << " | benchmark table |\n";
+        out << "| links | " << index % 17 << " | repeated metadata |\n\n";
+    }
+
+    const int adjustedWords = heavyProfile(profile) && index % 19 == 0
+                                  ? wordsPerNote * 2
+                                  : wordsPerNote;
     for (int i = 0; i < wordsPerNote; ++i) {
         const QString w = words.at((index * 31 + i * 7) % words.size());
         if (i % 17 == 0)
@@ -127,28 +329,30 @@ QString noteBody(int index, int wordsPerNote) {
         out << w << ' ';
         if (i % 29 == 0)
             out << "**bold** ==highlight== ~~strike~~ ";
+        if (heavyProfile(profile) && i % 43 == 0)
+            out << "entity" << index << "topic" << i << ' ';
     }
+    for (int i = wordsPerNote; i < adjustedWords; ++i)
+        out << words.at((index + i) % words.size()) << ' ';
     out << '\n';
     return body;
 }
 
-void makeVault(const QString &root, int notes, int wordsPerNote) {
+void makeVault(const QString &root, int notes, int wordsPerNote,
+               VaultProfile profile) {
     QDir dir(root);
-    dir.mkpath(QStringLiteral("area-a"));
-    dir.mkpath(QStringLiteral("area-b/nested"));
+    makeAttachments(root, profile);
     for (int i = 0; i < notes; ++i) {
-        QString folder;
-        if (i % 3 == 1)
-            folder = QStringLiteral("area-a");
-        else if (i % 3 == 2)
-            folder = QStringLiteral("area-b/nested");
+        const QString folder = folderForNote(i, profile);
+        if (!folder.isEmpty())
+            dir.mkpath(folder);
         const QString title = QStringLiteral("Note %1").arg(i, 5, 10, QLatin1Char('0'));
         QFile f(folder.isEmpty() ? dir.filePath(title + QStringLiteral(".md"))
                                  : dir.filePath(folder + QLatin1Char('/') + title +
                                                 QStringLiteral(".md")));
         if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
             continue;
-        f.write(noteBody(i, wordsPerNote).toUtf8());
+        f.write(noteBody(i, wordsPerNote, notes, profile, folder).toUtf8());
     }
 }
 
@@ -229,43 +433,98 @@ int main(int argc, char **argv) {
                                 QStringLiteral("count"), QStringLiteral("2500"));
     QCommandLineOption wordsOpt(QStringLiteral("words"), QStringLiteral("Words per synthetic note."),
                                 QStringLiteral("count"), QStringLiteral("220"));
+    QCommandLineOption profileOpt(QStringLiteral("profile"),
+                                  QStringLiteral("Synthetic vault profile: classic, light, mixed, or heavy."),
+                                  QStringLiteral("name"), QStringLiteral("classic"));
     QCommandLineOption queriesOpt(QStringLiteral("queries"), QStringLiteral("Search query repetitions."),
                                   QStringLiteral("count"), QStringLiteral("80"));
     QCommandLineOption jsonOpt(QStringLiteral("json"), QStringLiteral("Write JSON metrics to file."),
                                QStringLiteral("path"));
+    QCommandLineOption generateOnlyOpt(
+        QStringLiteral("generate-only"),
+        QStringLiteral("Generate the synthetic vault at path and exit."),
+        QStringLiteral("path"));
     parser.addOption(notesOpt);
     parser.addOption(wordsOpt);
+    parser.addOption(profileOpt);
     parser.addOption(queriesOpt);
     parser.addOption(jsonOpt);
+    parser.addOption(generateOnlyOpt);
     parser.process(app);
 
     const int notes = parser.value(notesOpt).toInt();
     const int words = parser.value(wordsOpt).toInt();
+    bool profileOk = false;
+    const VaultProfile profile = parseProfile(parser.value(profileOpt), &profileOk);
+    if (!profileOk) {
+        QTextStream(stderr)
+            << "Unknown --profile value. Use classic, light, mixed, or heavy.\n";
+        return 2;
+    }
     const int queryRuns = parser.value(queriesOpt).toInt();
 
+    if (parser.isSet(generateOnlyOpt)) {
+        makeVault(parser.value(generateOnlyOpt), notes, words, profile);
+        return 0;
+    }
+
     QJsonArray metrics;
+    qint64 observedPeakRss = -1;
+    auto addCurrentRssMetric = [&](const QString &name) {
+        const qint64 rss = currentRssKb();
+        if (rss >= 0)
+            observedPeakRss = qMax(observedPeakRss, rss);
+        addMetric(metrics, name, rss, QStringLiteral("KiB"));
+        return rss;
+    };
+    auto addPeakRssMetric = [&](const QString &name) {
+        const qint64 sampled = currentRssKb();
+        if (sampled >= 0)
+            observedPeakRss = qMax(observedPeakRss, sampled);
+        const qint64 platformPeak = peakRssKb();
+        const qint64 peak = qMax(platformPeak, observedPeakRss);
+        addMetric(metrics, name, peak, QStringLiteral("KiB"));
+        return peak;
+    };
+
+    addCurrentRssMetric(QStringLiteral("rss_start_current"));
+
     QTemporaryDir tmp;
     if (!tmp.isValid())
         return 2;
 
+    bool generated = false;
     addMetric(metrics, QStringLiteral("generate_vault"),
-              timeMs([&] { makeVault(tmp.path(), notes, words); }), QStringLiteral("ms"));
+              timeMs([&] {
+                  const QStringList args{
+                      QStringLiteral("--generate-only"), tmp.path(),
+                      QStringLiteral("--notes"), QString::number(notes),
+                      QStringLiteral("--words"), QString::number(words),
+                      QStringLiteral("--profile"), profileName(profile),
+                      QStringLiteral("--queries"), QString::number(queryRuns)};
+                  generated =
+                      QProcess::execute(QCoreApplication::applicationFilePath(),
+                                        args) == 0;
+              }),
+              QStringLiteral("ms"));
+    if (!generated)
+        return 4;
 
     Vault vault(tmp.path());
     addMetric(metrics, QStringLiteral("vault_scan"),
               timeMs([&] { vault.scan(); }), QStringLiteral("ms"));
     addMetric(metrics, QStringLiteral("notes_indexed"), vault.notes().size(),
               QStringLiteral("count"));
-    addMetric(metrics, QStringLiteral("rss_after_scan_current"), currentRssKb(),
-              QStringLiteral("KiB"));
+    addCurrentRssMetric(QStringLiteral("rss_after_scan_current"));
 
     SearchIndex index;
     const qint64 rssBeforeSearch = currentRssKb();
     addMetric(metrics, QStringLiteral("search_rebuild"),
               timeMs([&] { index.rebuild(vault); }), QStringLiteral("ms"));
     const qint64 rssAfterSearch = currentRssKb();
-    addMetric(metrics, QStringLiteral("rss_after_rebuild"), peakRssKb(),
-              QStringLiteral("KiB"));
+    if (rssAfterSearch >= 0)
+        observedPeakRss = qMax(observedPeakRss, rssAfterSearch);
+    addPeakRssMetric(QStringLiteral("rss_after_rebuild"));
     addMetric(metrics, QStringLiteral("rss_after_rebuild_current"), rssAfterSearch,
               QStringLiteral("KiB"));
     addMetric(metrics, QStringLiteral("rss_search_rebuild_delta"),
@@ -293,8 +552,7 @@ int main(int argc, char **argv) {
     }
     addMetric(metrics, QStringLiteral("search_p50"), median(searchTimes), QStringLiteral("ms"));
     addMetric(metrics, QStringLiteral("search_p95"), percentile(searchTimes, 0.95), QStringLiteral("ms"));
-    addMetric(metrics, QStringLiteral("rss_after_search_current"), currentRssKb(),
-              QStringLiteral("KiB"));
+    addCurrentRssMetric(QStringLiteral("rss_after_search_current"));
 
     const Note updateNote = vault.notes().at(qMin(10, vault.notes().size() - 1));
     QString updated = vault.read(updateNote.path);
@@ -305,7 +563,14 @@ int main(int argc, char **argv) {
 
     MarkdownEditor editor;
     editor.resize(820, 720);
-    const QString bigDoc = noteBody(4242, qMax(words * 8, 2000));
+    editor.setImageBasePath(tmp.path());
+    QString bigDoc = noteBody(4242, qMax(words * 8, 2000),
+                              qMax(notes, 4243), profile, QString());
+    if (richProfile(profile)) {
+        bigDoc.prepend(QStringLiteral("![Editor preview](_attachments/image-00.png)\n\n"));
+        if (heavyProfile(profile))
+            bigDoc.prepend(QStringLiteral("![Second preview](_attachments/image-01.png)\n\n"));
+    }
     addMetric(metrics, QStringLiteral("editor_set_plain_text"),
               timeMs([&] {
                   editor.setPlainText(bigDoc);
@@ -320,8 +585,7 @@ int main(int argc, char **argv) {
                   editor.render(&p);
               }),
               QStringLiteral("ms"));
-    addMetric(metrics, QStringLiteral("rss_after_editor_current"), currentRssKb(),
-              QStringLiteral("KiB"));
+    addCurrentRssMetric(QStringLiteral("rss_after_editor_current"));
 
     const QStringList formulas{
         QStringLiteral("\\frac{a+b}{\\sqrt{x^2+y^2}}"),
@@ -358,13 +622,13 @@ int main(int argc, char **argv) {
                       Mascot::renderPixmap(seed, QString(), QSize(176, 196));
               }),
               QStringLiteral("ms"));
-    addMetric(metrics, QStringLiteral("rss_after_mascot_current"), currentRssKb(),
-              QStringLiteral("KiB"));
-    addMetric(metrics, QStringLiteral("rss_final"), peakRssKb(), QStringLiteral("KiB"));
+    addCurrentRssMetric(QStringLiteral("rss_after_mascot_current"));
+    addPeakRssMetric(QStringLiteral("rss_final"));
 
     QJsonObject root;
     root.insert(QStringLiteral("schema"), QStringLiteral("emerald-perf-v1"));
     root.insert(QStringLiteral("version"), QStringLiteral(EMERALD_VERSION));
+    root.insert(QStringLiteral("profile"), profileName(profile));
     root.insert(QStringLiteral("notes"), notes);
     root.insert(QStringLiteral("words_per_note"), words);
     root.insert(QStringLiteral("metrics"), metrics);
