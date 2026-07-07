@@ -4,6 +4,7 @@
 #include "core/SearchIndex.h"
 #include <QDateTime>
 #include <QHash>
+#include <QList>
 #include <QMainWindow>
 #include <QPoint>
 #include <QString>
@@ -29,6 +30,8 @@ class QFrame;
 class QFileSystemWatcher;
 class QThread;
 class QImage;
+class QResizeEvent;
+class QToolButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -38,6 +41,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -45,6 +49,12 @@ private:
     void buildUi();
     void openSettings();
     void loadSettings();
+    void updateResponsiveLayout();
+    void applyEditorColumnWidth();
+    void applyMobileSplit();
+    void updateMobileNavigationControls();
+    void showMobileNotes();
+    void showMobileEditor();
     void openManual();
     void checkForUpdates();       // query GitHub for a newer release, then update
     void newVault();              // create a fresh vault folder, then open it
@@ -160,6 +170,9 @@ private:
     MarkdownEditor *m_editor = nullptr;
     QWidget *m_centerColumn = nullptr; // width-capped title + body column
     QWidget *m_centerPane = nullptr;   // editor-side pane; the mascot's parent
+    QWidget *m_mobileEditorBar = nullptr;
+    QToolButton *m_mobileNotesButton = nullptr;
+    QToolButton *m_mobileEditorButton = nullptr;
     QSplitter *m_splitter = nullptr;   // collapsible sidebar | editor
     QWidget *m_splitHandle = nullptr;  // its drag handle (click to toggle)
     QPoint m_handlePressPos;
@@ -199,4 +212,8 @@ private:
     QHash<QString, int> m_cursorPositions; // note path -> last caret position
     QHash<QString, NoteFileMeta> m_noteMeta; // path -> title/size/mtime snapshot
     int m_indexGeneration = 0;
+    int m_editorColumnWidth = 820;
+    QList<int> m_desktopSplitterSizes;
+    bool m_mobileLayout = false;
+    bool m_mobileShowingNotes = true;
 };

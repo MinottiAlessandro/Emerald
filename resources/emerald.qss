@@ -136,6 +136,27 @@ QLabel#versionLabel {
     padding-right: 4px;
 }
 
+QWidget#mobileEditorBar {
+    background: #101113;
+}
+QToolButton#mobileBarButton {
+    background: transparent;
+    color: #92b3a2;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 14px;
+    font-weight: 600;
+    min-height: 30px;
+}
+QToolButton#mobileBarButton:hover {
+    background: #1f4733;
+    color: #d7eee2;
+}
+QToolButton#mobileBarButton::menu-indicator {
+    image: none;
+}
+
 QWidget#sidebar {
     background: #101113;
 }
