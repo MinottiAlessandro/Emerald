@@ -19,9 +19,9 @@ QPlainTextEdit#editor {
    name; the .md is never shown). */
 QLineEdit#noteTitle {
     background: #17181b;
-    color: #d7eee2;
+    color: #cfe8dc;
     border: none;
-    padding: 14px 18px 2px 18px;
+    padding: 18px 18px 14px 18px;
     font-size: 26px;
     font-weight: 700;
     selection-background-color: #1f4a33;

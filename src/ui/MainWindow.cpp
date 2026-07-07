@@ -951,6 +951,7 @@ void MainWindow::buildUi() {
     m_titleEdit->setObjectName(QStringLiteral("noteTitle"));
     m_titleEdit->setPlaceholderText(tr("Untitled"));
     m_titleEdit->setFrame(false);
+    m_titleEdit->setAlignment(Qt::AlignCenter);
     m_titleEdit->installEventFilter(this);
     connect(m_titleEdit, &QLineEdit::editingFinished, this,
             [this] { renameCurrent(m_titleEdit->text()); });
