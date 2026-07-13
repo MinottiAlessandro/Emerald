@@ -1469,8 +1469,14 @@ void MainWindow::buildActions() {
     auto *rename = new QAction(tr("Rename Note"), this);
     rename->setShortcut(QKeySequence(Qt::Key_F2));
     connect(rename, &QAction::triggered, this, [this] {
-        if (!m_vault || (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()))
+        if (!m_vault)
             return;
+        if (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()) {
+            this->newNote();
+            return;
+        }
+        if (m_mobileLayout)
+            showMobileEditor();
         m_titleEdit->setFocus();
         m_titleEdit->selectAll();
     });
