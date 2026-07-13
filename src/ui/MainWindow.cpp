@@ -61,6 +61,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSizePolicy>
+#include <QResizeEvent>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QThread>
@@ -78,6 +79,9 @@
 namespace {
 constexpr int kPathRole = Qt::UserRole;     // leaf: the note's file path
 constexpr int kDirRole = Qt::UserRole + 1;  // folder: its absolute path
+constexpr int kMobileBreakpoint = 760;
+constexpr int kDesktopSplitterHandleWidth = 11;
+constexpr int kDefaultSidebarWidth = 260;
 
 // Keep only paths that aren't nested inside another path in the list — moving
 // or deleting a folder already carries its contents, so handling a child too
@@ -775,21 +779,29 @@ QVBoxLayout *createEmeraldDialogRoot(QDialog *dlg, const QString &title,
     dlg->setObjectName(QStringLiteral("settingsDialog"));
     dlg->setWindowTitle(title);
     dlg->setSizeGripEnabled(false);
+    QWidget *parent = dlg->parentWidget();
+    const bool compact = parent && parent->width() <= kMobileBreakpoint;
+    const int labelWidth =
+        compact ? qMax(240, parent->width() - 64) : 460;
 
     auto *root = new QVBoxLayout(dlg);
-    root->setContentsMargins(24, 22, 24, 20);
-    root->setSpacing(12);
+    root->setContentsMargins(compact ? 16 : 24, compact ? 18 : 22,
+                             compact ? 16 : 24, compact ? 16 : 20);
+    root->setSpacing(compact ? 10 : 12);
     root->setAlignment(Qt::AlignCenter);
 
     auto *heading = new QLabel(title, dlg);
     heading->setObjectName(QStringLiteral("settingsTitle"));
     heading->setAlignment(Qt::AlignCenter);
+    heading->setMaximumWidth(labelWidth);
+    heading->setWordWrap(true);
     root->addWidget(heading);
 
     if (!subtitle.isEmpty()) {
         auto *sub = new QLabel(subtitle, dlg);
         sub->setObjectName(QStringLiteral("settingsSubtitle"));
         sub->setAlignment(Qt::AlignCenter);
+        sub->setMaximumWidth(labelWidth);
         sub->setWordWrap(true);
         root->addWidget(sub);
     }
@@ -803,7 +815,9 @@ bool runFolderNameDialog(QWidget *parent, QString *out) {
     auto *input = new QLineEdit(&dlg);
     input->setObjectName(QStringLiteral("dialogInput"));
     input->setPlaceholderText(QObject::tr("Folder name"));
-    input->setFixedWidth(300);
+    const int inputWidth =
+        qBound(220, parent ? parent->width() - 64 : 300, 300);
+    input->setFixedWidth(inputWidth);
     root->addWidget(input, 0, Qt::AlignCenter);
 
     auto *buttons = new QDialogButtonBox(
@@ -991,9 +1005,48 @@ void MainWindow::buildUi() {
     auto *colLayout = new QVBoxLayout(m_centerColumn);
     colLayout->setContentsMargins(0, 0, 0, 0);
     colLayout->setSpacing(0);
+
+    m_mobileEditorBar = new QWidget(m_centerColumn);
+    m_mobileEditorBar->setObjectName(QStringLiteral("mobileEditorBar"));
+    auto *mobileBarLayout = new QHBoxLayout(m_mobileEditorBar);
+    mobileBarLayout->setContentsMargins(8, 4, 8, 4);
+    mobileBarLayout->setSpacing(4);
+    auto makeMobileBarButton = [this](QWidget *parent, const QString &text,
+                                      const QString &tooltip) {
+        auto *button = new QToolButton(parent);
+        button->setObjectName(QStringLiteral("mobileBarButton"));
+        button->setText(text);
+        button->setToolTip(tooltip);
+        button->setAutoRaise(true);
+        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        return button;
+    };
+    m_mobileNotesButton =
+        makeMobileBarButton(m_mobileEditorBar, tr("Notes"), tr("Show notes"));
+    connect(m_mobileNotesButton, &QToolButton::clicked, this,
+            &MainWindow::showMobileNotes);
+    auto *mobileNewButton =
+        makeMobileBarButton(m_mobileEditorBar, QStringLiteral("+"), tr("New Note"));
+    connect(mobileNewButton, &QToolButton::clicked, this, &MainWindow::newNote);
+    auto *mobileSearchButton =
+        makeMobileBarButton(m_mobileEditorBar, tr("Search"), tr("Search Vault"));
+    connect(mobileSearchButton, &QToolButton::clicked, this,
+            &MainWindow::openSearch);
+    auto *mobileMenuButton =
+        makeMobileBarButton(m_mobileEditorBar, QStringLiteral("⚙"), tr("Menu"));
+    mobileMenuButton->setPopupMode(QToolButton::InstantPopup);
+    mobileMenuButton->setMenu(m_gearMenu);
+    mobileBarLayout->addWidget(m_mobileNotesButton);
+    mobileBarLayout->addStretch();
+    mobileBarLayout->addWidget(mobileNewButton);
+    mobileBarLayout->addWidget(mobileSearchButton);
+    mobileBarLayout->addWidget(mobileMenuButton);
+    m_mobileEditorBar->hide();
+
+    colLayout->addWidget(m_mobileEditorBar);
     colLayout->addWidget(m_titleEdit);
     colLayout->addWidget(m_editor, 1);
-    m_centerColumn->setMaximumWidth(820); // overridden by the saved setting
+    m_centerColumn->setMaximumWidth(m_editorColumnWidth);
     m_centerColumn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     auto *center = new QWidget(this);
@@ -1049,6 +1102,11 @@ void MainWindow::buildUi() {
     m_sideTitle = new ElidedLabel(tr("Notes"), header);
     m_sideTitle->setObjectName(QStringLiteral("sideTitle"));
     m_sideTitle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_mobileEditorButton =
+        makeMobileBarButton(header, tr("Editor"), tr("Show editor"));
+    m_mobileEditorButton->hide();
+    connect(m_mobileEditorButton, &QToolButton::clicked, this,
+            &MainWindow::showMobileEditor);
     auto *backBtn = new QToolButton(header);
     backBtn->setObjectName(QStringLiteral("navButton"));
     backBtn->setDefaultAction(m_backAction);
@@ -1058,6 +1116,7 @@ void MainWindow::buildUi() {
     fwdBtn->setDefaultAction(m_forwardAction);
     fwdBtn->setIconSize(QSize(22, 22));
     hrow->addWidget(m_sideTitle, 1);
+    hrow->addWidget(m_mobileEditorButton);
     hrow->addWidget(backBtn);
     hrow->addWidget(fwdBtn);
 
@@ -1103,8 +1162,8 @@ void MainWindow::buildUi() {
     m_splitter->setStretchFactor(1, 1);
     // A wide handle for an easy drag/click target; the QSS paints only a thin
     // line inside it so the divider still looks slim.
-    m_splitter->setHandleWidth(11);
-    m_splitter->setSizes({260, 900});
+    m_splitter->setHandleWidth(kDesktopSplitterHandleWidth);
+    m_splitter->setSizes({kDefaultSidebarWidth, 900});
     setCentralWidget(m_splitter);
     // Clicking (not dragging) the handle collapses / reopens the sidebar.
     m_splitHandle = m_splitter->handle(1);
@@ -1321,8 +1380,15 @@ void MainWindow::openMascotGallery() {
 
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Mascot Gallery"));
-    dlg.resize(640, 620);
+    const bool compactGallery = m_mobileLayout || width() <= kMobileBreakpoint;
+    dlg.resize(compactGallery
+                   ? QSize(qMax(320, width() - 24), qMax(420, height() - 48))
+                   : QSize(640, 620));
     auto *outer = new QVBoxLayout(&dlg);
+    outer->setContentsMargins(compactGallery ? 8 : 11,
+                              compactGallery ? 8 : 11,
+                              compactGallery ? 8 : 11,
+                              compactGallery ? 8 : 11);
 
     if (entries.isEmpty()) {
         auto *empty = new QLabel(
@@ -1336,8 +1402,9 @@ void MainWindow::openMascotGallery() {
         auto *grid = new QWidget;
         auto *gl = new QGridLayout(grid);
         gl->setSpacing(10);
-        const int cols = 3;
-        const QSize iconSize(176, 196); // bigger cells so each creature reads well
+        const int cols = compactGallery ? 2 : 3;
+        const QSize iconSize =
+            compactGallery ? QSize(132, 148) : QSize(176, 196);
         for (int i = 0; i < entries.size(); ++i) {
             const Entry &e = entries.at(i);
             auto *cell = new QToolButton(grid);
@@ -1402,8 +1469,14 @@ void MainWindow::buildActions() {
     auto *rename = new QAction(tr("Rename Note"), this);
     rename->setShortcut(QKeySequence(Qt::Key_F2));
     connect(rename, &QAction::triggered, this, [this] {
-        if (!m_vault || (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()))
+        if (!m_vault)
             return;
+        if (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()) {
+            this->newNote();
+            return;
+        }
+        if (m_mobileLayout)
+            showMobileEditor();
         m_titleEdit->setFocus();
         m_titleEdit->selectAll();
     });
@@ -1529,12 +1602,14 @@ void MainWindow::buildActions() {
 
 void MainWindow::loadSettings() {
     QSettings s;
-    m_centerColumn->setMaximumWidth(
-        s.value(QStringLiteral("editorWidth"), 820).toInt());
+    m_editorColumnWidth =
+        s.value(QStringLiteral("editorWidth"), m_editorColumnWidth).toInt();
+    applyEditorColumnWidth();
     m_editor->setLineSpacing(s.value(QStringLiteral("lineSpacing"), 100).toInt());
     const QByteArray split = s.value(QStringLiteral("splitterState")).toByteArray();
     if (!split.isEmpty())
         m_splitter->restoreState(split);
+    updateResponsiveLayout();
     // With no custom font saved, keep the editor's built-in monospace fallback
     // chain (SF Mono / Menlo / Cascadia / Consolas / … -> monospace) untouched.
     if (!s.contains(QStringLiteral("editorFontFamily")) &&
@@ -1548,39 +1623,154 @@ void MainWindow::loadSettings() {
     m_editor->applyFont(f);
 }
 
+void MainWindow::applyEditorColumnWidth() {
+    if (!m_centerColumn)
+        return;
+    m_centerColumn->setMaximumWidth(m_mobileLayout ? QWIDGETSIZE_MAX
+                                                   : m_editorColumnWidth);
+}
+
+void MainWindow::applyMobileSplit() {
+    if (!m_mobileLayout || !m_splitter)
+        return;
+    const QList<int> sizes = m_splitter->sizes();
+    int total = sizes.value(0) + sizes.value(1);
+    if (total <= 0)
+        total = qMax(1, width());
+    if (m_mobileShowingNotes)
+        m_splitter->setSizes({total, 0});
+    else
+        m_splitter->setSizes({0, total});
+}
+
+void MainWindow::updateMobileNavigationControls() {
+    if (m_mobileEditorBar)
+        m_mobileEditorBar->setVisible(m_mobileLayout);
+    if (m_mobileEditorButton) {
+        m_mobileEditorButton->setVisible(m_mobileLayout);
+        m_mobileEditorButton->setEnabled(!m_currentPath.isEmpty() ||
+                                         !m_pendingNoteDir.isEmpty());
+    }
+}
+
+void MainWindow::showMobileNotes() {
+    if (!m_mobileLayout)
+        return;
+    saveCurrent();
+    m_mobileShowingNotes = true;
+    updateMobileNavigationControls();
+    applyMobileSplit();
+    if (m_noteTree)
+        m_noteTree->setFocus();
+}
+
+void MainWindow::showMobileEditor() {
+    if (!m_mobileLayout)
+        return;
+    if (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()) {
+        showMobileNotes();
+        return;
+    }
+    m_mobileShowingNotes = false;
+    updateMobileNavigationControls();
+    applyMobileSplit();
+    if (m_currentPath.isEmpty())
+        m_titleEdit->setFocus();
+    else
+        m_editor->setFocus();
+}
+
+void MainWindow::updateResponsiveLayout() {
+    if (!m_splitter || !m_centerColumn || !m_mobileEditorBar)
+        return;
+
+    const bool mobile = width() > 0 && width() <= kMobileBreakpoint;
+    if (mobile == m_mobileLayout) {
+        updateMobileNavigationControls();
+        applyEditorColumnWidth();
+        if (mobile)
+            applyMobileSplit();
+        return;
+    }
+
+    if (mobile) {
+        m_desktopSplitterSizes = m_splitter->sizes();
+        m_mobileLayout = true;
+        m_splitter->setHandleWidth(0);
+        m_splitter->setCollapsible(1, true);
+        m_mobileShowingNotes =
+            m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty();
+        updateMobileNavigationControls();
+        applyEditorColumnWidth();
+        applyMobileSplit();
+        return;
+    }
+
+    m_mobileLayout = false;
+    updateMobileNavigationControls();
+    m_splitter->setHandleWidth(kDesktopSplitterHandleWidth);
+    m_splitter->setCollapsible(1, false);
+    applyEditorColumnWidth();
+    if (!m_desktopSplitterSizes.isEmpty())
+        m_splitter->setSizes(m_desktopSplitterSizes);
+    else
+        m_splitter->setSizes({kDefaultSidebarWidth,
+                              qMax(1, width() - kDefaultSidebarWidth)});
+}
+
 void MainWindow::openSettings() {
     QDialog dlg(this);
     dlg.setObjectName(QStringLiteral("settingsDialog"));
     dlg.setWindowTitle(tr("Settings"));
     dlg.setFocusPolicy(Qt::StrongFocus);
-    dlg.setMinimumSize(660, 840);
-    dlg.resize(700, 880);
-    dlg.setSizeGripEnabled(true);
+    const bool compactSettings = m_mobileLayout || width() <= kMobileBreakpoint;
+    dlg.setMinimumSize(compactSettings ? QSize(320, 420) : QSize(660, 840));
+    dlg.resize(compactSettings
+                   ? QSize(qMax(320, width() - 24), qMax(420, height() - 48))
+                   : QSize(700, 880));
+    dlg.setSizeGripEnabled(!compactSettings);
 
     auto *root = new QVBoxLayout(&dlg);
-    root->setContentsMargins(24, 22, 24, 18);
-    root->setSpacing(16);
+    root->setContentsMargins(compactSettings ? 12 : 24,
+                             compactSettings ? 12 : 22,
+                             compactSettings ? 12 : 24,
+                             compactSettings ? 12 : 18);
+    root->setSpacing(compactSettings ? 10 : 16);
 
-    auto *heading = new QLabel(tr("Settings"), &dlg);
+    auto *scroll = new QScrollArea(&dlg);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto *content = new QWidget(scroll);
+    auto *contentLayout = new QVBoxLayout(content);
+    contentLayout->setContentsMargins(0, 0, 0, 0);
+    contentLayout->setSpacing(compactSettings ? 10 : 16);
+
+    auto *heading = new QLabel(tr("Settings"), content);
     heading->setObjectName(QStringLiteral("settingsTitle"));
     auto *subtitle = new QLabel(
-        tr("Tune the editor, vault defaults, and mascot behavior."), &dlg);
+        tr("Tune the editor, vault defaults, and mascot behavior."), content);
     subtitle->setObjectName(QStringLiteral("settingsSubtitle"));
-    root->addWidget(heading);
-    root->addWidget(subtitle);
+    subtitle->setWordWrap(true);
+    contentLayout->addWidget(heading);
+    contentLayout->addWidget(subtitle);
 
     auto *sections = new QVBoxLayout();
     sections->setContentsMargins(0, 0, 0, 0);
-    sections->setSpacing(14);
-    root->addLayout(sections);
+    sections->setSpacing(compactSettings ? 10 : 14);
+    contentLayout->addLayout(sections);
+    scroll->setWidget(content);
+    root->addWidget(scroll, 1);
 
-    auto addSection = [&dlg, sections](const QString &title,
-                                       const QString &description) {
-        auto *section = new QFrame(&dlg);
+    auto addSection = [content, compactSettings, sections](
+                          const QString &title, const QString &description) {
+        auto *section = new QFrame(content);
         section->setObjectName(QStringLiteral("settingsSection"));
         auto *layout = new QVBoxLayout(section);
-        layout->setContentsMargins(18, 16, 18, 18);
-        layout->setSpacing(10);
+        layout->setContentsMargins(compactSettings ? 12 : 18,
+                                   compactSettings ? 12 : 16,
+                                   compactSettings ? 12 : 18,
+                                   compactSettings ? 12 : 18);
+        layout->setSpacing(compactSettings ? 8 : 10);
 
         auto *titleLabel = new QLabel(title, section);
         titleLabel->setObjectName(QStringLiteral("settingsSectionTitle"));
@@ -1593,21 +1783,26 @@ void MainWindow::openSettings() {
 
         auto *form = new QFormLayout();
         form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+        form->setRowWrapPolicy(compactSettings ? QFormLayout::WrapAllRows
+                                               : QFormLayout::DontWrapRows);
         form->setFormAlignment(Qt::AlignTop);
         form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        form->setHorizontalSpacing(22);
-        form->setVerticalSpacing(16);
+        form->setHorizontalSpacing(compactSettings ? 8 : 22);
+        form->setVerticalSpacing(compactSettings ? 10 : 16);
         layout->addLayout(form);
 
         sections->addWidget(section);
         return form;
     };
-    auto addSettingRow = [&dlg](QFormLayout *form, const QString &labelText,
-                                QWidget *field) {
+    auto addSettingRow = [&dlg, compactSettings](QFormLayout *form,
+                                                 const QString &labelText,
+                                                 QWidget *field) {
         auto *label = new QLabel(labelText, &dlg);
         label->setObjectName(QStringLiteral("settingsFieldLabel"));
-        label->setMinimumWidth(130);
-        label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        label->setMinimumWidth(compactSettings ? 0 : 130);
+        label->setSizePolicy(compactSettings ? QSizePolicy::Preferred
+                                             : QSizePolicy::Fixed,
+                             QSizePolicy::Preferred);
         form->addRow(label, field);
     };
 
@@ -1626,7 +1821,7 @@ void MainWindow::openSettings() {
     widthBox->setRange(500, 1600);
     widthBox->setSingleStep(20);
     widthBox->setSuffix(tr(" px"));
-    widthBox->setValue(m_centerColumn->maximumWidth());
+    widthBox->setValue(m_editorColumnWidth);
     auto *spacingBox = new QSpinBox(&dlg);
     spacingBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spacingBox->setRange(100, 250);
@@ -1721,7 +1916,8 @@ void MainWindow::openSettings() {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
-        m_centerColumn->setMaximumWidth(widthBox->value());
+        m_editorColumnWidth = widthBox->value();
+        applyEditorColumnWidth();
         m_editor->setLineSpacing(spacingBox->value());
     };
     connect(fontBox, &QFontComboBox::currentFontChanged, &dlg, preview);
@@ -1730,7 +1926,7 @@ void MainWindow::openSettings() {
     connect(spacingBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
 
     const QFont originalFont = m_editor->font();
-    const int originalWidth = m_centerColumn->maximumWidth();
+    const int originalWidth = m_editorColumnWidth;
     const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
     dlg.setFocus(Qt::OtherFocusReason);
     QTimer::singleShot(0, &dlg,
@@ -1739,7 +1935,8 @@ void MainWindow::openSettings() {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
-        m_centerColumn->setMaximumWidth(widthBox->value());
+        m_editorColumnWidth = widthBox->value();
+        applyEditorColumnWidth();
         m_editor->setLineSpacing(spacingBox->value());
         s.setValue(QStringLiteral("editorFontFamily"), f.family());
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
@@ -1755,7 +1952,8 @@ void MainWindow::openSettings() {
         }
     } else {
         m_editor->applyFont(originalFont); // revert the live preview
-        m_centerColumn->setMaximumWidth(originalWidth);
+        m_editorColumnWidth = originalWidth;
+        applyEditorColumnWidth();
         m_editor->setLineSpacing(originalSpacing);
     }
 }
@@ -1774,12 +1972,22 @@ void MainWindow::changeFontSize(int delta) {
 }
 
 void MainWindow::toggleSidebar() {
+    if (m_mobileLayout) {
+        if (m_mobileShowingNotes)
+            showMobileEditor();
+        else
+            showMobileNotes();
+        return;
+    }
+
     const QList<int> sizes = m_splitter->sizes();
     const int total = sizes.value(0) + sizes.value(1);
     if (sizes.value(0) > 0)
         m_splitter->setSizes({0, total}); // collapse
-    else
-        m_splitter->setSizes({220, total - 220}); // reopen at min
+    else {
+        const int sidebarWidth = qMin(kDefaultSidebarWidth, qMax(1, total - 1));
+        m_splitter->setSizes({sidebarWidth, total - sidebarWidth}); // reopen
+    }
 }
 
 void MainWindow::newVault() {
@@ -1922,6 +2130,12 @@ void MainWindow::openVault(const QString &path) {
     setWindowTitle(QStringLiteral("Emerald — %1").arg(QFileInfo(path).fileName()));
     openInitialNote();
     refreshMascot(); // hide a stale mascot if the new vault opened no note
+    if (m_mobileLayout) {
+        if (m_currentPath.isEmpty())
+            showMobileNotes();
+        else
+            showMobileEditor();
+    }
 }
 
 void MainWindow::updateVaultTitle() {
@@ -2202,6 +2416,8 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     MarkdownEditor *ed = m_editor;
     QTimer::singleShot(0, ed, [ed] { ed->centerCursor(); });
     refreshMascot(); // mirror this note's inline seed (the editor parsed it on load)
+    if (m_mobileLayout)
+        showMobileEditor();
 }
 
 void MainWindow::renameCurrent(const QString &rawTitle) {
@@ -2807,6 +3023,11 @@ void MainWindow::positionFindBar() {
     m_findBar->move(m_editor->width() - w - 14, 8);
 }
 
+void MainWindow::resizeEvent(QResizeEvent *event) {
+    QMainWindow::resizeEvent(event);
+    updateResponsiveLayout();
+}
+
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     if (watched == m_findInput && event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
@@ -3008,8 +3229,11 @@ void MainWindow::reconcileAfterDeletion() {
         fallback = m_history.last();
     if (!fallback.isEmpty())
         openNoteByPath(fallback);
-    else
+    else {
         setWindowTitle(QStringLiteral("Emerald"));
+        if (m_mobileLayout)
+            showMobileNotes();
+    }
 }
 
 void MainWindow::deleteEntries(const QStringList &pathsIn) {
@@ -3087,6 +3311,8 @@ void MainWindow::newNoteIn(const QString &dir) {
         m_noteTree->selectionModel()->clearSelection();
     setWindowTitle(QStringLiteral("Emerald — New Note"));
     updateNavActions();
+    if (m_mobileLayout)
+        showMobileEditor();
 }
 
 void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn) {
@@ -3161,6 +3387,15 @@ void MainWindow::newFolderIn(const QString &dir) {
 void MainWindow::closeEvent(QCloseEvent *event) {
     saveCurrent();
     saveCursorPositions(); // remember caret positions for the next launch
-    QSettings().setValue(QStringLiteral("splitterState"), m_splitter->saveState());
+    if (m_mobileLayout && !m_desktopSplitterSizes.isEmpty()) {
+        const QList<int> mobileSizes = m_splitter->sizes();
+        m_splitter->setSizes(m_desktopSplitterSizes);
+        QSettings().setValue(QStringLiteral("splitterState"),
+                             m_splitter->saveState());
+        m_splitter->setSizes(mobileSizes);
+    } else {
+        QSettings().setValue(QStringLiteral("splitterState"),
+                             m_splitter->saveState());
+    }
     event->accept();
 }
