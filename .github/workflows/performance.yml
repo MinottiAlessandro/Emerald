@@ -5,7 +5,6 @@ on:
     paths:
       - 'src/**'
       - 'tests/perf/**'
-      - 'tests/security/**'
       - 'CMakeLists.txt'
       - '.github/workflows/performance.yml'
   workflow_dispatch:
@@ -40,8 +39,7 @@ jobs:
         run: |
           cmake -S . -B build-perf \
             -DCMAKE_BUILD_TYPE=Release \
-            -DEMERALD_BUILD_PERF_TESTS=ON \
-            -DEMERALD_BUILD_SECURITY_TESTS=ON
+            -DEMERALD_BUILD_PERF_TESTS=ON
 
       - name: Build
         run: cmake --build build-perf -j
@@ -53,9 +51,6 @@ jobs:
             --words 220 \
             --queries 80 \
             --json perf-ci.json
-
-      - name: Run security regression tests
-        run: ctest --test-dir build-perf --output-on-failure
 
       - name: Check performance budgets
         run: python3 tests/perf/check_perf_budget.py perf-ci.json

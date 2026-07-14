@@ -10,6 +10,23 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Opt-in runtime instrumentation for development and CI. Applying the flags
+# per target keeps release/package builds unchanged.
+option(EMERALD_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+function(emerald_enable_sanitizers target)
+  if(NOT EMERALD_ENABLE_SANITIZERS)
+    return()
+  endif()
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "EMERALD_ENABLE_SANITIZERS requires GCC or Clang")
+  endif()
+  target_compile_options(${target} PRIVATE
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+    -fno-sanitize-recover=all)
+  target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+endfunction()
+
 # Core is pulled in by Widgets, but naming it explicitly gives us Qt's
 # deployment API (qt_generate_deploy_app_script).
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Svg)
@@ -76,6 +93,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
 
 target_include_directories(emerald PRIVATE src)
 target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg)
+emerald_enable_sanitizers(emerald)
 # Surface the project version to the app (shown in the sidebar footer, used by
 # the update check to compare against the latest GitHub release).
 target_compile_definitions(emerald PRIVATE EMERALD_VERSION="${PROJECT_VERSION}")
@@ -220,6 +238,7 @@ if(EMERALD_BUILD_PERF_TESTS)
   target_include_directories(emerald_perf_tests PRIVATE src)
   target_link_libraries(emerald_perf_tests PRIVATE Qt6::Widgets Qt6::Svg)
   target_compile_definitions(emerald_perf_tests PRIVATE EMERALD_VERSION="${PROJECT_VERSION}")
+  emerald_enable_sanitizers(emerald_perf_tests)
 endif()
 
 # --- Security regression tests -------------------------------------------
@@ -244,5 +263,36 @@ if(EMERALD_BUILD_SECURITY_TESTS)
   )
   target_include_directories(emerald_security_tests PRIVATE src)
   target_link_libraries(emerald_security_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_security_tests)
   add_test(NAME emerald_security_tests COMMAND emerald_security_tests)
+endif()
+
+# --- Parser fuzzing -------------------------------------------------------
+# Clang's libFuzzer continuously mutates note-controlled strings through the
+# shared URL, wiki-link, filename, and mascot parsers.
+option(EMERALD_BUILD_FUZZ_TESTS "Build Clang/libFuzzer security harnesses" OFF)
+if(EMERALD_BUILD_FUZZ_TESTS)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "EMERALD_BUILD_FUZZ_TESTS requires Clang/libFuzzer")
+  endif()
+  add_executable(emerald_fuzz_core
+    tests/fuzz/FuzzCore.cpp
+    src/core/ContentSecurity.h
+    src/core/ContentSecurity.cpp
+    src/core/MascotSeed.h
+    src/core/Note.h
+    src/core/Perf.h
+    src/core/Vault.h
+    src/core/Vault.cpp
+    src/core/WikiLink.h
+    src/core/WikiLink.cpp
+  )
+  target_include_directories(emerald_fuzz_core PRIVATE src)
+  target_link_libraries(emerald_fuzz_core PRIVATE Qt6::Core)
+  target_compile_options(emerald_fuzz_core PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+    -fno-sanitize-recover=all)
+  target_link_options(emerald_fuzz_core PRIVATE
+    -fsanitize=fuzzer,address,undefined)
 endif()
