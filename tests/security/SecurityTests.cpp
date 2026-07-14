@@ -2,6 +2,7 @@
 #include "core/MascotSeed.h"
 #include "core/Perf.h"
 #include "core/Vault.h"
+#include "core/WikiLink.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -177,6 +178,44 @@ void testMalformedStoreIsPreserved() {
     check(QFileInfo::exists(storePath),
           QStringLiteral("malformed store remains on disk"));
 }
+
+void testWikiLinkCreationValidation() {
+    QTemporaryDir temp;
+    check(temp.isValid(), QStringLiteral("wiki-link temp directory is available"));
+    if (!temp.isValid())
+        return;
+
+    const QString vaultRoot = temp.filePath(QStringLiteral("vault"));
+    check(QDir().mkpath(vaultRoot), QStringLiteral("create wiki-link vault"));
+    Vault vault(vaultRoot);
+    vault.scan();
+
+    const QString validTarget =
+        WikiLink::cleanTarget(QStringLiteral("A safe note#Heading|Alias"));
+    const Note valid = vault.createNote(validTarget);
+    check(!valid.path.isEmpty(), QStringLiteral("valid wiki-link creates a note"));
+    check(QFileInfo::exists(valid.path),
+          QStringLiteral("valid wiki-link note exists on disk"));
+
+    const QStringList invalidTitles{
+        QStringLiteral("../outside"), QStringLiteral("sub/note"),
+        QStringLiteral("sub\\note"), QStringLiteral("/absolute"),
+        QStringLiteral("C:\\outside"), QStringLiteral("NUL")};
+    for (const QString &title : invalidTitles) {
+        check(vault.createNote(title).path.isEmpty(),
+              QStringLiteral("reject unsafe wiki-link title: %1").arg(title));
+        check(vault.createNoteIn(vaultRoot, title).path.isEmpty(),
+              QStringLiteral("reject unsafe folder-note title: %1").arg(title));
+    }
+    check(!QFileInfo::exists(temp.filePath(QStringLiteral("outside.md"))),
+          QStringLiteral("wiki-link traversal created no outside file"));
+
+    const QString blockedPath =
+        QDir(vaultRoot).filePath(QStringLiteral("Blocked.md"));
+    check(QDir().mkdir(blockedPath), QStringLiteral("create conflicting directory"));
+    check(vault.createNoteIn(vaultRoot, QStringLiteral("Blocked")).path.isEmpty(),
+          QStringLiteral("a directory cannot be treated as an existing note"));
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -184,6 +223,7 @@ int main(int argc, char **argv) {
     testContainedMigration();
     testEscapingStoreIsRejected();
     testMalformedStoreIsPreserved();
+    testWikiLinkCreationValidation();
     if (failures == 0)
         QTextStream(stdout) << "All security regression tests passed.\n";
     return failures == 0 ? 0 : 1;

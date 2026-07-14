@@ -33,11 +33,13 @@ public:
     QString pathForTitle(const QString &title) const;
 
     // Create a new note file named <title>.md and append it to the vault.
-    // Returns the created note (or the existing one if it already exists).
+    // Returns the created note (or the existing one if it already exists), or
+    // an empty note when the title is unsafe or the file cannot be written.
     Note createNote(const QString &title);
 
     // Create <title>.md inside an absolute folder within the vault (used by the
-    // folder tree's context menu). Returns the note, or the existing one.
+    // folder tree's context menu). Returns the note, the existing one, or an
+    // empty note when the title is unsafe or the file cannot be written.
     Note createNoteIn(const QString &dir, const QString &title);
 
     // Make a sub-folder `name` inside the absolute folder `dir`. Returns true

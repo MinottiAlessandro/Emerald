@@ -197,6 +197,9 @@ QStringList Vault::updateLinksToPaths(const QString &oldTitle,
 }
 
 Note Vault::createNote(const QString &title) {
+    if (!isValidTitle(title))
+        return {};
+
     const QString existing = pathForTitle(title);
     if (!existing.isEmpty())
         return Note{existing, titleFromPath(existing)};
@@ -204,7 +207,8 @@ Note Vault::createNote(const QString &title) {
     const QString path = QDir(m_root).filePath(title + QStringLiteral(".md"));
     // The title is shown by the editor's title field, so the body starts empty
     // rather than repeating it as an "# H1".
-    write(path, QString());
+    if (!write(path, QString()))
+        return {};
 
     Note note{path, title};
     m_notes.push_back(note);
@@ -215,10 +219,16 @@ Note Vault::createNote(const QString &title) {
 }
 
 Note Vault::createNoteIn(const QString &dir, const QString &title) {
+    if (!isValidTitle(title))
+        return {};
+
     const QString folder = dir.isEmpty() ? m_root : dir;
     const QString path = QDir(folder).filePath(title + QStringLiteral(".md"));
-    if (!QFileInfo::exists(path))
-        write(path, QString());
+    const QFileInfo existing(path);
+    if (existing.exists() && !existing.isFile())
+        return {};
+    if (!existing.exists() && !write(path, QString()))
+        return {};
     return Note{path, title};
 }
 

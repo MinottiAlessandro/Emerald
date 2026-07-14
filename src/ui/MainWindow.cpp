@@ -2623,7 +2623,15 @@ void MainWindow::onLinkClicked(const QString &target) {
         return;
     QString path = m_vault->pathForTitle(target);
     if (path.isEmpty()) {
+        if (!Vault::isValidTitle(target)) {
+            notify(tr("“%1” is not a valid note name").arg(target), 3000);
+            return;
+        }
         const Note note = m_vault->createNote(target);
+        if (note.path.isEmpty()) {
+            notify(tr("Could not create “%1”").arg(target), 3000);
+            return;
+        }
         const QString content = m_vault->read(note.path);
         m_searchIndex.updateNote(note.path, note.title, content);
         refreshTree();
