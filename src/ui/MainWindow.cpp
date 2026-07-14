@@ -5,6 +5,7 @@
 #include "MascotCatalog.h"
 #include "SearchPopup.h"
 #include "Updater.h"
+#include "core/LegacyMascotMigration.h"
 #include "core/MascotSeed.h"
 #include "core/Vault.h"
 
@@ -28,8 +29,6 @@
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFontMetrics>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QFontComboBox>
 #include <QFormLayout>
 #include <QFrame>
@@ -2103,7 +2102,9 @@ void MainWindow::openVault(const QString &path) {
     delete m_vault;
     m_vault = new Vault(path);
     updateVaultTitle();
-    migrateLegacyMascots(path); // fold any legacy .emerald/mascots.json into notes
+    // Fold any legacy seed store into note headers. The migration rejects every
+    // metadata or note path that does not resolve canonically inside the vault.
+    LegacyMascotMigration::run(*m_vault);
     m_vault->scan();
     m_noteMeta = scannedNoteMeta();
     startIndexRebuild();
@@ -2209,41 +2210,6 @@ void MainWindow::startIndexRebuild() {
         thread->deleteLater();
     });
     thread->start();
-}
-
-// One-time upgrade from the old per-vault store: read each saved seed and write
-// it into the matching note's inline header line (if it doesn't already have
-// one), then delete the JSON so no app metadata is left behind in the vault.
-void MainWindow::migrateLegacyMascots(const QString &vaultRoot) {
-    const QString jsonPath =
-        QDir(vaultRoot).filePath(QStringLiteral(".emerald/mascots.json"));
-    QFile f(jsonPath);
-    if (!f.open(QIODevice::ReadOnly))
-        return; // nothing to migrate
-    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
-    f.close();
-
-    const QJsonObject mascots = root.value(QStringLiteral("mascots")).toObject();
-    const QDir rootDir(vaultRoot);
-    for (auto it = mascots.begin(); it != mascots.end(); ++it) {
-        const quint64 seed =
-            it.value().toObject().value(QStringLiteral("seed")).toString().toULongLong();
-        if (seed == 0)
-            continue; // suppressed entries simply drop (no metadata to keep)
-        const QString notePath = rootDir.filePath(it.key());
-        if (!QFileInfo::exists(notePath))
-            continue;
-        const QString content = m_vault->read(notePath);
-        const int nl = content.indexOf(QLatin1Char('\n'));
-        const QString first = nl < 0 ? content : content.left(nl);
-        if (MascotSeed::fromLine(first) != 0)
-            continue; // already has an inline header line
-        m_vault->write(notePath,
-                       MascotSeed::line(seed) + QLatin1Char('\n') + content);
-    }
-
-    QFile::remove(jsonPath);
-    QDir(vaultRoot).rmdir(QStringLiteral(".emerald")); // only if now empty
 }
 
 void MainWindow::openInitialNote() {

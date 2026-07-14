@@ -73,9 +73,6 @@ private:
     // rebuilds (so a rename/move/new-note doesn't collapse the tree); a fresh
     // vault passes false so it always opens fully collapsed.
     void refreshTree(bool preserveExpansion = true);
-    // One-time upgrade: fold any legacy <vault>/.emerald/mascots.json seeds into
-    // each note's inline header line, then remove the file (and empty folder).
-    void migrateLegacyMascots(const QString &vaultRoot);
     void openNoteByPath(const QString &path, bool record = true,
                         bool saveBeforeOpen = true);
     void saveCurrent();

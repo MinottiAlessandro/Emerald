@@ -22,6 +22,12 @@ public:
     QString read(const QString &path) const;
     bool write(const QString &path, const QString &content) const;
 
+    // Resolve an existing regular file named by a relative vault path. The
+    // returned path is canonical and guaranteed to remain beneath the canonical
+    // vault root; absolute paths, traversal, missing files, directories, and
+    // symlinks that escape the vault are rejected with an empty result.
+    QString resolveExistingFileWithinRoot(const QString &relativePath) const;
+
     // Resolve a link target (e.g. "My Note") to an existing note's path,
     // matched case-insensitively by title. Empty string if none exists.
     QString pathForTitle(const QString &title) const;

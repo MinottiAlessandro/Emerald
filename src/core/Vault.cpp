@@ -60,6 +60,37 @@ bool Vault::write(const QString &path, const QString &content) const {
     return f.write(bytes) == bytes.size();
 }
 
+QString Vault::resolveExistingFileWithinRoot(const QString &relativePath) const {
+    if (relativePath.isEmpty())
+        return {};
+
+    const QString normalized = QDir::fromNativeSeparators(relativePath);
+    if (QDir::isAbsolutePath(normalized))
+        return {};
+    const QStringList parts = normalized.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    if (parts.contains(QStringLiteral("..")))
+        return {};
+
+    const QString root = QDir(m_root).canonicalPath();
+    if (root.isEmpty())
+        return {};
+    const QFileInfo candidate(QDir(root).filePath(QDir::cleanPath(normalized)));
+    if (!candidate.exists() || !candidate.isFile())
+        return {};
+    const QString canonical = candidate.canonicalFilePath();
+    if (canonical.isEmpty())
+        return {};
+
+#if defined(Q_OS_WIN)
+    constexpr Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    const QString rootPrefix =
+        root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/');
+    return canonical.startsWith(rootPrefix, cs) ? canonical : QString();
+}
+
 QString Vault::pathForTitle(const QString &title) const {
     for (const Note &n : m_notes) {
         if (n.title.compare(title, Qt::CaseInsensitive) == 0)

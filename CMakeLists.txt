@@ -42,6 +42,8 @@ endif()
 add_executable(emerald WIN32 MACOSX_BUNDLE
   src/main.cpp
   src/core/Note.h
+  src/core/LegacyMascotMigration.h
+  src/core/LegacyMascotMigration.cpp
   src/core/Vault.h
   src/core/Vault.cpp
   src/core/SearchIndex.h
@@ -214,4 +216,27 @@ if(EMERALD_BUILD_PERF_TESTS)
   target_include_directories(emerald_perf_tests PRIVATE src)
   target_link_libraries(emerald_perf_tests PRIVATE Qt6::Widgets Qt6::Svg)
   target_compile_definitions(emerald_perf_tests PRIVATE EMERALD_VERSION="${PROJECT_VERSION}")
+endif()
+
+# --- Security regression tests -------------------------------------------
+# Small QtCore-only tests for filesystem trust boundaries. Kept separate from
+# the release executable and enabled explicitly in CI/development builds.
+option(EMERALD_BUILD_SECURITY_TESTS "Build security regression tests" OFF)
+if(EMERALD_BUILD_SECURITY_TESTS)
+  enable_testing()
+  add_executable(emerald_security_tests
+    tests/security/SecurityTests.cpp
+    src/core/LegacyMascotMigration.h
+    src/core/LegacyMascotMigration.cpp
+    src/core/MascotSeed.h
+    src/core/Note.h
+    src/core/Vault.h
+    src/core/Vault.cpp
+    src/core/WikiLink.h
+    src/core/WikiLink.cpp
+    src/core/Perf.h
+  )
+  target_include_directories(emerald_security_tests PRIVATE src)
+  target_link_libraries(emerald_security_tests PRIVATE Qt6::Core)
+  add_test(NAME emerald_security_tests COMMAND emerald_security_tests)
 endif()
