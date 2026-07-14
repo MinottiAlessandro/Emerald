@@ -21,6 +21,9 @@ defaults:
   run:
     shell: bash
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build (${{ matrix.name }})
@@ -46,9 +49,10 @@ jobs:
           - { os: macos-14,          name: macos,       cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'", qt_arch: '' }
           - { os: windows-latest,    name: windows,     cmake_args: '', qt_arch: '' }
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
 
       - name: Remove stale Microsoft apt sources
         if: startsWith(matrix.name, 'linux')
@@ -58,7 +62,7 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/packages-microsoft-com*.list
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
           version: ${{ env.QT_VERSION }}
           arch: ${{ matrix.qt_arch }}
@@ -88,7 +92,7 @@ jobs:
           ( cd build && cpack -G ZIP -C Release )   # runs windeployqt via install(SCRIPT)
           mkdir -p dist && mv build/*.zip dist/
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: emerald-${{ matrix.name }}
           path: dist/*
@@ -101,16 +105,27 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           path: dist
           merge-multiple: true
+      - name: Generate SHA-256 manifest
+        working-directory: dist
+        run: sha256sum Emerald-* > SHA256SUMS
       - name: Create release and upload artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="$RELEASE_TAG"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Refusing invalid release tag: $TAG" >&2
+            exit 1
+          fi
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             # Per-tag notes live in .github/release-notes/<tag>.md so each release
             # gets its own write-up. (A single shared file silently reused itself

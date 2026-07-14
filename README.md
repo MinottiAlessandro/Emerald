@@ -37,6 +37,10 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 | 🍎 **macOS** (universal) | [`Emerald-macOS.dmg`](https://github.com/MinottiAlessandro/Emerald/releases/latest/download/Emerald-macOS.dmg) | first launch: **right-click → Open → Open** |
 | 🪟 **Windows** | [`Emerald-win64.zip`](https://github.com/MinottiAlessandro/Emerald/releases/latest/download/Emerald-win64.zip) | extract and run `emerald.exe` |
 
+Every release also includes `SHA256SUMS` for manual package verification. The
+in-app updater checks GitHub's published SHA-256 digest and package size before
+it opens or installs a download.
+
 > Every download bundles its own Qt runtime, so there's nothing else to install. Looking for older versions? See **[all releases](https://github.com/MinottiAlessandro/Emerald/releases)**.
 
 > **macOS note:** the app is ad-hoc signed but not notarized (no paid Apple
