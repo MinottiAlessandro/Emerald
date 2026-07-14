@@ -1,3 +1,4 @@
+#include "core/ContentSecurity.h"
 #include "core/LegacyMascotMigration.h"
 #include "core/MascotSeed.h"
 #include "core/Perf.h"
@@ -216,6 +217,97 @@ void testWikiLinkCreationValidation() {
     check(vault.createNoteIn(vaultRoot, QStringLiteral("Blocked")).path.isEmpty(),
           QStringLiteral("a directory cannot be treated as an existing note"));
 }
+
+void testMarkdownContentBoundaries() {
+    const QUrl https =
+        ContentSecurity::externalUrl(QStringLiteral("https://example.com/note"));
+    check(https.isValid() && https.scheme() == QStringLiteral("https"),
+          QStringLiteral("allow HTTPS links"));
+    check(ContentSecurity::externalUrl(QStringLiteral("http://example.com")).isValid(),
+          QStringLiteral("allow HTTP links"));
+    check(ContentSecurity::externalUrl(
+              QStringLiteral("mailto:writer@example.com")).isValid(),
+          QStringLiteral("allow email links"));
+    check(ContentSecurity::externalUrl(QStringLiteral("example.com")).isValid(),
+          QStringLiteral("allow a web address without an explicit scheme"));
+
+    const QStringList blockedUrls{
+        QStringLiteral("file:///etc/passwd"),
+        QStringLiteral("javascript:alert(1)"),
+        QStringLiteral("emerald:open-settings"), QStringLiteral("../local.md")};
+    for (const QString &url : blockedUrls)
+        check(!ContentSecurity::externalUrl(url).isValid(),
+              QStringLiteral("reject unsafe external URL: %1").arg(url));
+
+    QTemporaryDir temp;
+    check(temp.isValid(), QStringLiteral("image-boundary temp directory is available"));
+    if (!temp.isValid())
+        return;
+
+    const QString vaultRoot = temp.filePath(QStringLiteral("vault"));
+    const QString noteDir = QDir(vaultRoot).filePath(QStringLiteral("notes"));
+    const QString insideImage =
+        QDir(noteDir).filePath(QStringLiteral("inside.png"));
+    const QString rootImage =
+        QDir(vaultRoot).filePath(QStringLiteral("root.png"));
+    const QString outsideImage = temp.filePath(QStringLiteral("outside.png"));
+    const QString outsideNested =
+        temp.filePath(QStringLiteral("outside-dir/nested.png"));
+    check(writeFile(insideImage, "inside"), QStringLiteral("write inside image"));
+    check(writeFile(rootImage, "root"), QStringLiteral("write vault-root image"));
+    check(writeFile(outsideImage, "outside"), QStringLiteral("write outside image"));
+    check(writeFile(outsideNested, "outside nested"),
+          QStringLiteral("write nested outside image"));
+
+    check(ContentSecurity::resolveLocalImage(
+              QStringLiteral("inside.png"), noteDir, vaultRoot) ==
+              QFileInfo(insideImage).canonicalFilePath(),
+          QStringLiteral("resolve a relative image inside the vault"));
+    check(ContentSecurity::resolveLocalImage(
+              QStringLiteral("../root.png"), noteDir, vaultRoot) ==
+              QFileInfo(rootImage).canonicalFilePath(),
+          QStringLiteral("allow relative image traversal that remains in the vault"));
+    check(ContentSecurity::resolveLocalImage(
+              insideImage, noteDir, vaultRoot) ==
+              QFileInfo(insideImage).canonicalFilePath(),
+          QStringLiteral("allow an absolute image that remains in the vault"));
+    check(ContentSecurity::resolveLocalImage(
+              QUrl::fromLocalFile(insideImage).toString(), noteDir, vaultRoot) ==
+              QFileInfo(insideImage).canonicalFilePath(),
+          QStringLiteral("allow an in-vault file URL"));
+
+    check(ContentSecurity::resolveLocalImage(
+              QStringLiteral("../../outside.png"), noteDir, vaultRoot).isEmpty(),
+          QStringLiteral("reject image traversal outside the vault"));
+    check(ContentSecurity::resolveLocalImage(
+              outsideImage, noteDir, vaultRoot).isEmpty(),
+          QStringLiteral("reject an absolute image outside the vault"));
+    check(ContentSecurity::resolveLocalImage(
+              QUrl::fromLocalFile(outsideImage).toString(), noteDir,
+              vaultRoot).isEmpty(),
+          QStringLiteral("reject an outside file URL"));
+    check(ContentSecurity::resolveLocalImage(
+              QStringLiteral("https://example.com/image.png"), noteDir,
+              vaultRoot).isEmpty(),
+          QStringLiteral("reject remote image previews"));
+#if defined(Q_OS_UNIX)
+    const QString escapedLink =
+        QDir(noteDir).filePath(QStringLiteral("escaped.png"));
+    check(QFile::link(outsideImage, escapedLink),
+          QStringLiteral("create escaping image symlink"));
+    check(ContentSecurity::resolveLocalImage(
+              QStringLiteral("escaped.png"), noteDir, vaultRoot).isEmpty(),
+          QStringLiteral("reject an image symlink escaping the vault"));
+    const QString escapedDir =
+        QDir(noteDir).filePath(QStringLiteral("escaped-dir"));
+    check(QFile::link(QFileInfo(outsideNested).absolutePath(), escapedDir),
+          QStringLiteral("create escaping image-directory symlink"));
+    check(ContentSecurity::resolveLocalImage(
+              QStringLiteral("escaped-dir/nested.png"), noteDir,
+              vaultRoot).isEmpty(),
+          QStringLiteral("reject an image path through an escaping symlink"));
+#endif
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -224,6 +316,7 @@ int main(int argc, char **argv) {
     testEscapingStoreIsRejected();
     testMalformedStoreIsPreserved();
     testWikiLinkCreationValidation();
+    testMarkdownContentBoundaries();
     if (failures == 0)
         QTextStream(stdout) << "All security regression tests passed.\n";
     return failures == 0 ? 0 : 1;

@@ -42,6 +42,8 @@ endif()
 add_executable(emerald WIN32 MACOSX_BUNDLE
   src/main.cpp
   src/core/Note.h
+  src/core/ContentSecurity.h
+  src/core/ContentSecurity.cpp
   src/core/LegacyMascotMigration.h
   src/core/LegacyMascotMigration.cpp
   src/core/Vault.h
@@ -193,6 +195,8 @@ if(EMERALD_BUILD_PERF_TESTS)
   add_executable(emerald_perf_tests
     tests/perf/PerfBench.cpp
     src/core/Note.h
+    src/core/ContentSecurity.h
+    src/core/ContentSecurity.cpp
     src/core/Vault.h
     src/core/Vault.cpp
     src/core/SearchIndex.h
@@ -226,6 +230,8 @@ if(EMERALD_BUILD_SECURITY_TESTS)
   enable_testing()
   add_executable(emerald_security_tests
     tests/security/SecurityTests.cpp
+    src/core/ContentSecurity.h
+    src/core/ContentSecurity.cpp
     src/core/LegacyMascotMigration.h
     src/core/LegacyMascotMigration.cpp
     src/core/MascotSeed.h

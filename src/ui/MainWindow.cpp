@@ -2119,7 +2119,7 @@ void MainWindow::openVault(const QString &path) {
     m_editor->clearFolds(); // drop the previous note's folds before clearing
     m_loading = true;
     m_editor->clear();
-    m_editor->setImageBasePath(QString());
+    m_editor->setImagePaths(QString(), QString());
     m_editor->document()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);
@@ -2342,7 +2342,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
                             // content is replaced below — drop them first
     m_loading = true;
     const QString body = m_vault->read(path);
-    m_editor->setImageBasePath(QFileInfo(path).absolutePath());
+    m_editor->setImagePaths(QFileInfo(path).absolutePath(), m_vault->root());
     m_editor->setPlainText(body);
     m_editor->document()->setModified(false);
     m_loading = false;
@@ -3181,7 +3181,7 @@ void MainWindow::reconcileAfterDeletion() {
     m_editor->clearFolds(); // drop the deleted note's folds before clearing
     m_loading = true;
     m_editor->clear();
-    m_editor->setImageBasePath(QString());
+    m_editor->setImagePaths(QString(), QString());
     m_editor->document()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);
@@ -3272,7 +3272,7 @@ void MainWindow::newNoteIn(const QString &dir) {
     m_editor->clearFolds();
     m_loading = true;
     m_editor->clear();
-    m_editor->setImageBasePath(m_pendingNoteDir);
+    m_editor->setImagePaths(m_pendingNoteDir, m_vault->root());
     m_editor->document()->setModified(false);
     m_loading = false;
 

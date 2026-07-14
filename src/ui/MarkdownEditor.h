@@ -28,8 +28,9 @@ public:
     // Set the editor body font (family + size) and keep heading scaling in sync.
     void applyFont(const QFont &font);
 
-    // Folder used to resolve relative Markdown image paths for inline previews.
-    void setImageBasePath(const QString &path);
+    // Folder used to resolve relative Markdown image paths, plus the vault root
+    // that every resolved inline preview must remain inside.
+    void setImagePaths(const QString &basePath, const QString &vaultRoot);
 
     // Vertical spacing between rows, as a percent of the font's natural line
     // height (100 = normal). Persisted in settings. Handled by the document
@@ -220,6 +221,7 @@ private:
     quint64 m_mascotSeed = 0;    // last seen mascot seed, to detect changes
     QString m_mascotKind;        // last seen kind, so a kind-only change emits too
     QString m_imageBasePath;     // current note folder for relative image links
+    QString m_imageRootPath;     // vault boundary for local image previews
     // The spacing-aware document layout (owned by the document). Held as the
     // base type; applyLineSpacing() downcasts to set the per-row padding.
     QPlainTextDocumentLayout *m_spacedLayout = nullptr;

@@ -563,7 +563,7 @@ int main(int argc, char **argv) {
 
     MarkdownEditor editor;
     editor.resize(820, 720);
-    editor.setImageBasePath(tmp.path());
+    editor.setImagePaths(tmp.path(), tmp.path());
     QString bigDoc = noteBody(4242, qMax(words * 8, 2000),
                               qMax(notes, 4243), profile, QString());
     if (richProfile(profile)) {

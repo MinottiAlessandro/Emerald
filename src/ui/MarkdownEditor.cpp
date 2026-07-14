@@ -2,6 +2,7 @@
 
 #include "MarkdownHighlighter.h"
 #include "MathRender.h"
+#include "core/ContentSecurity.h"
 #include "core/MascotSeed.h"
 #include "core/Perf.h"
 #include "core/WikiLink.h"
@@ -12,7 +13,6 @@
 #include <QCompleter>
 #include <QDateTime>
 #include <QDesktopServices>
-#include <QDir>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontMetricsF>
@@ -330,10 +330,12 @@ void MarkdownEditor::setCompletions(const QStringList &titles) {
     m_completionModel->setStringList(titles);
 }
 
-void MarkdownEditor::setImageBasePath(const QString &path) {
-    if (m_imageBasePath == path)
+void MarkdownEditor::setImagePaths(const QString &basePath,
+                                   const QString &vaultRoot) {
+    if (m_imageBasePath == basePath && m_imageRootPath == vaultRoot)
         return;
-    m_imageBasePath = path;
+    m_imageBasePath = basePath;
+    m_imageRootPath = vaultRoot;
     viewport()->update();
 }
 
@@ -609,10 +611,15 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton &&
         followsLink(event->pos(), event->modifiers())) {
         const QString url = internetLinkAt(event->pos());
-        if (!url.isEmpty())
-            QDesktopServices::openUrl(QUrl::fromUserInput(url));
-        else
+        if (!url.isEmpty()) {
+            const QUrl safeUrl = ContentSecurity::externalUrl(url);
+            if (safeUrl.isValid())
+                QDesktopServices::openUrl(safeUrl);
+            else
+                emit noticeRequested(tr("Blocked unsafe link"));
+        } else {
             emit linkClicked(linkAt(event->pos()));
+        }
         return;
     }
     QPlainTextEdit::mousePressEvent(event);
@@ -1881,20 +1888,12 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 continue;
 
             const QString target = imageTargetFromLine(block.text());
-            if (target.isEmpty() || m_imageBasePath.isEmpty())
+            if (target.isEmpty() || m_imageBasePath.isEmpty() ||
+                m_imageRootPath.isEmpty())
                 continue;
 
-            QString path;
-            const QUrl url(target);
-            if (url.isValid() && !url.scheme().isEmpty()) {
-                if (!url.isLocalFile())
-                    continue;
-                path = url.toLocalFile();
-            } else if (QDir::isAbsolutePath(target)) {
-                path = target;
-            } else {
-                path = QDir(m_imageBasePath).filePath(target);
-            }
+            const QString path = ContentSecurity::resolveLocalImage(
+                target, m_imageBasePath, m_imageRootPath);
 
             const qreal margin = document()->documentMargin();
             QRectF area(margin, geo.top() + 8,
