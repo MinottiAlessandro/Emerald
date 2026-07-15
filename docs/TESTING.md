@@ -45,6 +45,8 @@ move the caret back onto the line, confirm the raw markers reappear.
 
 ## 4. Lists
 - [ ] Enter continues a bullet / numbered / task list (numbers increment, indent preserved).
+- [ ] Long bullet, numbered, and task-list items align wrapped continuation lines
+      with the item text, including at nested indentation levels.
 - [ ] Enter mid-item splits, carrying text after the caret to a new marked item.
 - [ ] Enter on an empty item ends the list.
 - [ ] `Tab` / `Shift+Tab` indent / outdent an item.
