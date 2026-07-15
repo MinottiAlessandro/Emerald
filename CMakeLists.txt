@@ -241,6 +241,39 @@ if(EMERALD_BUILD_PERF_TESTS)
   emerald_enable_sanitizers(emerald_perf_tests)
 endif()
 
+# --- Editor regression tests ---------------------------------------------
+# Offscreen Qt widget tests for layout and editing behaviour. Enable with:
+#   cmake -S . -B build-editor-tests -DEMERALD_BUILD_EDITOR_TESTS=ON
+#   cmake --build build-editor-tests -j
+#   ctest --test-dir build-editor-tests --output-on-failure
+option(EMERALD_BUILD_EDITOR_TESTS "Build Markdown editor regression tests" OFF)
+if(EMERALD_BUILD_EDITOR_TESTS)
+  enable_testing()
+  add_executable(emerald_editor_tests
+    tests/ui/MarkdownEditorTests.cpp
+    src/core/ContentSecurity.h
+    src/core/ContentSecurity.cpp
+    src/core/MascotSeed.h
+    src/core/Perf.h
+    src/core/WikiLink.h
+    src/core/WikiLink.cpp
+    src/ui/MarkdownEditor.h
+    src/ui/MarkdownEditor.cpp
+    src/ui/MarkdownHighlighter.h
+    src/ui/MarkdownHighlighter.cpp
+    src/ui/MathRender.h
+    src/ui/MathRender.cpp
+  )
+  target_include_directories(emerald_editor_tests PRIVATE src)
+  target_link_libraries(emerald_editor_tests PRIVATE Qt6::Widgets Qt6::Svg)
+  target_compile_definitions(emerald_editor_tests PRIVATE
+    EMERALD_VERSION="${PROJECT_VERSION}")
+  emerald_enable_sanitizers(emerald_editor_tests)
+  add_test(NAME emerald_editor_tests COMMAND emerald_editor_tests)
+  set_tests_properties(emerald_editor_tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
 # --- Security regression tests -------------------------------------------
 # Small QtCore-only tests for filesystem trust boundaries. Kept separate from
 # the release executable and enabled explicitly in CI/development builds.

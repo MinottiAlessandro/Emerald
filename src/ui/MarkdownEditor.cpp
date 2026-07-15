@@ -31,6 +31,7 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
+#include <QtMath>
 #include <QUrl>
 #include <algorithm>
 
@@ -177,10 +178,19 @@ QStringList imageFilePathsFromMimeData(const QMimeData *mime) {
     return paths;
 }
 
-// QPlainTextEdit's layout ignores block-format line height and margins, so the
-// only way to open up the gap between rows is to report a taller block. This
-// layout pads each block with a fixed extra height below its text; the editor
-// sets that padding from the spacing percentage and the font's line height.
+int listContentStart(const QString &text) {
+    // Keep this syntax in step with continueList(): indentation, a bullet or
+    // ordinal, and an optional task marker all belong to the hanging prefix.
+    static const QRegularExpression re(QStringLiteral(
+        "^\\s*(?:[-*+]|\\d+[.)])\\s+(?:\\[[ xX]\\]\\s+)?"));
+    const auto match = re.match(text);
+    return match.hasMatch() ? match.capturedEnd() : -1;
+}
+
+// QPlainTextEdit's layout ignores block-format line height and margins. This
+// layout therefore handles the two visual adjustments Emerald needs directly:
+// extra leading below each block and a hanging indent on wrapped list items.
+// Neither adjustment inserts whitespace into the Markdown source.
 class SpacedTextLayout : public QPlainTextDocumentLayout {
 public:
     explicit SpacedTextLayout(QTextDocument *doc)
@@ -188,6 +198,8 @@ public:
     void setExtraLeading(qreal px) { m_extra = qMax(qreal(0), px); }
     QRectF blockBoundingRect(const QTextBlock &block) const override {
         QRectF r = QPlainTextDocumentLayout::blockBoundingRect(block);
+        if (applyListHangingIndent(block))
+            r = QPlainTextDocumentLayout::blockBoundingRect(block);
         // A folded-away block lays out at zero height; it must not reclaim space
         // through the row padding, or collapsed sections leave a phantom gap.
         if (m_extra > 0.0 && block.isVisible())
@@ -196,6 +208,81 @@ public:
     }
 
 private:
+    bool applyListHangingIndent(const QTextBlock &block) const {
+        if (!block.isValid() || !block.isVisible())
+            return false;
+
+        QTextLayout *layout = block.layout();
+        if (!layout || layout->lineCount() < 2)
+            return false;
+
+        const QTextLine first = layout->lineAt(0);
+        const qreal originX = first.x();
+        const qreal availableWidth = first.width();
+        if (availableWidth <= 1.0)
+            return false;
+
+        // Fenced-code contents are verbatim even when they happen to begin
+        // with list-looking text. The highlighter assigns StateCode (1) to the
+        // opening fence and its body; requiring the previous block to share the
+        // state excludes the opening fence itself.
+        const bool inCode = block.userState() == 1 &&
+                            block.previous().isValid() &&
+                            block.previous().userState() == 1;
+        const int contentStart = inCode ? -1 : listContentStart(block.text());
+
+        qreal hangingIndent = 0.0;
+        const int firstEnd = first.textStart() + first.textLength();
+        if (contentStart > first.textStart() && contentStart <= firstEnd) {
+            hangingIndent = first.cursorToX(contentStart) - originX;
+            // At extremely narrow widths the marker itself may fill the row.
+            // Keep Qt's normal wrapping in that case rather than creating a
+            // zero- or negative-width continuation line.
+            if (hangingIndent <= 0.0 || hangingIndent >= availableWidth - 1.0)
+                hangingIndent = 0.0;
+        }
+
+        const qreal continuationX = originX + hangingIndent;
+        const qreal continuationWidth = availableWidth - hangingIndent;
+        bool needsRelayout = false;
+        for (int i = 1; i < layout->lineCount(); ++i) {
+            const QTextLine line = layout->lineAt(i);
+            if (qAbs(line.x() - continuationX) > 0.01 ||
+                qAbs(line.width() - continuationWidth) > 0.01) {
+                needsRelayout = true;
+                break;
+            }
+        }
+        if (!needsRelayout)
+            return false;
+
+        const int oldLineCount = layout->lineCount();
+        qreal height = 0.0;
+        int lineIndex = 0;
+        layout->beginLayout();
+        for (;;) {
+            QTextLine line = layout->createLine();
+            if (!line.isValid())
+                break;
+            const qreal indent = lineIndex == 0 ? 0.0 : hangingIndent;
+            line.setLeadingIncluded(true);
+            line.setLineWidth(availableWidth - indent);
+            line.setPosition(QPointF(originX + indent, height));
+            height += line.height();
+            if (line.leading() < 0.0)
+                height += qCeil(line.leading());
+            ++lineIndex;
+        }
+        layout->endLayout();
+        const_cast<QTextBlock &>(block).setLineCount(layout->lineCount());
+
+        auto *self = const_cast<SpacedTextLayout *>(this);
+        Q_EMIT self->updateBlock(block);
+        if (oldLineCount != layout->lineCount())
+            Q_EMIT self->documentSizeChanged(documentSize());
+        return true;
+    }
+
     qreal m_extra = 0.0;
 };
 }

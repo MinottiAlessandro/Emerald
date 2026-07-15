@@ -2,6 +2,7 @@ build/
 build-appimage/
 build-heaptrack/
 build-perf*/
+build-editor-tests/
 build-security/
 build-fuzz/
 *.AppImage
