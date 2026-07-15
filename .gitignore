@@ -2,11 +2,21 @@ build/
 build-appimage/
 build-heaptrack/
 build-perf*/
+build-editor-tests/
+build-security/
+build-fuzz/
 *.AppImage
 *.user
 .cache/
 compile_commands.json
 perf-*.json
+
+# libFuzzer reproducers (promote useful cases into tests before committing)
+crash-*
+leak-*
+oom-*
+timeout-*
+slow-unit-*
 
 # graphify knowledge-graph output (generated)
 graphify-out/

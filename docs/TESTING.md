@@ -146,6 +146,9 @@ move the caret back onto the line, confirm the raw markers reappear.
 
 ## 15. Updates
 - [ ] **Check for Updates…** queries GitHub for the latest release.
+- [ ] An update is opened/installed only after its SHA-256 digest and byte size
+      match GitHub's release metadata; missing or mismatched metadata/file data
+      produces a verification error and removes the download.
 - [ ] On Linux AppImage, the in-place update path works (if a newer release exists).
 
 ## 16. Keyboard shortcuts — full sweep ★

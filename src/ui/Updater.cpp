@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
@@ -34,6 +35,33 @@ void prepare(QNetworkRequest &req) {
     req.setHeader(QNetworkRequest::UserAgentHeader, QByteArrayLiteral("Emerald-Updater"));
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                      QNetworkRequest::NoLessSafeRedirectPolicy);
+}
+
+QByteArray sha256FromDigest(const QString &digest) {
+    constexpr auto prefix = "sha256:";
+    if (!digest.startsWith(QLatin1String(prefix), Qt::CaseInsensitive))
+        return {};
+    const QByteArray hex = digest.mid(qstrlen(prefix)).toLatin1();
+    if (hex.size() != 64)
+        return {};
+    for (const char c : hex) {
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F')))
+            return {};
+    }
+    const QByteArray value = QByteArray::fromHex(hex);
+    if (value.size() !=
+        QCryptographicHash::hashLength(QCryptographicHash::Sha256))
+        return {};
+    return value;
+}
+
+bool isTrustedReleaseUrl(const QUrl &url) {
+    return url.isValid() && url.scheme() == QLatin1String("https") &&
+           url.host().compare(QLatin1String("github.com"),
+                              Qt::CaseInsensitive) == 0 &&
+           url.path().startsWith(
+               QLatin1String("/MinottiAlessandro/Emerald/releases/"));
 }
 
 // Dotted numeric compare ("1.10.0" > "1.9.0"). >0 if a is newer than b.
@@ -201,11 +229,16 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
     // Find the download URL for this platform's asset.
     const QString assetName = platformAssetName();
     QString url;
+    QByteArray expectedSha256;
+    qint64 expectedSize = -1;
     const QJsonArray assets = obj.value(QStringLiteral("assets")).toArray();
     for (const QJsonValue &v : assets) {
         const QJsonObject a = v.toObject();
         if (a.value(QStringLiteral("name")).toString() == assetName) {
             url = a.value(QStringLiteral("browser_download_url")).toString();
+            expectedSha256 =
+                sha256FromDigest(a.value(QStringLiteral("digest")).toString());
+            expectedSize = a.value(QStringLiteral("size")).toVariant().toLongLong();
             break;
         }
     }
@@ -218,8 +251,22 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
                 tr("Emerald v%1 is available — you have v%2.\n\n"
                    "Open the download page?").arg(latest, current),
                 QMessageBox::Open | QMessageBox::Cancel) == QMessageBox::Open &&
-            !page.isEmpty())
+            isTrustedReleaseUrl(QUrl(page)))
             QDesktopServices::openUrl(QUrl(page));
+        return;
+    }
+
+    const QUrl assetUrl(url);
+    if (!isTrustedReleaseUrl(assetUrl) || expectedSha256.isEmpty() ||
+        expectedSize <= 0) {
+        QMessageBox::warning(m_window, tr("Update Verification Unavailable"),
+                             tr("Emerald v%1 does not provide valid package verification "
+                                "metadata. For your safety, it will not be downloaded or "
+                                "installed automatically.")
+                                 .arg(latest));
+        const QUrl page(obj.value(QStringLiteral("html_url")).toString());
+        if (isTrustedReleaseUrl(page))
+            QDesktopServices::openUrl(page);
         return;
     }
 
@@ -246,11 +293,13 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
     box.setDefaultButton(go);
     box.exec();
     if (box.clickedButton() == go)
-        startDownload(url, assetName, latest);
+        startDownload(url, assetName, latest, expectedSha256, expectedSize);
 }
 
 void Updater::startDownload(const QString &url, const QString &assetName,
-                            const QString &version) {
+                            const QString &version,
+                            const QByteArray &expectedSha256,
+                            qint64 expectedSize) {
     m_busy = true;
 
     // Linux AppImage stages beside the running file so the final rename is a
@@ -294,20 +343,38 @@ void Updater::startDownload(const QString &url, const QString &assetName,
     prepare(req);
     QNetworkReply *reply = m_net->get(req);
     const auto writeFailed = std::make_shared<bool>(false);
+    const auto sizeExceeded = std::make_shared<bool>(false);
+    const auto receivedBytes = std::make_shared<qint64>(0);
+    const auto hash =
+        std::make_shared<QCryptographicHash>(QCryptographicHash::Sha256);
+    const auto consume = [reply, out, writeFailed, sizeExceeded, receivedBytes,
+                          hash, expectedSize] {
+        const QByteArray bytes = reply->readAll();
+        if (bytes.isEmpty())
+            return;
+        if (bytes.size() > expectedSize - *receivedBytes) {
+            *sizeExceeded = true;
+            reply->abort();
+            return;
+        }
+        *receivedBytes += bytes.size();
+        hash->addData(bytes);
+        if (out->write(bytes) != bytes.size())
+            *writeFailed = true;
+    };
 
     connect(reply, &QNetworkReply::downloadProgress, progress,
             [progress](qint64 received, qint64 total) {
                 if (total > 0)
                     progress->setValue(int(received * 100 / total));
             });
-    connect(reply, &QNetworkReply::readyRead, out, [reply, out, writeFailed] {
-        if (out->write(reply->readAll()) < 0)
-            *writeFailed = true;
-    });
+    connect(reply, &QNetworkReply::readyRead, out, consume);
     connect(progress, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, progress, out, writeFailed, savePath, version] {
-                if (reply->bytesAvailable() > 0 && out->write(reply->readAll()) < 0)
+            [this, reply, progress, out, writeFailed, sizeExceeded, hash, consume,
+             savePath, version, expectedSha256, expectedSize] {
+                consume();
+                if (!out->flush())
                     *writeFailed = true;
                 out->close();
                 out->deleteLater();
@@ -317,9 +384,17 @@ void Updater::startDownload(const QString &url, const QString &assetName,
 
                 if (reply->error() != QNetworkReply::NoError) {
                     QFile::remove(savePath);
-                    if (reply->error() != QNetworkReply::OperationCanceledError)
+                    if (*sizeExceeded) {
+                        QMessageBox::critical(
+                            m_window, tr("Update Verification Failed"),
+                            tr("The update exceeded the size published by GitHub. "
+                               "The partial file was deleted and will not be "
+                               "opened or installed."));
+                    } else if (reply->error() !=
+                               QNetworkReply::OperationCanceledError) {
                         QMessageBox::warning(m_window, tr("Download Failed"),
                                              reply->errorString());
+                    }
                     return;
                 }
 
@@ -328,6 +403,18 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                     QMessageBox::warning(
                         m_window, tr("Download Failed"),
                         tr("Couldn't save the download to:\n%1").arg(savePath));
+                    return;
+                }
+
+                const bool verified = hash->result() == expectedSha256 &&
+                                      QFileInfo(savePath).size() == expectedSize;
+                if (!verified) {
+                    QFile::remove(savePath);
+                    QMessageBox::critical(
+                        m_window, tr("Update Verification Failed"),
+                        tr("The downloaded update did not match the SHA-256 "
+                           "digest and size published by GitHub. The file was "
+                           "deleted and will not be opened or installed."));
                     return;
                 }
                 finishDownload(savePath, version);

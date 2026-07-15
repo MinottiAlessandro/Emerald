@@ -1,0 +1,70 @@
+name: Security
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/security/**'
+      - 'tests/fuzz/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/security.yml'
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+env:
+  QT_VERSION: '6.8.1'
+  ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+  UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    name: Sanitizers and fuzz smoke test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Configure sanitizer tests
+        run: |
+          cmake -S . -B build-security \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DEMERALD_BUILD_SECURITY_TESTS=ON \
+            -DEMERALD_ENABLE_SANITIZERS=ON
+
+      - name: Build sanitizer tests
+        run: cmake --build build-security --target emerald_security_tests -j
+
+      - name: Run sanitizer tests
+        run: ctest --test-dir build-security --output-on-failure
+
+      - name: Configure fuzz harness
+        run: |
+          cmake -S . -B build-fuzz \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DEMERALD_BUILD_FUZZ_TESTS=ON
+
+      - name: Build fuzz harness
+        run: cmake --build build-fuzz --target emerald_fuzz_core -j
+
+      - name: Run fuzz smoke test
+        run: ./build-fuzz/emerald_fuzz_core -runs=5000 -max_len=4096

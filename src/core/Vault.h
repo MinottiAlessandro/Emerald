@@ -22,16 +22,24 @@ public:
     QString read(const QString &path) const;
     bool write(const QString &path, const QString &content) const;
 
+    // Resolve an existing regular file named by a relative vault path. The
+    // returned path is canonical and guaranteed to remain beneath the canonical
+    // vault root; absolute paths, traversal, missing files, directories, and
+    // symlinks that escape the vault are rejected with an empty result.
+    QString resolveExistingFileWithinRoot(const QString &relativePath) const;
+
     // Resolve a link target (e.g. "My Note") to an existing note's path,
     // matched case-insensitively by title. Empty string if none exists.
     QString pathForTitle(const QString &title) const;
 
     // Create a new note file named <title>.md and append it to the vault.
-    // Returns the created note (or the existing one if it already exists).
+    // Returns the created note (or the existing one if it already exists), or
+    // an empty note when the title is unsafe or the file cannot be written.
     Note createNote(const QString &title);
 
     // Create <title>.md inside an absolute folder within the vault (used by the
-    // folder tree's context menu). Returns the note, or the existing one.
+    // folder tree's context menu). Returns the note, the existing one, or an
+    // empty note when the title is unsafe or the file cannot be written.
     Note createNoteIn(const QString &dir, const QString &title);
 
     // Make a sub-folder `name` inside the absolute folder `dir`. Returns true

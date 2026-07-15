@@ -60,6 +60,37 @@ bool Vault::write(const QString &path, const QString &content) const {
     return f.write(bytes) == bytes.size();
 }
 
+QString Vault::resolveExistingFileWithinRoot(const QString &relativePath) const {
+    if (relativePath.isEmpty())
+        return {};
+
+    const QString normalized = QDir::fromNativeSeparators(relativePath);
+    if (QDir::isAbsolutePath(normalized))
+        return {};
+    const QStringList parts = normalized.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    if (parts.contains(QStringLiteral("..")))
+        return {};
+
+    const QString root = QDir(m_root).canonicalPath();
+    if (root.isEmpty())
+        return {};
+    const QFileInfo candidate(QDir(root).filePath(QDir::cleanPath(normalized)));
+    if (!candidate.exists() || !candidate.isFile())
+        return {};
+    const QString canonical = candidate.canonicalFilePath();
+    if (canonical.isEmpty())
+        return {};
+
+#if defined(Q_OS_WIN)
+    constexpr Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    const QString rootPrefix =
+        root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/');
+    return canonical.startsWith(rootPrefix, cs) ? canonical : QString();
+}
+
 QString Vault::pathForTitle(const QString &title) const {
     for (const Note &n : m_notes) {
         if (n.title.compare(title, Qt::CaseInsensitive) == 0)
@@ -166,6 +197,9 @@ QStringList Vault::updateLinksToPaths(const QString &oldTitle,
 }
 
 Note Vault::createNote(const QString &title) {
+    if (!isValidTitle(title))
+        return {};
+
     const QString existing = pathForTitle(title);
     if (!existing.isEmpty())
         return Note{existing, titleFromPath(existing)};
@@ -173,7 +207,8 @@ Note Vault::createNote(const QString &title) {
     const QString path = QDir(m_root).filePath(title + QStringLiteral(".md"));
     // The title is shown by the editor's title field, so the body starts empty
     // rather than repeating it as an "# H1".
-    write(path, QString());
+    if (!write(path, QString()))
+        return {};
 
     Note note{path, title};
     m_notes.push_back(note);
@@ -184,10 +219,16 @@ Note Vault::createNote(const QString &title) {
 }
 
 Note Vault::createNoteIn(const QString &dir, const QString &title) {
+    if (!isValidTitle(title))
+        return {};
+
     const QString folder = dir.isEmpty() ? m_root : dir;
     const QString path = QDir(folder).filePath(title + QStringLiteral(".md"));
-    if (!QFileInfo::exists(path))
-        write(path, QString());
+    const QFileInfo existing(path);
+    if (existing.exists() && !existing.isFile())
+        return {};
+    if (!existing.exists() && !write(path, QString()))
+        return {};
     return Note{path, title};
 }
 
