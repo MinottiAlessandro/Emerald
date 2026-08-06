@@ -76,6 +76,9 @@ private:
     void openNoteByPath(const QString &path, bool record = true,
                         bool saveBeforeOpen = true);
     void saveCurrent();
+    // Resolve the configured default note folder, falling back to the vault
+    // root when no folder is selected or the saved folder no longer exists.
+    QString defaultNoteDirectory() const;
     void newNote();
     void renameCurrent(const QString &rawTitle);
     void onLinkClicked(const QString &target);

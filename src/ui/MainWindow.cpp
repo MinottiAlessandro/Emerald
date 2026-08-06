@@ -2451,17 +2451,8 @@ void MainWindow::saveCurrent() {
             return;
         }
         QString dir = m_pendingNoteDir;
-        if (dir.isEmpty() || !QDir(dir).exists()) {
-            // Honour the configured new-note folder (default: the vault root).
-            dir = m_vault->root();
-            const QString rel =
-                QSettings().value(QStringLiteral("newNoteFolder")).toString();
-            if (!rel.isEmpty()) {
-                const QString candidate = QDir(m_vault->root()).filePath(rel);
-                if (QDir(candidate).exists())
-                    dir = candidate;
-            }
-        }
+        if (dir.isEmpty() || !QDir(dir).exists())
+            dir = defaultNoteDirectory();
         const Note note = m_vault->createNoteIn(dir, title);
         if (note.path.isEmpty())
             return;
@@ -2600,12 +2591,10 @@ void MainWindow::syncOpenNoteFromDisk() {
     notify(tr("Reloaded — changed on disk"), 3000);
 }
 
-void MainWindow::newNote() {
-    if (!m_vault) {
-        chooseVault();
-        if (!m_vault)
-            return;
-    }
+QString MainWindow::defaultNoteDirectory() const {
+    if (!m_vault)
+        return {};
+
     // Create in the configured folder (default: vault root), falling back to
     // the root if the saved folder no longer exists.
     QString dir = m_vault->root();
@@ -2615,7 +2604,16 @@ void MainWindow::newNote() {
         if (QDir(candidate).exists())
             dir = candidate;
     }
-    newNoteIn(dir);
+    return dir;
+}
+
+void MainWindow::newNote() {
+    if (!m_vault) {
+        chooseVault();
+        if (!m_vault)
+            return;
+    }
+    newNoteIn(defaultNoteDirectory());
 }
 
 void MainWindow::onLinkClicked(const QString &target) {
@@ -2627,13 +2625,19 @@ void MainWindow::onLinkClicked(const QString &target) {
             notify(tr("“%1” is not a valid note name").arg(target), 3000);
             return;
         }
-        const Note note = m_vault->createNote(target);
+        const Note note =
+            m_vault->createNoteIn(defaultNoteDirectory(), target);
         if (note.path.isEmpty()) {
             notify(tr("Could not create “%1”").arg(target), 3000);
             return;
         }
         const QString content = m_vault->read(note.path);
+        // createNoteIn() does not mutate the cached vault listing. Rescan so a
+        // link-created note in a nested default folder immediately reaches the
+        // tree and wiki-link completion list.
+        m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, content);
+        markNoteMetaCurrent(note.path, note.title);
         refreshTree();
         path = note.path;
     }

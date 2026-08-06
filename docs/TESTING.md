@@ -83,6 +83,8 @@ move the caret back onto the line, confirm the raw markers reappear.
 ## 8. Links & navigation
 - [ ] `[[Note]]` renders, click jumps to the target.
 - [ ] `[[Note]]` to a non-existent note auto-creates it.
+- [ ] With **Settings → New notes in** set to a sub-folder, clicking a
+      non-existent `[[Note]]` creates it in that folder (not the vault root).
 - [ ] `[[Note|alias]]` shows just the alias.
 - [ ] Typing `[[` pops fuzzy autocomplete of existing titles; selecting inserts it.
 - [ ] External link `[text](https://…)` renders, opens in the system browser.
