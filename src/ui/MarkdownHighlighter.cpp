@@ -948,19 +948,37 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         if (reveal) {
             setFormat(0, markerEnd, m_listMarker);
         } else {
-            // Hide the "- [ ] " markup but reserve room for the painted box.
-            // Conceal the glyphs (dash, brackets, status char) so they stay
-            // invisible even under a selection — a full-size transparent glyph
-            // would otherwise reappear in the selection colour, leaving a stray
-            // "-" inside the rendered square. Spaces carry no glyph, so keep
-            // them full width to reserve the box's space.
+            // Preserve indentation, replace the '-' advance with exactly one
+            // checkbox plus a compact label gap, and collapse the remaining
+            // " [ ] " source. MarkdownEditor paints the box at that dash cell.
             QTextCharFormat space;
-            space.setForeground(QColor(0, 0, 0, 0)); // full width, no glyph
-            for (int i = 0; i < markerEnd && i < text.size(); ++i) {
-                // Keep the whole raw marker at its natural width so entering
-                // the line never changes wrapping or creates a new paragraph
-                // format. The editor paints one compact checkbox over it.
-                setFormat(i, 1, space);
+            space.setForeground(QColor(0, 0, 0, 0));
+            int markerStart = 0;
+            while (markerStart < markerEnd && text.at(markerStart).isSpace()) {
+                setFormat(markerStart, 1, space);
+                ++markerStart;
+            }
+            if (markerStart < markerEnd) {
+                const QFont base = document() ? document()->defaultFont() : QFont();
+                const QFontMetricsF metrics(base);
+                constexpr qreal LabelGap = 5.0;
+                const qreal reserved = metrics.ascent() * 0.92 + LabelGap;
+                const qreal glyph =
+                    metrics.horizontalAdvance(text.at(markerStart));
+                QTextCharFormat boxReserve = space;
+                boxReserve.setFontLetterSpacingType(QFont::AbsoluteSpacing);
+                boxReserve.setFontLetterSpacing(qMax(qreal(0), reserved - glyph));
+                setFormat(markerStart, 1, boxReserve);
+
+                const QTextCharFormat collapsed = conceal();
+                for (int i = markerStart + 1;
+                     i < markerEnd && i < text.size(); ++i)
+                    setFormat(i, 1, collapsed);
+            } else {
+                // Defensive fallback for malformed input matched by a future
+                // relaxed task expression.
+                for (int i = 0; i < markerEnd && i < text.size(); ++i)
+                    setFormat(i, 1, space);
             }
         }
         for (int i = 0; i < markerEnd && i < consumed.size(); ++i)

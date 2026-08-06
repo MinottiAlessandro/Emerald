@@ -418,9 +418,14 @@ int main(int argc, char **argv) {
         editor.document()->find(QStringLiteral("geometry task"));
     taskLabel.setPosition(taskLabel.selectionStart());
     const QRect taskLabelCell = editor.cursorRect(taskLabel);
+    QTextCursor taskDash(editor.document()->firstBlock());
+    const QRect taskDashCell = editor.cursorRect(taskDash);
     const int checkboxLabelGap =
         taskLabelCell.left() - paintedCheckbox.right() - 1;
-    check(!paintedCheckbox.isNull() && checkboxLabelGap >= 3 &&
+    check(!paintedCheckbox.isNull() &&
+              qAbs(paintedCheckbox.left() - taskDashCell.left()) <= 2,
+          QStringLiteral("the rendered checkbox should replace the source dash"));
+    check(checkboxLabelGap >= 3 &&
               checkboxLabelGap <= 7,
           QStringLiteral("a rendered checkbox should use a compact gap before "
                          "its label (gap=%1, box=%2..%3, label=%4)")
