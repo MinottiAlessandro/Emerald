@@ -840,13 +840,18 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
 
-    // Table row: |-delimited. Monospace cells, dim pipes, bold header row, dim
-    // separator. (A lightweight render — no real cell grid in a plain editor.)
+    // Table row: |-delimited. The editor paints the grid itself, so inactive
+    // rows keep the source advances for stable cell geometry but conceal the
+    // pipe/separator glyphs. The active or selected row reveals the Markdown
+    // scaffolding so it remains directly editable.
     const QString trimmed = text.trimmed();
     if (trimmed.size() > 1 && trimmed.startsWith(QLatin1Char('|')) &&
         trimmed.endsWith(QLatin1Char('|'))) {
+        QTextCharFormat hiddenScaffolding = m_tablePipe;
+        hiddenScaffolding.setForeground(QColor(0, 0, 0, 0));
         if (m_reTableSep.match(text).hasMatch()) {
-            setFormat(0, text.size(), m_tablePipe);
+            setFormat(0, text.size(), reveal ? m_tablePipe
+                                             : hiddenScaffolding);
             return;
         }
         const QTextBlock next = currentBlock().next();
@@ -855,7 +860,8 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         setFormat(0, text.size(), header ? m_tableHeader : m_table);
         for (int i = 0; i < text.size(); ++i)
             if (text[i] == QLatin1Char('|'))
-                setFormat(i, 1, m_tablePipe);
+                setFormat(i, 1, reveal ? m_tablePipe
+                                       : hiddenScaffolding);
         return;
     }
 

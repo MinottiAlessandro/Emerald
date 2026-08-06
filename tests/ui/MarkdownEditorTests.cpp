@@ -276,6 +276,7 @@ int main(int argc, char **argv) {
     editor.setPlainText(tableSource);
     editor.moveCursor(QTextCursor::End);
     const QTextBlock tableHeader = editor.document()->findBlockByNumber(0);
+    const QTextBlock tableSeparator = editor.document()->findBlockByNumber(1);
     const QTextBlock tableBody = editor.document()->findBlockByNumber(2);
     settleLayout(editor, tableBody);
     const QTextCharFormat headerCell = formatAt(tableHeader, 2);
@@ -285,6 +286,15 @@ int main(int argc, char **argv) {
     check(headerCell.fontStyleHint() == QFont::Monospace &&
               bodyCell.fontStyleHint() == QFont::Monospace,
           QStringLiteral("table cells should retain a cross-platform monospace grid"));
+    check(formatAt(tableHeader, 0).foreground().color().alpha() == 0 &&
+              formatAt(tableSeparator, 3).foreground().color().alpha() == 0,
+          QStringLiteral("inactive table pipes and separator ASCII should stay "
+                         "hidden behind the graphical grid"));
+    QTextCursor activeTableHeader(tableHeader);
+    editor.setTextCursor(activeTableHeader);
+    settleLayout(editor, tableHeader);
+    check(formatAt(tableHeader, 0).foreground().color().alpha() > 0,
+          QStringLiteral("the active table row should reveal its editable source"));
     check(editor.toPlainText() == tableSource &&
               !editor.document()->isUndoAvailable(),
           QStringLiteral("table preview must preserve source and undo history"));
