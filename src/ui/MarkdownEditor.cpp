@@ -455,6 +455,15 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
 }
 
 void MarkdownEditor::setPlainText(const QString &text) {
+    // Completion belongs to the old cursor context. QCompleter does not always
+    // dismiss its popup when the editor document is replaced (notably when New
+    // Note clears an unfinished [[link), and a stale visible popup would then
+    // claim Enter in the new empty document.
+    if (m_completer) {
+        m_completer->popup()->hide();
+        m_completer->setCompletionPrefix(QString());
+    }
+
     if (m_readMode) {
         m_sourceDocument->setPlainText(text);
         m_sourceCursor = QTextCursor(m_sourceDocument);
@@ -2164,6 +2173,19 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         switch (event->key()) {
         case Qt::Key_Enter:
         case Qt::Key_Return:
+            // A popup can outlive the cursor context that opened it (for
+            // example after clicking onto an empty line). Only let it consume
+            // Enter while the caret is still inside an unfinished [[link.
+            {
+                bool inContext = false;
+                wikiContextPrefix(&inContext);
+                if (!inContext) {
+                    m_completer->popup()->hide();
+                    break;
+                }
+            }
+            event->ignore();
+            return;
         case Qt::Key_Escape:
         case Qt::Key_Tab:
         case Qt::Key_Backtab:

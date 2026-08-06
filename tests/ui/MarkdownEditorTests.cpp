@@ -391,6 +391,62 @@ int main(int argc, char **argv) {
           QStringLiteral("Enter on a trailing empty line should create and enter "
                          "another line"));
 
+    editor.setPlainText(QString());
+    editor.moveCursor(QTextCursor::Start);
+    QApplication::processEvents();
+    const int firstEmptyLineY = editor.cursorRect().top();
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("\n") &&
+              editor.textCursor().blockNumber() == 1 &&
+              editor.cursorRect().top() > firstEmptyLineY,
+          QStringLiteral("Enter in a new empty note should create and enter "
+                         "its second line"));
+    QApplication::processEvents();
+    const int secondEmptyLineY = editor.cursorRect().top();
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("\n\n") &&
+              editor.textCursor().blockNumber() == 2 &&
+              editor.cursorRect().top() > secondEmptyLineY,
+          QStringLiteral("Enter on a newly created empty line should keep "
+                         "creating lines"));
+    QApplication::processEvents();
+
+    // Replacing a note while wiki-link completion is open must not leave Enter
+    // owned by the old popup. A new empty note has no completion context, so
+    // Enter always belongs to the editor.
+    editor.setCompletions({QStringLiteral("Destination")});
+    editor.setPlainText(QStringLiteral("[[\n"));
+    QTextCursor completionLine(editor.document()->firstBlock());
+    completionLine.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(completionLine);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+            QStringLiteral("d"));
+    QApplication::processEvents();
+    QTextCursor emptyLine(editor.document()->findBlockByNumber(1));
+    editor.setTextCursor(emptyLine);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("[[d\n\n") &&
+              editor.textCursor().blockNumber() == 2,
+          QStringLiteral("Enter on an empty line should dismiss completion "
+                         "from the previous cursor context"));
+
+    editor.setPlainText(QStringLiteral("[["));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+            QStringLiteral("d"));
+    QApplication::processEvents();
+    editor.setPlainText(QString());
+    editor.moveCursor(QTextCursor::Start);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("\n") &&
+              editor.textCursor().blockNumber() == 1,
+          QStringLiteral("Enter in a cleared empty note should dismiss stale "
+                         "completion state and insert a line"));
+
     const QStringList emptyConstructs{QStringLiteral("- "),
                                       QStringLiteral("- [ ] "),
                                       QStringLiteral("> ")};
