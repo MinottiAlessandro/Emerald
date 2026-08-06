@@ -14,6 +14,7 @@ class MarkdownReadObjectRenderer;
 class QCompleter;
 class QFocusEvent;
 class QMimeData;
+class QPainter;
 class QTextDocument;
 class QStringListModel;
 class QTimer;
@@ -170,6 +171,7 @@ private:
     bool handleQuickJumpKey(QKeyEvent *event);
     void refreshQuickJumpTargets();
     void openQuickJumpTarget(const QuickJumpTarget &target);
+    void drawQuickJumpOverlay(QPainter &painter);
     QRectF visibleLinkRect(const QTextBlock &block, int startCol,
                            int endCol) const;
     // On Enter in a list item or blockquote, continue it: append a fresh marker

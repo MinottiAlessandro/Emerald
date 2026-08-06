@@ -22,6 +22,12 @@ public:
     static void render(QTextDocument *target, const QString &source,
                        const Options &options);
 
+    // Internal anchor encoding shared with MarkdownEditor. Wiki-note targets
+    // use a private scheme so they remain distinguishable from external URLs
+    // after the Markdown source has been replaced by presentation text.
+    static QString wikiLinkHref(const QString &target);
+    static QString wikiTargetFromHref(const QString &href);
+
     // Lightweight source mapping used to keep the reader near the same place
     // when documents are swapped. Fine-grained selection mapping is added in a
     // later branch; block-level mapping is enough for stable scrolling here.

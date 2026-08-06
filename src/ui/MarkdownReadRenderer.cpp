@@ -4,6 +4,7 @@
 #include "MarkdownReadObjectRenderer.h"
 #include "core/ContentSecurity.h"
 #include "core/MascotSeed.h"
+#include "core/WikiLink.h"
 
 #include <QFontMetricsF>
 #include <QImageReader>
@@ -84,9 +85,15 @@ void insertInline(QTextCursor &cursor, const QString &text,
                 const int separator = inside.indexOf(QLatin1Char('|'));
                 const QString label =
                     (separator >= 0 ? inside.mid(separator + 1) : inside).trimmed();
+                const QString target = WikiLink::cleanTarget(inside);
                 const QTextCharFormat link = merged(base, [&](QTextCharFormat &f) {
                     f.setForeground(accent);
                     f.setFontUnderline(true);
+                    if (!target.isEmpty()) {
+                        f.setAnchor(true);
+                        f.setAnchorHref(
+                            MarkdownReadRenderer::wikiLinkHref(target));
+                    }
                 });
                 insertInline(cursor, label, link, options);
                 pos = end + 2;
@@ -100,10 +107,16 @@ void insertInline(QTextCursor &cursor, const QString &text,
             if (labelEnd >= 0) {
                 const int targetEnd = text.indexOf(QLatin1Char(')'), labelEnd + 2);
                 if (targetEnd >= 0) {
+                    const QString target =
+                        text.mid(labelEnd + 2, targetEnd - labelEnd - 2);
                     const QTextCharFormat link =
                         merged(base, [&](QTextCharFormat &f) {
                             f.setForeground(accent);
                             f.setFontUnderline(true);
+                            if (!target.isEmpty()) {
+                                f.setAnchor(true);
+                                f.setAnchorHref(target);
+                            }
                         });
                     insertInline(cursor,
                                  text.mid(pos + 1, labelEnd - pos - 1), link,
@@ -180,9 +193,13 @@ void insertInline(QTextCursor &cursor, const QString &text,
         if (text.at(pos) == QLatin1Char('$')) {
             const auto math = MathRender::pattern().match(text, pos);
             if (math.hasMatch() && math.capturedStart(0) == pos) {
-                const QTextCharFormat formula =
+                QTextCharFormat formula =
                     MarkdownReadObjectRenderer::inlineMathFormat(
                         options.baseFont, math.captured(1));
+                if (base.isAnchor()) {
+                    formula.setAnchor(true);
+                    formula.setAnchorHref(base.anchorHref());
+                }
                 cursor.insertText(
                     QString(1, QChar(QChar::ObjectReplacementCharacter)),
                     formula);
@@ -247,6 +264,7 @@ QStringList splitMarkdownTableRow(const QString &text) {
     QStringList cells;
     QString cell;
     bool inCode = false;
+    bool inWikiLink = false;
     for (int pos = 0; pos < row.size(); ++pos) {
         const QChar ch = row.at(pos);
         if (ch == QLatin1Char('\\') && pos + 1 < row.size() &&
@@ -260,7 +278,21 @@ QStringList splitMarkdownTableRow(const QString &text) {
             cell += ch;
             continue;
         }
-        if (ch == QLatin1Char('|') && !inCode) {
+        if (!inCode && row.mid(pos, 2) == QStringLiteral("[[") &&
+            row.indexOf(QStringLiteral("]]"), pos + 2) >= 0) {
+            inWikiLink = true;
+            cell += QStringLiteral("[[");
+            ++pos;
+            continue;
+        }
+        if (!inCode && inWikiLink &&
+            row.mid(pos, 2) == QStringLiteral("]]")) {
+            inWikiLink = false;
+            cell += QStringLiteral("]]");
+            ++pos;
+            continue;
+        }
+        if (ch == QLatin1Char('|') && !inCode && !inWikiLink) {
             cells.append(cell.trimmed());
             cell.clear();
             continue;
@@ -380,6 +412,20 @@ void insertReadTable(QTextCursor &cursor, const QList<QStringList> &rows,
     cursor.movePosition(QTextCursor::NextBlock);
 }
 } // namespace
+
+QString MarkdownReadRenderer::wikiLinkHref(const QString &target) {
+    if (target.isEmpty())
+        return {};
+    return QStringLiteral("emerald-note:") +
+           QString::fromLatin1(QUrl::toPercentEncoding(target));
+}
+
+QString MarkdownReadRenderer::wikiTargetFromHref(const QString &href) {
+    static const QString prefix = QStringLiteral("emerald-note:");
+    if (!href.startsWith(prefix, Qt::CaseSensitive))
+        return {};
+    return QUrl::fromPercentEncoding(href.mid(prefix.size()).toUtf8());
+}
 
 void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                                   const Options &options) {

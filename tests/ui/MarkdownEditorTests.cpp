@@ -1,5 +1,6 @@
 #include "ui/MarkdownEditor.h"
 #include "ui/MarkdownReadObjectRenderer.h"
+#include "ui/MarkdownReadRenderer.h"
 #include "ui/MathRender.h"
 
 #include "core/Perf.h"
@@ -548,7 +549,7 @@ int main(int argc, char **argv) {
         QStringLiteral("![Wide preview](wide.png)"),
         QStringLiteral("| Name | Value | Formula |"),
         QStringLiteral("| :--- | ---: | :---: |"),
-        QStringLiteral("| Alpha | 10 | `x|y` |"),
+        QStringLiteral("| [[Table Note|Alpha]] | 10 | `x|y` |"),
         QStringLiteral("| Beta | **20** | $n^2$ |"),
         QStringLiteral("```cpp"),
         QStringLiteral("const int answer = 42;"), QStringLiteral("```"),
@@ -602,6 +603,10 @@ int main(int argc, char **argv) {
     bool sawRuleObject = false;
     bool sawCheckboxObject = false;
     bool sawCodeObject = false;
+    bool sawWikiAnchor = false;
+    bool sawExternalAnchor = false;
+    bool sawTableWikiAnchor = false;
+    int renderedWikiPosition = -1;
     QTextBlock imageObjectBlock;
     QTextBlock codeObjectBlock;
     QTextCharFormat codeObjectFormat;
@@ -617,6 +622,20 @@ int main(int argc, char **argv) {
             if (!fragment.isValid())
                 continue;
             const QTextCharFormat format = fragment.charFormat();
+            if (format.isAnchor()) {
+                const QString wikiTarget =
+                    MarkdownReadRenderer::wikiTargetFromHref(
+                        format.anchorHref());
+                if (wikiTarget == QStringLiteral("Target")) {
+                    sawWikiAnchor = true;
+                    renderedWikiPosition = fragment.position();
+                } else if (wikiTarget == QStringLiteral("Table Note")) {
+                    sawTableWikiAnchor = true;
+                } else if (format.anchorHref() ==
+                           QStringLiteral("https://example.com")) {
+                    sawExternalAnchor = true;
+                }
+            }
             switch (MarkdownReadObjectRenderer::kind(format)) {
             case MarkdownReadObjectRenderer::Kind::Image:
                 sawImageObject = true;
@@ -648,6 +667,9 @@ int main(int argc, char **argv) {
               sawRuleObject && sawCheckboxObject && sawCodeObject,
           QStringLiteral("Read Mode should embed native image, math, rule, "
                          "checkbox, and code objects"));
+    check(sawWikiAnchor && sawExternalAnchor && sawTableWikiAnchor,
+          QStringLiteral("Read Mode should retain semantic wiki and external "
+                         "anchors, including links inside table cells"));
     check(MarkdownReadObjectRenderer::codeText(codeObjectFormat) ==
               QStringLiteral("const int answer = 42;"),
           QStringLiteral("the code-card object should retain exact copyable "
@@ -694,6 +716,91 @@ int main(int argc, char **argv) {
                   renderedTable->format().borderCollapse(),
               QStringLiteral("semantic table headers should be emphasized and "
                              "use one collapsed grid"));
+    }
+
+    // Read Mode hit testing uses the semantic anchor range, so a plain mouse
+    // click follows the displayed label without consulting hidden Markdown.
+    QString readLinkTarget;
+    QObject::connect(&editor, &MarkdownEditor::linkClicked,
+                     [&readLinkTarget](const QString &target) {
+                         readLinkTarget = target;
+                     });
+    if (renderedWikiPosition >= 0) {
+        const QTextBlock wikiBlock =
+            editor.document()->findBlock(renderedWikiPosition);
+        settleLayout(editor, wikiBlock);
+        editor.verticalScrollBar()->setValue(0);
+        QApplication::processEvents();
+        QTextCursor left(editor.document());
+        left.setPosition(renderedWikiPosition);
+        QTextCursor right(left);
+        right.movePosition(QTextCursor::NextCharacter);
+        const QRect leftRect = editor.cursorRect(left);
+        const QRect rightRect = editor.cursorRect(right);
+        clickEditor(editor,
+                    QPoint((leftRect.left() + rightRect.left()) / 2,
+                           leftRect.center().y()));
+    }
+    check(readLinkTarget == QStringLiteral("Target"),
+          QStringLiteral("a plain click should open a semantic Read Mode "
+                         "wiki anchor"));
+
+    // Quick Jump reads the same anchors and therefore also reaches links in a
+    // QTextTable cell. The first visible link keeps the QWERTY-first Q hint.
+    editor.activateWindow();
+    editor.setFocus();
+    editor.verticalScrollBar()->setValue(0);
+    QApplication::processEvents();
+    readLinkTarget.clear();
+    beginQuickJump(editor);
+    QImage readQuickJumpRender(editor.viewport()->size(),
+                               QImage::Format_ARGB32_Premultiplied);
+    readQuickJumpRender.fill(Qt::transparent);
+    {
+        QPainter painter(&readQuickJumpRender);
+        editor.viewport()->render(&painter);
+    }
+    bool paintedQuickJumpBadge = false;
+    const QRgb expectedBadgePixel = QColor(0x39, 0xd9, 0x83).rgba();
+    for (int y = 0;
+         y < readQuickJumpRender.height() && !paintedQuickJumpBadge; ++y) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(
+            readQuickJumpRender.constScanLine(y));
+        for (int x = 0; x < readQuickJumpRender.width(); ++x) {
+            if (line[x] == expectedBadgePixel) {
+                paintedQuickJumpBadge = true;
+                break;
+            }
+        }
+    }
+    check(paintedQuickJumpBadge,
+          QStringLiteral("Read Mode Quick Jump should paint a visible hint "
+                         "badge beside each semantic link"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+            QStringLiteral("q"));
+    check(readLinkTarget == QStringLiteral("Target"),
+          QStringLiteral("Read Mode Quick Jump Q should open the first "
+                         "semantic link"));
+    endQuickJump(editor);
+
+    if (renderedTable) {
+        const QTextBlock tableLinkBlock =
+            renderedTable->cellAt(1, 0).firstCursorPosition().block();
+        settleLayout(editor, tableLinkBlock);
+        const QRectF tableLinkDocumentRect =
+            editor.document()->documentLayout()->blockBoundingRect(
+                tableLinkBlock);
+        editor.verticalScrollBar()->setValue(
+            qRound(tableLinkDocumentRect.top()));
+        QApplication::processEvents();
+        readLinkTarget.clear();
+        beginQuickJump(editor);
+        sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+                QStringLiteral("q"));
+        check(readLinkTarget == QStringLiteral("Table Note"),
+              QStringLiteral("Read Mode Quick Jump should enumerate semantic "
+                             "links inside table cells"));
+        endQuickJump(editor);
     }
     if (imageObjectBlock.isValid()) {
         settleLayout(editor, imageObjectBlock);

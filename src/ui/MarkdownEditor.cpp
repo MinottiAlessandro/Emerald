@@ -36,6 +36,7 @@
 #include <QTextBlock>
 #include <QTextBlockFormat>
 #include <QTextDocument>
+#include <QTextFragment>
 #include <QTextLayout>
 #include <QTimer>
 #include <QVariantAnimation>
@@ -1297,6 +1298,10 @@ bool MarkdownEditor::pointInTextRange(const QPoint &pos,
 }
 
 QString MarkdownEditor::linkAt(const QPoint &pos) const {
+    if (m_readMode) {
+        return MarkdownReadRenderer::wikiTargetFromHref(anchorAt(pos));
+    }
+
     const QTextCursor cursor = cursorForPosition(pos);
     const QTextBlock block = cursor.block();
     const int column = cursor.positionInBlock();
@@ -1313,6 +1318,13 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
 }
 
 QString MarkdownEditor::internetLinkAt(const QPoint &pos) const {
+    if (m_readMode) {
+        const QString href = anchorAt(pos);
+        return MarkdownReadRenderer::wikiTargetFromHref(href).isEmpty()
+                   ? href
+                   : QString();
+    }
+
     const QTextCursor cursor = cursorForPosition(pos);
     const QTextBlock block = cursor.block();
     const int column = cursor.positionInBlock();
@@ -1398,7 +1410,7 @@ void MarkdownEditor::refreshQuickJumpTargets() {
     const QRectF viewportRect(QPointF(0, 0), viewport()->size());
     for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
          block = block.next()) {
-        if (!block.isVisible() || insideCodeBlock(block))
+        if (!block.isVisible() || (!m_readMode && insideCodeBlock(block)))
             continue;
         const QRectF blockGeo = blockViewportRect(block);
         if (blockGeo.top() > viewportRect.bottom())
@@ -1406,48 +1418,83 @@ void MarkdownEditor::refreshQuickJumpTargets() {
         if (blockGeo.bottom() < viewportRect.top())
             continue;
 
-        const QString text = block.text();
-        QList<QPair<int, int>> codeSpans;
-        static const QRegularExpression inlineCodeRe(
-            QStringLiteral("`[^`]+`"));
-        auto codeIt = inlineCodeRe.globalMatch(text);
-        while (codeIt.hasNext()) {
-            const auto match = codeIt.next();
-            codeSpans.append({match.capturedStart(), match.capturedEnd()});
-        }
-        const auto overlapsCode = [&codeSpans](int start, int end) {
-            return std::any_of(codeSpans.cbegin(), codeSpans.cend(),
-                               [start, end](const auto &span) {
-                                   return start < span.second && end > span.first;
-                               });
-        };
-
         QList<Candidate> candidates;
-        auto wikiIt = WikiLink::pattern().globalMatch(text);
-        while (wikiIt.hasNext()) {
-            const auto match = wikiIt.next();
-            if (overlapsCode(match.capturedStart(), match.capturedEnd()))
-                continue;
-            const QString inner = match.captured(1);
-            const int pipe = inner.indexOf(QLatin1Char('|'));
-            const int displayStart = match.capturedStart(1) +
-                                     (pipe >= 0 ? pipe + 1 : 0);
-            candidates.append({int(match.capturedStart()), displayStart,
-                               int(match.capturedEnd(1)),
-                               WikiLink::cleanTarget(inner),
-                               QuickJumpKind::Wiki});
-        }
+        if (m_readMode) {
+            for (auto fragmentIt = block.begin(); !fragmentIt.atEnd();
+                 ++fragmentIt) {
+                const QTextFragment fragment = fragmentIt.fragment();
+                if (!fragment.isValid())
+                    continue;
+                const QTextCharFormat format = fragment.charFormat();
+                const QString href = format.anchorHref();
+                if (!format.isAnchor() || href.isEmpty())
+                    continue;
 
-        auto mdIt = mdLinkRe().globalMatch(text);
-        while (mdIt.hasNext()) {
-            const auto match = mdIt.next();
-            const int start = match.capturedStart();
-            if ((start > 0 && text.at(start - 1) == QLatin1Char('!')) ||
-                overlapsCode(start, match.capturedEnd()))
-                continue;
-            candidates.append({start, int(match.capturedStart(1)),
-                               int(match.capturedEnd(1)), match.captured(2),
-                               QuickJumpKind::External});
+                const int start = fragment.position() - block.position();
+                const int end = start + fragment.length();
+                const QString wikiTarget =
+                    MarkdownReadRenderer::wikiTargetFromHref(href);
+                const QuickJumpKind kind = wikiTarget.isEmpty()
+                                               ? QuickJumpKind::External
+                                               : QuickJumpKind::Wiki;
+                const QString destination =
+                    wikiTarget.isEmpty() ? href : wikiTarget;
+                if (!candidates.isEmpty() &&
+                    candidates.last().displayEnd == start &&
+                    candidates.last().destination == destination &&
+                    candidates.last().kind == kind) {
+                    candidates.last().displayEnd = end;
+                } else {
+                    candidates.append(
+                        {start, start, end, destination, kind});
+                }
+            }
+        } else {
+            const QString text = block.text();
+            QList<QPair<int, int>> codeSpans;
+            static const QRegularExpression inlineCodeRe(
+                QStringLiteral("`[^`]+`"));
+            auto codeIt = inlineCodeRe.globalMatch(text);
+            while (codeIt.hasNext()) {
+                const auto match = codeIt.next();
+                codeSpans.append(
+                    {match.capturedStart(), match.capturedEnd()});
+            }
+            const auto overlapsCode = [&codeSpans](int start, int end) {
+                return std::any_of(codeSpans.cbegin(), codeSpans.cend(),
+                                   [start, end](const auto &span) {
+                                       return start < span.second &&
+                                              end > span.first;
+                                   });
+            };
+
+            auto wikiIt = WikiLink::pattern().globalMatch(text);
+            while (wikiIt.hasNext()) {
+                const auto match = wikiIt.next();
+                if (overlapsCode(match.capturedStart(), match.capturedEnd()))
+                    continue;
+                const QString inner = match.captured(1);
+                const int pipe = inner.indexOf(QLatin1Char('|'));
+                const int displayStart = match.capturedStart(1) +
+                                         (pipe >= 0 ? pipe + 1 : 0);
+                candidates.append({int(match.capturedStart()), displayStart,
+                                   int(match.capturedEnd(1)),
+                                   WikiLink::cleanTarget(inner),
+                                   QuickJumpKind::Wiki});
+            }
+
+            auto mdIt = mdLinkRe().globalMatch(text);
+            while (mdIt.hasNext()) {
+                const auto match = mdIt.next();
+                const int start = match.capturedStart();
+                if ((start > 0 &&
+                     text.at(start - 1) == QLatin1Char('!')) ||
+                    overlapsCode(start, match.capturedEnd()))
+                    continue;
+                candidates.append({start, int(match.capturedStart(1)),
+                                   int(match.capturedEnd(1)), match.captured(2),
+                                   QuickJumpKind::External});
+            }
         }
 
         std::sort(candidates.begin(), candidates.end(),
@@ -1494,6 +1541,27 @@ void MarkdownEditor::refreshQuickJumpTargets() {
         target.badgeRect = QRectF(x, y, badgeWidth, badgeHeight);
     }
     m_quickJumpTargets = std::move(targets);
+}
+
+void MarkdownEditor::drawQuickJumpOverlay(QPainter &painter) {
+    if (!m_quickJumpActive)
+        return;
+
+    // Scrolling while Alt is held changes the visible target set. Rebuild only
+    // for this transient overlay so normal painting stays allocation-free and
+    // hints always remain attached to what is actually on screen.
+    refreshQuickJumpTargets();
+    const QFont oldFont = painter.font();
+    painter.setFont(quickJumpFont(font()));
+    painter.setPen(QPen(QColor(0x0b, 0x24, 0x18), 1));
+    for (const QuickJumpTarget &target : std::as_const(m_quickJumpTargets)) {
+        if (!target.hint.startsWith(m_quickJumpPrefix))
+            continue;
+        painter.setBrush(QColor(0x39, 0xd9, 0x83));
+        painter.drawRoundedRect(target.badgeRect, 4, 4);
+        painter.drawText(target.badgeRect, Qt::AlignCenter, target.hint);
+    }
+    painter.setFont(oldFont);
 }
 
 void MarkdownEditor::openQuickJumpTarget(const QuickJumpTarget &target) {
@@ -2970,6 +3038,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         // The Read Mode document already contains presentation formats. None of
         // the source editor's regex-driven overlays may inspect or repaint it.
         QTextEdit::paintEvent(event);
+        QPainter overlay(viewport());
+        drawQuickJumpOverlay(overlay);
         return;
     }
     // Code-block backgrounds go behind the text: a rounded body with a thin
@@ -3649,21 +3719,5 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
     }
 
-    if (m_quickJumpActive) {
-        // Scrolling while Alt is held changes the visible target set. Rebuild
-        // only for this transient overlay so normal painting stays allocation-
-        // free and hints always remain attached to what is actually on screen.
-        refreshQuickJumpTargets();
-        const QFont oldFont = p.font();
-        p.setFont(quickJumpFont(font()));
-        p.setPen(QPen(QColor(0x0b, 0x24, 0x18), 1));
-        for (const QuickJumpTarget &target : std::as_const(m_quickJumpTargets)) {
-            if (!target.hint.startsWith(m_quickJumpPrefix))
-                continue;
-            p.setBrush(QColor(0x39, 0xd9, 0x83));
-            p.drawRoundedRect(target.badgeRect, 4, 4);
-            p.drawText(target.badgeRect, Qt::AlignCenter, target.hint);
-        }
-        p.setFont(oldFont);
-    }
+    drawQuickJumpOverlay(p);
 }
