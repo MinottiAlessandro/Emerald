@@ -360,14 +360,43 @@ int main(int argc, char **argv) {
     // Painted interaction affordances and their hit tests share one geometry
     // source. A rendered task checkbox should toggle at the same pixel where it
     // is drawn, even when the raw marker is concealed.
-    editor.setPlainText(QStringLiteral("- [ ] geometry task\nother line"));
+    editor.setPlainText(QStringLiteral("- [x] geometry task\nother line"));
     editor.moveCursor(QTextCursor::End);
     QApplication::processEvents();
-    QTextCursor taskMarker(editor.document()->firstBlock());
-    const QRect taskCell = editor.cursorRect(taskMarker);
-    clickEditor(editor, QPoint(taskCell.left() + 5, taskCell.center().y()));
+    QImage checkboxRender(editor.viewport()->size(),
+                          QImage::Format_ARGB32_Premultiplied);
+    checkboxRender.fill(Qt::transparent);
+    editor.viewport()->render(&checkboxRender);
+    const QRgb checkboxPixel = QColor(0x2b, 0xbf, 0x74).rgba();
+    QRect paintedCheckbox;
+    for (int y = 0; y < checkboxRender.height(); ++y) {
+        const QRgb *line =
+            reinterpret_cast<const QRgb *>(checkboxRender.constScanLine(y));
+        for (int x = 0; x < checkboxRender.width(); ++x) {
+            if (line[x] != checkboxPixel)
+                continue;
+            paintedCheckbox = paintedCheckbox.isNull()
+                                  ? QRect(x, y, 1, 1)
+                                  : paintedCheckbox.united(QRect(x, y, 1, 1));
+        }
+    }
+    QTextCursor taskLabel =
+        editor.document()->find(QStringLiteral("geometry task"));
+    taskLabel.setPosition(taskLabel.selectionStart());
+    const QRect taskLabelCell = editor.cursorRect(taskLabel);
+    const int checkboxLabelGap =
+        taskLabelCell.left() - paintedCheckbox.right() - 1;
+    check(!paintedCheckbox.isNull() && checkboxLabelGap >= 3 &&
+              checkboxLabelGap <= 7,
+          QStringLiteral("a rendered checkbox should use a compact gap before "
+                         "its label (gap=%1, box=%2..%3, label=%4)")
+              .arg(checkboxLabelGap)
+              .arg(paintedCheckbox.left())
+              .arg(paintedCheckbox.right())
+              .arg(taskLabelCell.left()));
+    clickEditor(editor, paintedCheckbox.center());
     check(editor.document()->firstBlock().text().startsWith(
-              QStringLiteral("- [x]")),
+              QStringLiteral("- [ ]")),
           QStringLiteral("task checkbox paint and hit geometry should agree"));
 
     // Fold hit testing uses the exact block viewport rectangle used to paint its

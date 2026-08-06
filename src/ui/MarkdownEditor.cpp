@@ -1734,14 +1734,14 @@ QRectF MarkdownEditor::taskCheckboxRect(const QTextBlock &block) const {
     const auto match = taskRe().match(block.text());
     if (!match.hasMatch())
         return {};
-    const auto rects = textRangeViewportRects(
-        block, int(match.capturedLength(1)), 1);
-    if (rects.isEmpty())
-        return {};
+    QTextCursor labelCursor(block);
+    labelCursor.setPosition(block.position() + match.capturedEnd(0));
+    const QRectF labelCell = cursorRect(labelCursor);
     const QFontMetricsF metrics(font());
     const qreal size = metrics.ascent() * 0.92;
-    const QRectF cell = rects.first();
-    return QRectF(cell.left(), cell.center().y() - size / 2.0, size, size);
+    constexpr qreal LabelGap = 5.0;
+    return QRectF(labelCell.left() - LabelGap - size,
+                  labelCell.center().y() - size / 2.0, size, size);
 }
 
 bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
