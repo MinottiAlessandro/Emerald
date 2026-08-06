@@ -183,6 +183,41 @@ int main(int argc, char **argv) {
     check(editor.toPlainText() == codeSource,
           QStringLiteral("fenced-code layout must not alter source"));
 
+    // Heading hierarchy affects both glyph size and paragraph rhythm while
+    // remaining a presentation-only property of the plain Markdown document.
+    const QString headingSource = QStringLiteral(
+        "# First\nbody\n## Second\nbody\n###### Sixth\nbody");
+    editor.setPlainText(headingSource);
+    editor.document()->setModified(false);
+    const QTextBlock h1 = editor.document()->findBlockByNumber(0);
+    const QTextBlock h2 = editor.document()->findBlockByNumber(2);
+    const QTextBlock h6 = editor.document()->findBlockByNumber(4);
+    settleLayout(editor, h6);
+    check(h1.blockFormat().topMargin() > h2.blockFormat().topMargin() &&
+              h2.blockFormat().topMargin() > h6.blockFormat().topMargin(),
+          QStringLiteral("heading top spacing should follow visual hierarchy"));
+    check(h1.blockFormat().bottomMargin() > h2.blockFormat().bottomMargin() &&
+              h2.blockFormat().bottomMargin() > h6.blockFormat().bottomMargin(),
+          QStringLiteral("heading bottom spacing should follow visual hierarchy"));
+    const QTextCharFormat h1Format = h1.layout()->formats().constLast().format;
+    const QTextCharFormat h6Format = h6.layout()->formats().constLast().format;
+    check(h1Format.fontPointSize() > h6Format.fontPointSize(),
+          QStringLiteral("higher-level headings should use larger glyphs"));
+    check(h1Format.fontWeight() > h6Format.fontWeight(),
+          QStringLiteral("higher-level headings should use stronger weight"));
+    check(editor.toPlainText() == headingSource &&
+              !editor.document()->isModified() &&
+              !editor.document()->isUndoAvailable(),
+          QStringLiteral("heading presentation must not alter source or undo"));
+
+    // Hash-prefixed text inside a fence is code, not a heading, and must retain
+    // ordinary code-block paragraph margins.
+    editor.setPlainText(QStringLiteral("```\n# literal heading\n```"));
+    const QTextBlock fencedHeading = editor.document()->findBlockByNumber(1);
+    settleLayout(editor, fencedHeading);
+    check(qFuzzyIsNull(fencedHeading.blockFormat().topMargin()),
+          QStringLiteral("heading-looking fenced code should have no heading margin"));
+
     // Paragraph-only presentation changes must never become separate undo
     // commands. Moving away from a list conceals its marker and can change the
     // measured hanging indent, but Ctrl+Z should still address source edits.

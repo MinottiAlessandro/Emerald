@@ -16,13 +16,17 @@ const QRegularExpression &imageLineRe() {
 
 double headingScale(int level) {
     switch (level) {
-    case 1:  return 1.9;
-    case 2:  return 1.55;
-    case 3:  return 1.3;
+    case 1:  return 2.0;
+    case 2:  return 1.6;
+    case 3:  return 1.35;
     case 4:  return 1.15;
-    case 5:  return 1.05;
-    default: return 1.0;
+    case 5:  return 1.0;
+    default: return 0.92;
     }
+}
+
+int headingWeight(int level) {
+    return level <= 3 ? QFont::Bold : QFont::DemiBold;
 }
 
 // "monospace" is a fontconfig generic alias that only resolves on Linux; on
@@ -817,6 +821,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
 
         QTextCharFormat headingFmt = m_heading;
         headingFmt.setFontPointSize(m_baseSize * headingScale(level));
+        headingFmt.setFontWeight(headingWeight(level));
         setFormat(contentStart, h.capturedLength(2), headingFmt);
 
         if (reveal) {

@@ -217,6 +217,22 @@ int listContentStart(const QString &text) {
     return match.hasMatch() ? match.capturedEnd() : -1;
 }
 
+struct HeadingSpacing {
+    qreal topLines;
+    qreal bottomLines;
+};
+
+HeadingSpacing headingSpacing(int level) {
+    switch (level) {
+    case 1:  return {0.90, 0.40};
+    case 2:  return {0.75, 0.34};
+    case 3:  return {0.62, 0.28};
+    case 4:  return {0.50, 0.24};
+    case 5:  return {0.40, 0.20};
+    default: return {0.32, 0.18};
+    }
+}
+
 }
 
 MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
@@ -422,6 +438,7 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     m_applyingVisualBlockFormats = true;
     const qreal extra = QFontMetricsF(font()).lineSpacing() *
                         (m_lineSpacing - 100) / 100.0;
+    const qreal bodyLineHeight = QFontMetricsF(font()).lineSpacing();
     const qreal available =
         qMax(qreal(0), viewport()->width() - document()->documentMargin() * 2);
     for (QTextBlock block = first; block.isValid(); block = block.next()) {
@@ -461,16 +478,24 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         }
 
         QTextBlockFormat format = block.blockFormat();
+        const int level = insideFence ? 0 : headingLevel(block.text());
+        const HeadingSpacing spacing = headingSpacing(qMax(1, level));
+        const qreal topMargin = level > 0 ? bodyLineHeight * spacing.topLines : 0.0;
+        const qreal bottomMargin =
+            extra + (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0);
         const bool changed = !qFuzzyCompare(format.leftMargin() + 1.0,
                                             indent + 1.0) ||
                              !qFuzzyCompare(format.textIndent() + 1.0,
                                             -indent + 1.0) ||
+                             !qFuzzyCompare(format.topMargin() + 1.0,
+                                            topMargin + 1.0) ||
                              !qFuzzyCompare(format.bottomMargin() + 1.0,
-                                            extra + 1.0);
+                                            bottomMargin + 1.0);
         if (changed) {
             format.setLeftMargin(indent);
             format.setTextIndent(-indent);
-            format.setBottomMargin(extra);
+            format.setTopMargin(topMargin);
+            format.setBottomMargin(bottomMargin);
             QTextCursor cursor(block);
             cursor.setBlockFormat(format);
         }
