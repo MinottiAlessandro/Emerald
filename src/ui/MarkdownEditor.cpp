@@ -1864,10 +1864,13 @@ bool MarkdownEditor::continueList() {
 
     const QString line = cur.block().text();
     const int caret = cur.positionInBlock();
-    auto endConstruct = [&] { // drop the marker, stay on the now-empty line
+    auto endConstruct = [&] { // drop the empty marker and advance a blank line
+        cur.beginEditBlock();
         cur.movePosition(QTextCursor::StartOfBlock);
         cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
         cur.removeSelectedText();
+        cur.insertBlock();
+        cur.endEditBlock();
         setTextCursor(cur);
     };
 

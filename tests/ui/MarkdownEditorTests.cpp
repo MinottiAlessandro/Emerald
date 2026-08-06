@@ -357,6 +357,40 @@ int main(int argc, char **argv) {
                   QStringLiteral("---")),
           QStringLiteral("Enter at a header's end should still build the table"));
 
+    editor.setPlainText(QStringLiteral("before\n\nafter"));
+    QTextCursor middleEmpty(editor.document()->findBlockByNumber(1));
+    editor.setTextCursor(middleEmpty);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.toPlainText() == QStringLiteral("before\n\n\nafter") &&
+              editor.textCursor().blockNumber() == 2,
+          QStringLiteral("Enter on an empty middle line should create and enter "
+                         "the next line"));
+
+    editor.setPlainText(QStringLiteral("before\n"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.toPlainText() == QStringLiteral("before\n\n") &&
+              editor.textCursor().blockNumber() == 2,
+          QStringLiteral("Enter on a trailing empty line should create and enter "
+                         "another line"));
+
+    const QStringList emptyConstructs{QStringLiteral("- "),
+                                      QStringLiteral("- [ ] "),
+                                      QStringLiteral("> ")};
+    for (const QString &emptyConstruct : emptyConstructs) {
+        editor.setPlainText(QStringLiteral("first\n") + emptyConstruct);
+        editor.moveCursor(QTextCursor::End);
+        sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\n"));
+        check(editor.toPlainText() == QStringLiteral("first\n\n") &&
+                  editor.textCursor().blockNumber() == 2,
+              QStringLiteral("Enter on an empty %1 line should remove its "
+                             "marker and enter a new blank line")
+                  .arg(emptyConstruct.trimmed()));
+    }
+
     // Painted interaction affordances and their hit tests share one geometry
     // source. A rendered task checkbox should toggle at the same pixel where it
     // is drawn, even when the raw marker is concealed.
