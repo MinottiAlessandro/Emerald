@@ -14,6 +14,14 @@ const QRegularExpression &imageLineRe() {
     return re;
 }
 
+bool isPipeTableRow(const QTextBlock &block) {
+    if (!block.isValid())
+        return false;
+    const QString trimmed = block.text().trimmed();
+    return trimmed.size() > 1 && trimmed.startsWith(QLatin1Char('|')) &&
+           trimmed.endsWith(QLatin1Char('|'));
+}
+
 double headingScale(int level) {
     switch (level) {
     case 1:  return 2.0;
@@ -165,6 +173,21 @@ void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
         const QTextBlock b = doc->findBlockByNumber(n);
         if (!b.isValid())
             break;
+        if (isPipeTableRow(b)) {
+            QTextBlock first = b;
+            QTextBlock last = b;
+            while (isPipeTableRow(first.previous()))
+                first = first.previous();
+            while (isPipeTableRow(last.next()))
+                last = last.next();
+            for (QTextBlock x = first; x.isValid(); x = x.next()) {
+                rehighlightBlock(x);
+                if (x == last)
+                    break;
+            }
+            n = last.blockNumber() + 1;
+            continue;
+        }
         QTextBlock first, last;
         bool inRegion = false;
         if (regional(b)) { // opening or body line
@@ -210,6 +233,20 @@ void MarkdownHighlighter::rehighlightAround(int blockNumber) {
     QTextBlock b = doc->findBlockByNumber(blockNumber);
     if (!b.isValid())
         return;
+    if (isPipeTableRow(b)) {
+        QTextBlock first = b;
+        QTextBlock last = b;
+        while (isPipeTableRow(first.previous()))
+            first = first.previous();
+        while (isPipeTableRow(last.next()))
+            last = last.next();
+        for (QTextBlock x = first; x.isValid(); x = x.next()) {
+            rehighlightBlock(x);
+            if (x == last)
+                break;
+        }
+        return;
+    }
     // Both a $$ math block and a ``` fenced code block reveal/conceal their
     // delimiters as a whole region (the code block now shows both fences while
     // the caret is anywhere inside it), so when the caret enters or leaves one,
@@ -841,17 +878,27 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     }
 
     // Table row: |-delimited. The editor paints the grid itself, so inactive
-    // rows keep the source advances for stable cell geometry but conceal the
-    // pipe/separator glyphs. The active or selected row reveals the Markdown
-    // scaffolding so it remains directly editable.
+    // tables keep the source advances for stable cell geometry but conceal the
+    // pipe/separator glyphs. Editing any row reveals the complete table source;
+    // MarkdownEditor suppresses the graphical grid for the same table so the
+    // two representations can never overlap.
     const QString trimmed = text.trimmed();
     if (trimmed.size() > 1 && trimmed.startsWith(QLatin1Char('|')) &&
         trimmed.endsWith(QLatin1Char('|'))) {
+        QTextBlock firstTableRow = currentBlock();
+        QTextBlock lastTableRow = currentBlock();
+        while (isPipeTableRow(firstTableRow.previous()))
+            firstTableRow = firstTableRow.previous();
+        while (isPipeTableRow(lastTableRow.next()))
+            lastTableRow = lastTableRow.next();
+        const bool revealTable =
+            m_selLast >= firstTableRow.blockNumber() &&
+            m_selFirst <= lastTableRow.blockNumber();
         QTextCharFormat hiddenScaffolding = m_tablePipe;
         hiddenScaffolding.setForeground(QColor(0, 0, 0, 0));
         if (m_reTableSep.match(text).hasMatch()) {
-            setFormat(0, text.size(), reveal ? m_tablePipe
-                                             : hiddenScaffolding);
+            setFormat(0, text.size(), revealTable ? m_tablePipe
+                                                  : hiddenScaffolding);
             return;
         }
         const QTextBlock next = currentBlock().next();
@@ -860,8 +907,8 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         setFormat(0, text.size(), header ? m_tableHeader : m_table);
         for (int i = 0; i < text.size(); ++i)
             if (text[i] == QLatin1Char('|'))
-                setFormat(i, 1, reveal ? m_tablePipe
-                                       : hiddenScaffolding);
+                setFormat(i, 1, revealTable ? m_tablePipe
+                                            : hiddenScaffolding);
         return;
     }
 

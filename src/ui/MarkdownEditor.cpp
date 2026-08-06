@@ -3226,6 +3226,11 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     {
         QPainter tablePainter(viewport());
         tablePainter.setRenderHint(QPainter::Antialiasing);
+        const QTextCursor tableSelection = textCursor();
+        const int tableSelectionFirst =
+            document()->findBlock(tableSelection.selectionStart()).blockNumber();
+        const int tableSelectionLast =
+            document()->findBlock(tableSelection.selectionEnd()).blockNumber();
         QTextBlock block = firstVisibleTextBlock();
         while (block.previous().isValid() &&
                isTableRow(block.previous().text()) &&
@@ -3247,6 +3252,16 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 after = after.next();
             }
             if (rows.isEmpty()) {
+                block = after;
+                continue;
+            }
+            const bool editingTable =
+                tableSelectionLast >= rows.first().blockNumber() &&
+                tableSelectionFirst <= rows.last().blockNumber();
+            if (editingTable) {
+                // The highlighter reveals every row of an active table. Leave
+                // the grid off until the caret exits so raw pipes/dashes have
+                // a clean editing surface instead of sitting over painted rails.
                 block = after;
                 continue;
             }

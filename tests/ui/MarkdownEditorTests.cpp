@@ -129,6 +129,17 @@ int firstOpaqueRow(const QImage &image) {
     return -1;
 }
 
+bool containsPixel(const QImage &image, QRgb expected) {
+    for (int y = 0; y < image.height(); ++y) {
+        const QRgb *line =
+            reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x)
+            if (line[x] == expected)
+                return true;
+    }
+    return false;
+}
+
 void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
              Qt::KeyboardModifiers modifiers,
              const QString &text = QString()) {
@@ -290,11 +301,26 @@ int main(int argc, char **argv) {
               formatAt(tableSeparator, 3).foreground().color().alpha() == 0,
           QStringLiteral("inactive table pipes and separator ASCII should stay "
                          "hidden behind the graphical grid"));
+    QImage inactiveTableRender(editor.viewport()->size(),
+                               QImage::Format_ARGB32_Premultiplied);
+    inactiveTableRender.fill(Qt::transparent);
+    editor.viewport()->render(&inactiveTableRender);
+    const QRgb tableSurfacePixel = QColor(0x12, 0x1d, 0x18).rgba();
+    check(containsPixel(inactiveTableRender, tableSurfacePixel),
+          QStringLiteral("an inactive table should paint its graphical surface"));
     QTextCursor activeTableHeader(tableHeader);
     editor.setTextCursor(activeTableHeader);
     settleLayout(editor, tableHeader);
-    check(formatAt(tableHeader, 0).foreground().color().alpha() > 0,
-          QStringLiteral("the active table row should reveal its editable source"));
+    check(formatAt(tableHeader, 0).foreground().color().alpha() > 0 &&
+              formatAt(tableSeparator, 3).foreground().color().alpha() > 0 &&
+              formatAt(tableBody, 0).foreground().color().alpha() > 0,
+          QStringLiteral("an active table should reveal its complete editable source"));
+    QImage activeTableRender(editor.viewport()->size(),
+                             QImage::Format_ARGB32_Premultiplied);
+    activeTableRender.fill(Qt::transparent);
+    editor.viewport()->render(&activeTableRender);
+    check(!containsPixel(activeTableRender, tableSurfacePixel),
+          QStringLiteral("the graphical grid should not overlap active table source"));
     check(editor.toPlainText() == tableSource &&
               !editor.document()->isUndoAvailable(),
           QStringLiteral("table preview must preserve source and undo history"));
