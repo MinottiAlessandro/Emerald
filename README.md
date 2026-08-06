@@ -74,6 +74,7 @@ it opens or installs a download.
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
 - **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).
 - **Code folding** on headings and fenced blocks.
+- **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block all in-app changes. Plain ↑/↓ scroll the page while search, links, folding and text selection remain available.
 
 **Math** *(no dependencies — a small built-in TeX-subset typesetter)*
 - **Inline `$…$`** and **display `$$…$$`** render live in place; a `$$` block can span several lines (open/close on their own lines or carrying content), and the raw source reappears whenever the caret or selection is inside it. Bare dollars (`$5 and $12`) stay literal.
@@ -125,6 +126,7 @@ it opens or installs a download.
 | Find in note | `Ctrl+F` |
 | Search vault | `Ctrl+Shift+F` |
 | Review broken links | `Ctrl+Shift+B` |
+| Toggle Read Mode | `Ctrl+E` |
 | Settings | `Ctrl+,` |
 | Back / Forward | `Alt+←` / `Alt+→` |
 | Quick Jump to visible link | Hold `Alt`, then type its hint |

@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QEventLoop>
 #include <QKeyEvent>
+#include <QScrollBar>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
@@ -167,6 +168,48 @@ int main(int argc, char **argv) {
     }
     check(editor.toPlainText() == codeSource,
           QStringLiteral("fenced-code layout must not alter source"));
+
+    // Read Mode removes the caret, rejects editing keys, and turns plain arrow
+    // navigation into viewport scrolling without relocating the text cursor.
+    QStringList readingLines;
+    for (int i = 0; i < 80; ++i)
+        readingLines << QStringLiteral("Reading line %1").arg(i);
+    const QString readingSource = readingLines.join(QLatin1Char('\n'));
+    editor.setPlainText(readingSource);
+    editor.resize(300, 180);
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    check(editor.readMode() && editor.isReadOnly(),
+          QStringLiteral("Read Mode should make the editor read-only"));
+    check(editor.cursorWidth() == 0,
+          QStringLiteral("Read Mode should hide the text caret"));
+
+    const int cursorBeforeScroll = editor.textCursor().position();
+    editor.verticalScrollBar()->setValue(2);
+    const int scrollBeforeDown = editor.verticalScrollBar()->value();
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    check(editor.verticalScrollBar()->value() > scrollBeforeDown,
+          QStringLiteral("Down should scroll the page in Read Mode"));
+    check(editor.textCursor().position() == cursorBeforeScroll,
+          QStringLiteral("Down should not move the hidden text cursor"));
+    const int scrollBeforeUp = editor.verticalScrollBar()->value();
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    check(editor.verticalScrollBar()->value() < scrollBeforeUp,
+          QStringLiteral("Up should scroll the page in Read Mode"));
+
+    sendKey(editor, QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+            QStringLiteral("a"));
+    check(editor.toPlainText() == readingSource,
+          QStringLiteral("typing should not change a note in Read Mode"));
+    bool navigatedBack = false;
+    QObject::connect(&editor, &MarkdownEditor::navigateBack,
+                     [&navigatedBack] { navigatedBack = true; });
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Left, Qt::AltModifier);
+    check(navigatedBack,
+          QStringLiteral("Read Mode should preserve history navigation"));
+    editor.setReadMode(false);
+    check(!editor.isReadOnly() && editor.cursorWidth() > 0,
+          QStringLiteral("leaving Read Mode should restore editing and caret"));
 
     // Quick Jump labels follow the physical QWERTY rows, so the first two
     // visible links are Q and W rather than A and B.

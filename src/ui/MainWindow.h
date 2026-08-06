@@ -49,6 +49,9 @@ private:
     void buildUi();
     void openSettings();
     void loadSettings();
+    void setReadMode(bool enabled, bool persist = true);
+    void updateReadModeUi();
+    bool ensureVaultWritable();
     void updateResponsiveLayout();
     void applyEditorColumnWidth();
     void applyMobileSplit();
@@ -195,6 +198,11 @@ private:
     QMenu *m_gearMenu = nullptr;
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
+    QAction *m_readModeAction = nullptr;
+    QAction *m_newNoteAction = nullptr;
+    QAction *m_renameAction = nullptr;
+    QAction *m_saveAction = nullptr;
+    QAction *m_insertTemplateAction = nullptr;
     QAction *m_deleteAction = nullptr; // Delete Note (shared by menu + context menu)
     QAction *m_insertImageAction = nullptr;
     QAction *m_genMascotAction = nullptr;
@@ -208,6 +216,7 @@ private:
     QString m_pendingNoteDir; // target folder for an unsaved New Note draft
     quint64 m_lastSavedFingerprint = 0; // body fingerprint as last written/loaded
     bool m_loading = false;
+    bool m_readMode = false; // persisted independently for each open vault
 
     QStringList m_history; // visited note paths (browser-style)
     int m_histIndex = -1;

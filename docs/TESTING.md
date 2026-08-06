@@ -124,8 +124,16 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Default font** is a system monospace face on a clean profile (no saved font override). ★
 - [ ] **Line spacing** setting changes row spacing and survives note loads.
 - [ ] **Vault settings stay isolated** — give two vaults different Home notes,
-      new-note folders, and templates folders; switching between them restores
-      each vault's own choices without adding metadata files to either vault.
+      new-note folders, templates folders, and Read Mode states; switching
+      between them restores each vault's own choices without adding metadata
+      files to either vault.
+- [ ] **Read Mode** (`Ctrl+E` or **Settings → Vault → Read mode**) removes the
+      caret and renders the current line like the rest of the note. Plain ↑/↓
+      scroll the page without moving a text cursor. ◆
+- [ ] While Read Mode is on, typing, title edits, task toggles, templates,
+      images, mascots, new/renamed/moved/deleted notes and folders, and clicking
+      a missing `[[link]]` cannot change the vault. Links, search, folding,
+      selection/copy, and externally updated notes continue to work. ◆
 - [ ] **Font size** `Ctrl++` / `Ctrl+-` / `Ctrl+0` (up / down / reset).
 - [ ] **Toggle sidebar** (`Ctrl+\` or the gear menu) collapses the left pane fully and restores it; clicking the splitter handle does the same. ◆
 - [ ] Heading sizes scale with the body font.
@@ -176,6 +184,7 @@ Verify each fires and that menu items show their shortcut label.
 | Find in note                       | `Ctrl+F`                       | [ ] |
 | Search vault                       | `Ctrl+Shift+F`                 | [ ] |
 | Review broken links                | `Ctrl+Shift+B`                 | [ ] |
+| Toggle Read Mode                   | `Ctrl+E`                       | [ ] |
 | Settings                           | `Ctrl+,`                       | [ ] |
 | Back / Forward                     | `Alt+←` / `Alt+→`              | [ ] |
 | Quick Jump to visible link         | Hold `Alt`, then type hint     | [ ] |

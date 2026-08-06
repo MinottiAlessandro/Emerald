@@ -36,6 +36,10 @@ void testVaultIsolation() {
                             QStringLiteral("Home B.md"));
     VaultSettings::setValue(vaultB, QStringLiteral("newNoteFolder"),
                             QStringLiteral("Inbox B"));
+    VaultSettings::setValue(vaultA, QStringLiteral("readMode"),
+                            QStringLiteral("true"));
+    VaultSettings::setValue(vaultB, QStringLiteral("readMode"),
+                            QStringLiteral("false"));
 
     check(VaultSettings::value(vaultA, QStringLiteral("homeNote")) ==
               QStringLiteral("Home A.md"),
@@ -47,6 +51,11 @@ void testVaultIsolation() {
                                QStringLiteral("newNoteFolder")) ==
               QStringLiteral("Inbox A"),
           QStringLiteral("equivalent vault paths share one settings group"));
+    check(VaultSettings::value(vaultA, QStringLiteral("readMode")) ==
+                  QStringLiteral("true") &&
+              VaultSettings::value(vaultB, QStringLiteral("readMode")) ==
+                  QStringLiteral("false"),
+          QStringLiteral("Read Mode is isolated per vault"));
 
     VaultSettings::remove(vaultA, QStringLiteral("homeNote"));
     check(VaultSettings::value(vaultA, QStringLiteral("homeNote")).isEmpty(),

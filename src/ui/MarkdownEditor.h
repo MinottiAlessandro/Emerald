@@ -43,6 +43,12 @@ public:
     // Select and scroll to the first occurrence of `text` (case-insensitive).
     void jumpToMatch(const QString &text);
 
+    // Reading-only presentation: prevent edits, hide the caret and keep every
+    // line in rendered live-preview form. Plain Up/Down scroll the viewport
+    // instead of moving the hidden text cursor.
+    void setReadMode(bool enabled);
+    bool readMode() const { return m_readMode; }
+
     // The note's mascot seed, stored as a hidden header line at the top of the
     // document (see MascotSeed). 0 when the note has no mascot.
     quint64 mascotSeed() const;
@@ -91,6 +97,7 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+    void updateActiveHighlight();
     QString linkAt(const QPoint &pos) const;
     // The URL of the [text](url) link under `pos`, or empty. Distinct from
     // linkAt (wiki note targets): these open in the system browser.
@@ -240,6 +247,8 @@ private:
     int m_lastCursorBlock = 0;   // to detect leaving a table
     bool m_prettifying = false;  // guard against re-entrant table reformatting
     bool m_adjustingScroll = false; // guard the over-scroll range extension
+    bool m_readMode = false;        // navigation-only, fully rendered document
+    int m_editCursorWidth = 1;      // restored when leaving Read Mode
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
     quint64 m_mascotSeed = 0;    // last seen mascot seed, to detect changes
     QString m_mascotKind;        // last seen kind, so a kind-only change emits too

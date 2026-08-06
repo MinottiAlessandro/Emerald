@@ -379,10 +379,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
             &MarkdownEditor::activateQuickJump);
 
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
-        const QTextCursor tc = textCursor();
-        m_highlighter->setActiveBlock(
-            tc.blockNumber(),
-            document()->findBlock(tc.anchor()).blockNumber());
+        updateActiveHighlight();
         viewport()->update(); // repaint bullets as the active line moves
         updateMascotLineState(); // reveal/hide the header line as the caret moves
 
@@ -411,10 +408,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     // setActiveBlock early-returns when nothing actually changed, so the overlap
     // with cursorPositionChanged costs nothing.
     connect(this, &QPlainTextEdit::selectionChanged, this, [this] {
-        const QTextCursor tc = textCursor();
-        m_highlighter->setActiveBlock(
-            tc.blockNumber(),
-            document()->findBlock(tc.anchor()).blockNumber());
+        updateActiveHighlight();
         viewport()->update();
     });
     // Keep folded sections hidden as the document is edited.
@@ -425,10 +419,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
         // its markup concealed with no glyph painted (showing nothing at all).
         // Pass the anchor as well so this never collapses a live selection's
         // span (a $$ block stays revealed while selected).
-        const QTextCursor tc = textCursor();
-        m_highlighter->setActiveBlock(
-            tc.blockNumber(),
-            document()->findBlock(tc.anchor()).blockNumber());
+        updateActiveHighlight();
         if (!m_applyingFolds && !m_folds.isEmpty())
             reapplyFolds();
         updateMascotLineState(); // keep the header hidden and the seed in sync
@@ -492,6 +483,45 @@ void MarkdownEditor::jumpToMatch(const QString &text) {
         centerCursor(); // land it mid-view so there's context around the match
 }
 
+void MarkdownEditor::setReadMode(bool enabled) {
+    if (m_readMode == enabled)
+        return;
+
+    m_readMode = enabled;
+    setReadOnly(enabled);
+    if (enabled) {
+        m_editCursorWidth = qMax(1, cursorWidth());
+        setCursorWidth(0);
+        if (m_completer)
+            m_completer->popup()->hide();
+        cancelQuickJump();
+    } else {
+        setCursorWidth(m_editCursorWidth);
+    }
+
+    updateActiveHighlight();
+    // setActiveBlock's incremental path normally touches only the old/new
+    // selection. Read Mode uses -1 as an intentional "no active block"
+    // sentinel, so re-run the document once when crossing that boundary.
+    if (m_highlighter)
+        m_highlighter->rehighlight();
+    updateMascotLineState();
+    viewport()->update();
+}
+
+void MarkdownEditor::updateActiveHighlight() {
+    if (!m_highlighter)
+        return;
+    if (m_readMode) {
+        // No active editing line: conceal Markdown source markers everywhere.
+        m_highlighter->setActiveBlock(-1, -1);
+        return;
+    }
+    const QTextCursor tc = textCursor();
+    m_highlighter->setActiveBlock(
+        tc.blockNumber(), document()->findBlock(tc.anchor()).blockNumber());
+}
+
 QTextBlock MarkdownEditor::mascotBlock() const {
     const QTextBlock first = document()->firstBlock();
     return (first.isValid() && MascotSeed::fromLine(first.text()) != 0)
@@ -546,7 +576,7 @@ void MarkdownEditor::updateMascotLineState() {
     // Keep the header line hidden unless the caret rests on it (revealed via Up
     // at the top of the file). Toggling visibility needs a full relayout.
     if (mb.isValid()) {
-        const bool onIt = textCursor().blockNumber() == 0;
+        const bool onIt = !m_readMode && textCursor().blockNumber() == 0;
         if (mb.isVisible() != onIt) {
             mb.setVisible(onIt);
             document()->markContentsDirty(0, document()->characterCount());
@@ -668,6 +698,8 @@ bool MarkdownEditor::followsLink(const QPoint &pos,
     if (mods & Qt::MetaModifier)
         return true;
 #endif
+    if (m_readMode)
+        return true;
     // A plain click follows the link only when it is rendered, i.e. on a line
     // other than the one the cursor (active line) is on, where the markup is
     // still visible for editing.
@@ -954,7 +986,8 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
     }
     if (event->button() == Qt::LeftButton && copyCodeBlockAt(event->pos()))
         return;
-    if (event->button() == Qt::LeftButton && toggleTaskAt(event->pos()))
+    if (!m_readMode && event->button() == Qt::LeftButton &&
+        toggleTaskAt(event->pos()))
         return;
     if (event->button() == Qt::LeftButton &&
         followsLink(event->pos(), event->modifiers())) {
@@ -978,7 +1011,7 @@ void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
     // heading fold control, and a code block's copy button.
     const QPoint p = event->pos();
     const bool clickable = followsLink(p, event->modifiers()) ||
-                           taskCheckboxBlockAt(p).isValid() ||
+                           (!m_readMode && taskCheckboxBlockAt(p).isValid()) ||
                            isOverFoldControl(p) || isOverCopyButton(p);
     viewport()->setCursor(clickable ? Qt::PointingHandCursor : Qt::IBeamCursor);
     QPlainTextEdit::mouseMoveEvent(event);
@@ -1146,6 +1179,34 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     }
     if (handleQuickJumpKey(event)) {
         event->accept();
+        return;
+    }
+
+    if (m_readMode) {
+        const auto mods = event->modifiers() &
+                          ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
+        if (mods == Qt::AltModifier &&
+            (event->key() == Qt::Key_Left ||
+             event->key() == Qt::Key_Right)) {
+            if (event->key() == Qt::Key_Left)
+                emit navigateBack();
+            else
+                emit navigateForward();
+            event->accept();
+            return;
+        }
+        if (mods == Qt::NoModifier &&
+            (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+            verticalScrollBar()->triggerAction(
+                event->key() == Qt::Key_Up
+                    ? QAbstractSlider::SliderSingleStepSub
+                    : QAbstractSlider::SliderSingleStepAdd);
+            event->accept();
+            return;
+        }
+        // The base read-only handler retains selection/copy and standard page
+        // navigation without reaching Emerald's editing-only shortcuts below.
+        QPlainTextEdit::keyPressEvent(event);
         return;
     }
 
@@ -1382,6 +1443,8 @@ void MarkdownEditor::focusOutEvent(QFocusEvent *event) {
 }
 
 bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const {
+    if (m_readMode)
+        return false;
     if (source && (source->hasImage() ||
                    !imageFilePathsFromMimeData(source).isEmpty()))
         return true;
@@ -1389,6 +1452,8 @@ bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const {
 }
 
 void MarkdownEditor::insertFromMimeData(const QMimeData *source) {
+    if (m_readMode)
+        return;
     if (source) {
         const QStringList imagePaths = imageFilePathsFromMimeData(source);
         if (!imagePaths.isEmpty()) {
@@ -1690,7 +1755,7 @@ void MarkdownEditor::forEachCodeBlock(
         // The caret or selection touching the block (see selFirst/selLast above)
         // means it's being edited; callers then show raw markup instead of the
         // header bar (which would overlap the now-visible ``` fence).
-        cb.active = selLast >= openNum && selFirst <= closeNum;
+        cb.active = !m_readMode && selLast >= openNum && selFirst <= closeNum;
         fn(cb);
     };
 
@@ -2250,10 +2315,16 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     // local preview whenever the caret/selection is not on that line.
     {
         const QTextCursor selCur = textCursor();
-        const int selFirst =
-            document()->findBlock(selCur.selectionStart()).blockNumber();
-        const int selLast =
-            document()->findBlock(selCur.selectionEnd()).blockNumber();
+        const int selFirst = m_readMode
+                                 ? 1
+                                 : document()
+                                       ->findBlock(selCur.selectionStart())
+                                       .blockNumber();
+        const int selLast = m_readMode
+                                ? 0
+                                : document()
+                                      ->findBlock(selCur.selectionEnd())
+                                      .blockNumber();
 
         QPainter imgPainter(viewport());
         imgPainter.setRenderHint(QPainter::Antialiasing);
@@ -2320,10 +2391,16 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     // editor's own glyphs (bullets, checkboxes, rules — and the math below)
     // must hide there too, matching the highlighter's reveal span.
     const QTextCursor selCur = textCursor();
-    const int selFirst =
-        document()->findBlock(selCur.selectionStart()).blockNumber();
-    const int selLast =
-        document()->findBlock(selCur.selectionEnd()).blockNumber();
+    const int selFirst = m_readMode
+                             ? 1
+                             : document()
+                                   ->findBlock(selCur.selectionStart())
+                                   .blockNumber();
+    const int selLast = m_readMode
+                            ? 0
+                            : document()
+                                  ->findBlock(selCur.selectionEnd())
+                                  .blockNumber();
     const QFontMetricsF fm(font());
     const qreal diameter = fm.ascent() * 0.30;
 

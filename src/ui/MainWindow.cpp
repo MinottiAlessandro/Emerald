@@ -272,6 +272,13 @@ QString manualText() {
         "the mouse. **Ctrl+Shift+B** opens Broken Links, a filterable report of "
         "links whose target is missing or empty.\n"
         "\n"
+        "## Read Mode\n"
+        "Press **Ctrl+E** (or use **Settings → Vault → Read mode**) when you "
+        "only want to read. Emerald removes the caret, fully renders every "
+        "line, and prevents changes to that vault. The plain **↑** and **↓** "
+        "keys scroll the page; links, search, folding and selection/copy keep "
+        "working. Read Mode is remembered separately for each vault.\n"
+        "\n"
         "## Getting around\n"
         "- **Title** — the first line above the body is the file name (without "
         "`.md`); edit it to rename the note.\n"
@@ -311,6 +318,7 @@ QString manualText() {
         "- **Ctrl+F** — Perform a file search\n"
         "- **Ctrl+Shift+F** — Perform a Vault search\n"
         "- **Ctrl+Shift+B** — Review broken links\n"
+        "- **Ctrl+E** — Toggle Read Mode for this vault\n"
         "- **Ctrl+P** — Open the file picker\n"
         "- **Ctrl+,** — Open Settings\n"
         "- **Ctrl+Q** — Close Emerald\n"
@@ -1296,6 +1304,8 @@ void MainWindow::onMascotSeedChanged(quint64 seed) {
 }
 
 void MainWindow::generateMascot() {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault || m_currentPath.isEmpty()) {
         notify(tr("Open a note to give it a mascot"));
         return;
@@ -1311,6 +1321,8 @@ void MainWindow::generateMascot() {
 }
 
 void MainWindow::deleteMascot() {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault || m_currentPath.isEmpty() || m_editor->mascotSeed() == 0)
         return;
     // Suppress *before* clearing: setMascot(0) edits the document, which emits
@@ -1341,7 +1353,8 @@ void MainWindow::setAutoMascotOff(const QString &path, bool off) {
 }
 
 void MainWindow::maybeAutoGenerateMascot() {
-    if (!m_vault || m_currentPath.isEmpty() || m_editor->mascotSeed() != 0)
+    if (m_readMode || !m_vault || m_currentPath.isEmpty() ||
+        m_editor->mascotSeed() != 0)
         return; // no note, or it already has a mascot
     QSettings s;
     if (!s.value(QStringLiteral("mascotAuto"), false).toBool())
@@ -1360,9 +1373,11 @@ void MainWindow::maybeAutoGenerateMascot() {
 
 void MainWindow::updateMascotActions() {
     if (m_genMascotAction)
-        m_genMascotAction->setEnabled(m_vault && !m_currentPath.isEmpty());
+        m_genMascotAction->setEnabled(!m_readMode && m_vault &&
+                                      !m_currentPath.isEmpty());
     if (m_delMascotAction)
-        m_delMascotAction->setEnabled(m_editor && m_editor->mascotSeed() != 0);
+        m_delMascotAction->setEnabled(!m_readMode && m_editor &&
+                                      m_editor->mascotSeed() != 0);
 }
 
 // A transient grid of every mascot in the vault (not persisted anywhere — it's
@@ -1462,21 +1477,21 @@ void MainWindow::buildActions() {
     auto *switchVault = make(tr("Switch Vault…"),
                              QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O),
                              &MainWindow::openVaultSwitcher);
-    auto *newNote = make(tr("New Note"), QKeySequence(QKeySequence::New),
-                         &MainWindow::newNote);
+    m_newNoteAction = make(tr("New Note"), QKeySequence(QKeySequence::New),
+                           &MainWindow::newNote);
     auto *goTo = make(tr("Go to Note…"), QKeySequence(Qt::CTRL | Qt::Key_P),
                       &MainWindow::openQuickOpen);
-    auto *insertTpl = make(tr("Insert Template…"),
-                           QKeySequence(Qt::CTRL | Qt::Key_T),
-                           &MainWindow::insertTemplate);
+    m_insertTemplateAction = make(tr("Insert Template…"),
+                                  QKeySequence(Qt::CTRL | Qt::Key_T),
+                                  &MainWindow::insertTemplate);
     m_insertImageAction = make(tr("Insert Image…"),
                                QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I),
                                &MainWindow::insertImage);
     // Rename focuses the title field for editing (F2 is the universal rename).
-    auto *rename = new QAction(tr("Rename Note"), this);
-    rename->setShortcut(QKeySequence(Qt::Key_F2));
-    connect(rename, &QAction::triggered, this, [this] {
-        if (!m_vault)
+    m_renameAction = new QAction(tr("Rename Note"), this);
+    m_renameAction->setShortcut(QKeySequence(Qt::Key_F2));
+    connect(m_renameAction, &QAction::triggered, this, [this] {
+        if (!m_vault || m_readMode)
             return;
         if (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()) {
             this->newNote();
@@ -1487,9 +1502,9 @@ void MainWindow::buildActions() {
         m_titleEdit->setFocus();
         m_titleEdit->selectAll();
     });
-    addAction(rename);
-    auto *save = make(tr("Save"), QKeySequence(QKeySequence::Save),
-                      &MainWindow::saveCurrent);
+    addAction(m_renameAction);
+    m_saveAction = make(tr("Save"), QKeySequence(QKeySequence::Save),
+                        &MainWindow::saveCurrent);
     // Delete Note confirms first. Ctrl+Shift+Backspace keeps it clear of
     // Ctrl+Delete (the editor's delete-word-forward) while staying deliberate.
     m_deleteAction = make(tr("Delete Note"),
@@ -1506,6 +1521,14 @@ void MainWindow::buildActions() {
     auto *brokenLinks = make(tr("Broken Links…"),
                              QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B),
                              &MainWindow::openBrokenLinks);
+    m_readModeAction = new QAction(tr("Read Mode"), this);
+    m_readModeAction->setCheckable(true);
+    m_readModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    m_readModeAction->setToolTip(tr("Read Mode  (Ctrl+E)"));
+    m_readModeAction->setEnabled(false);
+    connect(m_readModeAction, &QAction::triggered, this,
+            [this](bool enabled) { setReadMode(enabled); });
+    addAction(m_readModeAction);
     m_genMascotAction = make(tr("Generate Mascot"),
                              QKeySequence(Qt::CTRL | Qt::Key_M),
                              &MainWindow::generateMascot);
@@ -1547,16 +1570,17 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(manual);
     m_gearMenu->addAction(update);
     m_gearMenu->addAction(toggleSide);
+    m_gearMenu->addAction(m_readModeAction);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(newVault);
     m_gearMenu->addAction(openVault);
     m_gearMenu->addAction(switchVault);
-    m_gearMenu->addAction(newNote);
+    m_gearMenu->addAction(m_newNoteAction);
     m_gearMenu->addAction(goTo);
-    m_gearMenu->addAction(insertTpl);
+    m_gearMenu->addAction(m_insertTemplateAction);
     m_gearMenu->addAction(m_insertImageAction);
-    m_gearMenu->addAction(rename);
-    m_gearMenu->addAction(save);
+    m_gearMenu->addAction(m_renameAction);
+    m_gearMenu->addAction(m_saveAction);
     m_gearMenu->addAction(m_deleteAction);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(findHere);
@@ -1632,6 +1656,74 @@ void MainWindow::loadSettings() {
     if (s.contains(QStringLiteral("editorFontSize")))
         f.setPointSize(s.value(QStringLiteral("editorFontSize")).toInt());
     m_editor->applyFont(f);
+}
+
+void MainWindow::setReadMode(bool enabled, bool persist) {
+    if (!m_vault)
+        enabled = false;
+    const bool changed = m_readMode != enabled;
+
+    // Flush a writable buffer before locking it. Once m_readMode flips, every
+    // path that can mutate a vault is intentionally blocked.
+    if (changed && enabled) {
+        // Ctrl+E can be pressed while the title field still owns focus, before
+        // editingFinished has committed a pending filename change.
+        if (m_titleEdit && !m_currentPath.isEmpty() &&
+            m_titleEdit->text().trimmed() != m_currentTitle)
+            renameCurrent(m_titleEdit->text());
+        saveCurrent();
+    }
+    m_readMode = enabled;
+
+    if (persist && m_vault)
+        VaultSettings::setValue(m_vault->root(), QStringLiteral("readMode"),
+                                enabled ? QStringLiteral("true")
+                                        : QStringLiteral("false"));
+    updateReadModeUi();
+
+    if (persist && changed)
+        notify(enabled ? tr("Read Mode on") : tr("Read Mode off"), 1800);
+}
+
+bool MainWindow::ensureVaultWritable() {
+    if (!m_readMode)
+        return true;
+    notify(tr("Read Mode is on"));
+    return false;
+}
+
+void MainWindow::updateReadModeUi() {
+    const bool hasVault = m_vault != nullptr;
+    const bool writable = hasVault && !m_readMode;
+
+    if (m_editor)
+        m_editor->setReadMode(m_readMode);
+    if (m_titleEdit)
+        m_titleEdit->setReadOnly(m_readMode);
+    if (m_readModeAction) {
+        m_readModeAction->blockSignals(true);
+        m_readModeAction->setChecked(m_readMode);
+        m_readModeAction->setEnabled(hasVault);
+        m_readModeAction->blockSignals(false);
+    }
+    if (m_newNoteAction)
+        m_newNoteAction->setEnabled(writable);
+    if (m_renameAction)
+        m_renameAction->setEnabled(writable);
+    if (m_saveAction)
+        m_saveAction->setEnabled(writable);
+    if (m_insertTemplateAction)
+        m_insertTemplateAction->setEnabled(writable);
+    if (m_insertImageAction)
+        m_insertImageAction->setEnabled(writable);
+    if (m_deleteAction)
+        m_deleteAction->setEnabled(writable);
+    if (m_noteTree) {
+        m_noteTree->setDragEnabled(writable);
+        m_noteTree->setAcceptDrops(writable);
+        m_noteTree->setDropIndicatorShown(writable);
+    }
+    updateMascotActions();
 }
 
 void MainWindow::applyEditorColumnWidth() {
@@ -1858,6 +1950,9 @@ void MainWindow::openSettings() {
     auto *folderBox = new QComboBox(&dlg);
     auto *homeBox = new QComboBox(&dlg);
     auto *templatesBox = new QComboBox(&dlg);
+    auto *readModeBox = new QCheckBox(tr("Prevent changes to this vault"), &dlg);
+    readModeBox->setChecked(m_readMode);
+    readModeBox->setToolTip(tr("Shortcut: Ctrl+E"));
     auto *brokenLinksButton = new QPushButton(tr("Review…"), &dlg);
     brokenLinksButton->setToolTip(tr("Shortcut: Ctrl+Shift+B"));
     folderBox->addItem(tr("(Vault root)"), QString());
@@ -1887,6 +1982,7 @@ void MainWindow::openSettings() {
         folderBox->setEnabled(false);
         homeBox->setEnabled(false);
         templatesBox->setEnabled(false);
+        readModeBox->setEnabled(false);
         brokenLinksButton->setEnabled(false);
     }
 
@@ -1902,6 +1998,7 @@ void MainWindow::openSettings() {
     addSettingRow(vaultForm, tr("New notes in"), folderBox);
     addSettingRow(vaultForm, tr("Home note"), homeBox);
     addSettingRow(vaultForm, tr("Templates folder"), templatesBox);
+    addSettingRow(vaultForm, tr("Read mode"), readModeBox);
     addSettingRow(vaultForm, tr("Broken links"), brokenLinksButton);
 
     auto *mascotForm = addSection(
@@ -1974,6 +2071,7 @@ void MainWindow::openSettings() {
                                     homeBox->currentData().toString());
             VaultSettings::setValue(root, QStringLiteral("templatesFolder"),
                                     templatesBox->currentData().toString());
+            setReadMode(readModeBox->isChecked());
         }
     } else {
         m_editor->applyFont(originalFont); // revert the live preview
@@ -2043,6 +2141,8 @@ void MainWindow::newVault() {
 }
 
 void MainWindow::deleteCurrentNote() {
+    if (!ensureVaultWritable())
+        return;
     if (m_currentPath.isEmpty()) {
         notify(tr("No note is open to delete"), 2000);
         return;
@@ -2078,6 +2178,11 @@ void MainWindow::openManual() {
     const QString title = QStringLiteral("Emerald Manual");
     QString path = m_vault->pathForTitle(title);
     if (path.isEmpty()) {
+        if (m_readMode) {
+            notify(tr("The manual is not in this vault — Read Mode is on"),
+                   3000);
+            return;
+        }
         const Note note = m_vault->createNote(title);
         m_vault->write(note.path, manualText());
         path = note.path;
@@ -2153,6 +2258,11 @@ void MainWindow::openVault(const QString &path) {
     m_titleEdit->blockSignals(true);
     m_titleEdit->clear();
     m_titleEdit->blockSignals(false);
+
+    m_readMode = VaultSettings::value(
+                     m_vault->root(), QStringLiteral("readMode"),
+                     QStringLiteral("false")) == QStringLiteral("true");
+    updateReadModeUi();
 
     refreshTree(false); // a freshly opened vault starts fully collapsed
     QSettings().setValue(QStringLiteral("lastVault"), path);
@@ -2416,7 +2526,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
 }
 
 void MainWindow::renameCurrent(const QString &rawTitle) {
-    if (!m_vault || m_currentPath.isEmpty())
+    if (m_readMode || !m_vault || m_currentPath.isEmpty())
         return;
     const QString newTitle = rawTitle.trimmed();
     if (newTitle == m_currentTitle)
@@ -2467,7 +2577,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
 }
 
 void MainWindow::saveCurrent() {
-    if (!m_vault)
+    if (!m_vault || m_readMode)
         return;
     if (m_currentPath.isEmpty()) {
         // Untitled buffer: a save creates the note, but only once it has a
@@ -2638,6 +2748,8 @@ QString MainWindow::defaultNoteDirectory() const {
 }
 
 void MainWindow::newNote() {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault) {
         chooseVault();
         if (!m_vault)
@@ -2651,6 +2763,11 @@ void MainWindow::onLinkClicked(const QString &target) {
         return;
     QString path = m_vault->pathForTitle(target);
     if (path.isEmpty()) {
+        if (m_readMode) {
+            notify(tr("“%1” does not exist — Read Mode is on").arg(target),
+                   3000);
+            return;
+        }
         if (!Vault::isValidTitle(target)) {
             notify(tr("“%1” is not a valid note name").arg(target), 3000);
             return;
@@ -2827,6 +2944,8 @@ void MainWindow::openBrokenLinkSource(const QString &path, int position,
 }
 
 void MainWindow::insertTemplate() {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault)
         return;
     const QString rel = VaultSettings::value(
@@ -2855,7 +2974,7 @@ void MainWindow::insertTemplate() {
 }
 
 void MainWindow::onTemplateChosen(const QString &path) {
-    if (!m_vault || path.isEmpty())
+    if (m_readMode || !m_vault || path.isEmpty())
         return;
     const QString body =
         expandTemplateTokens(m_vault->read(path), m_currentTitle);
@@ -2870,6 +2989,8 @@ void MainWindow::onTemplateChosen(const QString &path) {
 }
 
 void MainWindow::insertImage() {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault || m_currentPath.isEmpty()) {
         notify(tr("Open a note before inserting images"), 2500);
         return;
@@ -2892,6 +3013,8 @@ void MainWindow::insertImage() {
 
 void MainWindow::insertImagesFromFiles(const QStringList &paths) {
     if (paths.isEmpty())
+        return;
+    if (!ensureVaultWritable())
         return;
     if (!m_vault || m_currentPath.isEmpty()) {
         notify(tr("Open a note before inserting images"), 2500);
@@ -2926,6 +3049,8 @@ void MainWindow::insertImagesFromFiles(const QStringList &paths) {
 }
 
 void MainWindow::insertPastedImage(const QImage &image) {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault || m_currentPath.isEmpty()) {
         notify(tr("Open a note before inserting images"), 2500);
         return;
@@ -3024,7 +3149,7 @@ QString MainWindow::imageMarkdownForPath(const QString &path,
 }
 
 void MainWindow::insertImageMarkdownLines(const QStringList &lines) {
-    if (lines.isEmpty())
+    if (m_readMode || lines.isEmpty())
         return;
     QTextCursor c = m_editor->textCursor();
     if (c.position() < m_editor->firstContentPosition())
@@ -3201,20 +3326,30 @@ void MainWindow::onTreeContextMenu(const QPoint &pos) {
                       selPaths.size() > 1;
 
     QMenu menu(this);
-    menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
-    menu.addAction(tr("New Folder"), this, [this, dir] { newFolderIn(dir); });
+    QAction *newNote =
+        menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
+    QAction *newFolder = menu.addAction(
+        tr("New Folder"), this, [this, dir] { newFolderIn(dir); });
+    newNote->setEnabled(!m_readMode);
+    newFolder->setEnabled(!m_readMode);
     if (bulk) {
         menu.addSeparator();
-        menu.addAction(tr("Delete %1 Items").arg(selPaths.size()), this,
-                       [this, selPaths] { deleteEntries(selPaths); });
+        QAction *remove = menu.addAction(
+            tr("Delete %1 Items").arg(selPaths.size()), this,
+            [this, selPaths] { deleteEntries(selPaths); });
+        remove->setEnabled(!m_readMode);
     } else if (!notePath.isEmpty()) {
         menu.addSeparator();
-        menu.addAction(tr("Delete Note"), this,
-                       [this, notePath] { deleteEntries({notePath}); });
+        QAction *remove = menu.addAction(
+            tr("Delete Note"), this,
+            [this, notePath] { deleteEntries({notePath}); });
+        remove->setEnabled(!m_readMode);
     } else if (!folderPath.isEmpty()) {
         menu.addSeparator();
-        menu.addAction(tr("Delete Folder"), this,
-                       [this, folderPath] { deleteEntries({folderPath}); });
+        QAction *remove = menu.addAction(
+            tr("Delete Folder"), this,
+            [this, folderPath] { deleteEntries({folderPath}); });
+        remove->setEnabled(!m_readMode);
     }
     menu.exec(m_noteTree->viewport()->mapToGlobal(pos));
 }
@@ -3297,6 +3432,8 @@ void MainWindow::reconcileAfterDeletion() {
 }
 
 void MainWindow::deleteEntries(const QStringList &pathsIn) {
+    if (!ensureVaultWritable())
+        return;
     // A selected folder takes its contents with it, so ignore nested children.
     const QStringList paths = topLevelPaths(pathsIn);
     if (paths.isEmpty())
@@ -3346,6 +3483,8 @@ void MainWindow::deleteEntries(const QStringList &pathsIn) {
 }
 
 void MainWindow::newNoteIn(const QString &dir) {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault)
         return;
     saveCurrent();
@@ -3376,6 +3515,8 @@ void MainWindow::newNoteIn(const QString &dir) {
 }
 
 void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn) {
+    if (!ensureVaultWritable())
+        return;
     if (!m_vault || srcPaths.isEmpty())
         return;
     const QString destDir = destDirIn.isEmpty() ? m_vault->root() : destDirIn;
@@ -3433,6 +3574,8 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
 }
 
 void MainWindow::newFolderIn(const QString &dir) {
+    if (!ensureVaultWritable())
+        return;
     QString name;
     if (!runFolderNameDialog(this, &name))
         return;
