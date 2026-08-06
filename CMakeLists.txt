@@ -65,6 +65,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/LegacyMascotMigration.cpp
   src/core/Vault.h
   src/core/Vault.cpp
+  src/core/VaultSettings.h
+  src/core/VaultSettings.cpp
   src/core/SearchIndex.h
   src/core/SearchIndex.cpp
   src/core/WikiLink.h
@@ -272,6 +274,23 @@ if(EMERALD_BUILD_EDITOR_TESTS)
   add_test(NAME emerald_editor_tests COMMAND emerald_editor_tests)
   set_tests_properties(emerald_editor_tests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+# --- Core regression tests -----------------------------------------------
+# QtCore-only tests for persistent application behavior that does not need a
+# widget surface (currently per-vault settings isolation and migration).
+option(EMERALD_BUILD_CORE_TESTS "Build core regression tests" OFF)
+if(EMERALD_BUILD_CORE_TESTS)
+  enable_testing()
+  add_executable(emerald_core_tests
+    tests/core/VaultSettingsTests.cpp
+    src/core/VaultSettings.h
+    src/core/VaultSettings.cpp
+  )
+  target_include_directories(emerald_core_tests PRIVATE src)
+  target_link_libraries(emerald_core_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_core_tests)
+  add_test(NAME emerald_core_tests COMMAND emerald_core_tests)
 endif()
 
 # --- Security regression tests -------------------------------------------

@@ -177,6 +177,7 @@ which builds all three platforms and attaches the packages to the release.
 ```
 core/   no GUI, unit-testable (depends only on QtCore)
   Vault            scan a folder, read/write .md files, resolve link targets
+  VaultSettings    per-vault preferences in the platform settings store
   SearchIndex      inverted index for fast full-text search
   WikiLink         the shared [[wiki-link]] pattern + target cleaning
   Note             { path, title }

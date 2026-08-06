@@ -8,6 +8,7 @@
 #include "core/LegacyMascotMigration.h"
 #include "core/MascotSeed.h"
 #include "core/Vault.h"
+#include "core/VaultSettings.h"
 
 #include <QAbstractItemView>
 #include <QAbstractItemModel>
@@ -870,6 +871,7 @@ bool runTrashDialog(QWidget *parent, const QString &question) {
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+    VaultSettings::migrateLegacyForLastVault();
     buildActions();
     buildUi();
     loadSettings();
@@ -1857,14 +1859,16 @@ void MainWindow::openSettings() {
         }
         for (const Note &n : m_vault->notes())
             homeBox->addItem(n.title, root.relativeFilePath(n.path));
-        const int fi = folderBox->findData(s.value(QStringLiteral("newNoteFolder")));
+        const int fi = folderBox->findData(VaultSettings::value(
+            m_vault->root(), QStringLiteral("newNoteFolder")));
         if (fi >= 0)
             folderBox->setCurrentIndex(fi);
-        const int hi = homeBox->findData(s.value(QStringLiteral("homeNote")));
+        const int hi = homeBox->findData(VaultSettings::value(
+            m_vault->root(), QStringLiteral("homeNote")));
         if (hi >= 0)
             homeBox->setCurrentIndex(hi);
-        const int ti =
-            templatesBox->findData(s.value(QStringLiteral("templatesFolder")));
+        const int ti = templatesBox->findData(VaultSettings::value(
+            m_vault->root(), QStringLiteral("templatesFolder")));
         if (ti >= 0)
             templatesBox->setCurrentIndex(ti);
     } else {
@@ -1944,10 +1948,13 @@ void MainWindow::openSettings() {
         s.setValue(QStringLiteral("mascotAuto"), mascotAutoBox->isChecked());
         s.setValue(QStringLiteral("mascotThreshold"), mascotThreshBox->value());
         if (m_vault) {
-            s.setValue(QStringLiteral("newNoteFolder"), folderBox->currentData());
-            s.setValue(QStringLiteral("homeNote"), homeBox->currentData());
-            s.setValue(QStringLiteral("templatesFolder"),
-                       templatesBox->currentData());
+            const QString root = m_vault->root();
+            VaultSettings::setValue(root, QStringLiteral("newNoteFolder"),
+                                    folderBox->currentData().toString());
+            VaultSettings::setValue(root, QStringLiteral("homeNote"),
+                                    homeBox->currentData().toString());
+            VaultSettings::setValue(root, QStringLiteral("templatesFolder"),
+                                    templatesBox->currentData().toString());
         }
     } else {
         m_editor->applyFont(originalFont); // revert the live preview
@@ -2217,7 +2224,8 @@ void MainWindow::openInitialNote() {
         return;
     QSettings s;
     // A configured Home note wins; otherwise reopen the last-edited note.
-    const QString home = s.value(QStringLiteral("homeNote")).toString();
+    const QString home = VaultSettings::value(
+        m_vault->root(), QStringLiteral("homeNote"));
     if (!home.isEmpty()) {
         const QString p = QDir(m_vault->root()).filePath(home);
         if (QFileInfo::exists(p)) {
@@ -2598,7 +2606,8 @@ QString MainWindow::defaultNoteDirectory() const {
     // Create in the configured folder (default: vault root), falling back to
     // the root if the saved folder no longer exists.
     QString dir = m_vault->root();
-    const QString rel = QSettings().value(QStringLiteral("newNoteFolder")).toString();
+    const QString rel = VaultSettings::value(
+        m_vault->root(), QStringLiteral("newNoteFolder"));
     if (!rel.isEmpty()) {
         const QString candidate = QDir(m_vault->root()).filePath(rel);
         if (QDir(candidate).exists())
@@ -2755,8 +2764,8 @@ void MainWindow::openQuickOpen() {
 void MainWindow::insertTemplate() {
     if (!m_vault)
         return;
-    const QString rel =
-        QSettings().value(QStringLiteral("templatesFolder")).toString();
+    const QString rel = VaultSettings::value(
+        m_vault->root(), QStringLiteral("templatesFolder"));
     if (rel.isEmpty()) {
         notify(tr("Set a templates folder in Settings first."), 3000);
         return;
@@ -3145,17 +3154,24 @@ void MainWindow::onTreeContextMenu(const QPoint &pos) {
     menu.exec(m_noteTree->viewport()->mapToGlobal(pos));
 }
 
-// Clear settings that pointed at a deleted note/folder so they don't go stale
-// (Home note / new-note folder).
+// Clear per-vault settings that pointed at a deleted note/folder so Home, new
+// note, and template choices never retain stale paths.
 void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
-    QSettings s;
     const QString rel = QDir(m_vault->root()).relativeFilePath(path);
-    const QString home = s.value(QStringLiteral("homeNote")).toString();
-    const QString nf = s.value(QStringLiteral("newNoteFolder")).toString();
+    const QString root = m_vault->root();
+    const QString home =
+        VaultSettings::value(root, QStringLiteral("homeNote"));
+    const QString nf =
+        VaultSettings::value(root, QStringLiteral("newNoteFolder"));
+    const QString templates =
+        VaultSettings::value(root, QStringLiteral("templatesFolder"));
     if (home == rel || (isFolder && home.startsWith(rel + QLatin1Char('/'))))
-        s.remove(QStringLiteral("homeNote"));
+        VaultSettings::remove(root, QStringLiteral("homeNote"));
     if (isFolder && (nf == rel || nf.startsWith(rel + QLatin1Char('/'))))
-        s.remove(QStringLiteral("newNoteFolder"));
+        VaultSettings::remove(root, QStringLiteral("newNoteFolder"));
+    if (isFolder &&
+        (templates == rel || templates.startsWith(rel + QLatin1Char('/'))))
+        VaultSettings::remove(root, QStringLiteral("templatesFolder"));
 }
 
 // After a deletion: rescan, and if the open note was removed (on its own or
@@ -3197,7 +3213,8 @@ void MainWindow::reconcileAfterDeletion() {
 
     // Show the Home note, else the most recent still-open note, else blank.
     QString fallback;
-    const QString home = QSettings().value(QStringLiteral("homeNote")).toString();
+    const QString home = VaultSettings::value(
+        m_vault->root(), QStringLiteral("homeNote"));
     if (!home.isEmpty()) {
         const QString p = QDir(m_vault->root()).filePath(home);
         if (QFileInfo::exists(p))

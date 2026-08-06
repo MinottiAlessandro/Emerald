@@ -121,6 +121,9 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] Change editor **font family + size** — applies and persists across restart.
 - [ ] **Default font** is a system monospace face on a clean profile (no saved font override). ★
 - [ ] **Line spacing** setting changes row spacing and survives note loads.
+- [ ] **Vault settings stay isolated** — give two vaults different Home notes,
+      new-note folders, and templates folders; switching between them restores
+      each vault's own choices without adding metadata files to either vault.
 - [ ] **Font size** `Ctrl++` / `Ctrl+-` / `Ctrl+0` (up / down / reset).
 - [ ] **Toggle sidebar** (`Ctrl+\` or the gear menu) collapses the left pane fully and restores it; clicking the splitter handle does the same. ◆
 - [ ] Heading sizes scale with the body font.

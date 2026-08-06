@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'tests/core/**'
       - 'tests/security/**'
       - 'tests/fuzz/**'
       - 'CMakeLists.txt'
@@ -47,11 +48,12 @@ jobs:
           cmake -S . -B build-security \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_CXX_COMPILER=clang++ \
+            -DEMERALD_BUILD_CORE_TESTS=ON \
             -DEMERALD_BUILD_SECURITY_TESTS=ON \
             -DEMERALD_ENABLE_SANITIZERS=ON
 
       - name: Build sanitizer tests
-        run: cmake --build build-security --target emerald_security_tests -j
+        run: cmake --build build-security --target emerald_core_tests emerald_security_tests -j
 
       - name: Run sanitizer tests
         run: ctest --test-dir build-security --output-on-failure
