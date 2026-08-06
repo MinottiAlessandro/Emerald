@@ -217,6 +217,32 @@ int listContentStart(const QString &text) {
     return match.hasMatch() ? match.capturedEnd() : -1;
 }
 
+struct QuotePrefix {
+    int depth = 0;
+    int contentStart = -1;
+};
+
+QuotePrefix quotePrefix(const QString &text) {
+    int pos = 0;
+    while (pos < text.size() &&
+           (text.at(pos) == QLatin1Char(' ') ||
+            text.at(pos) == QLatin1Char('\t')))
+        ++pos;
+
+    QuotePrefix result;
+    while (pos < text.size() && text.at(pos) == QLatin1Char('>')) {
+        ++result.depth;
+        ++pos;
+        while (pos < text.size() &&
+               (text.at(pos) == QLatin1Char(' ') ||
+                text.at(pos) == QLatin1Char('\t')))
+            ++pos;
+    }
+    if (result.depth > 0)
+        result.contentStart = pos;
+    return result;
+}
+
 struct HeadingSpacing {
     qreal topLines;
     qreal bottomLines;
@@ -454,8 +480,12 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
             }
         }
 
-        const int contentStart = insideFence ? -1 : listContentStart(block.text());
-        qreal indent = 0.0;
+        const QuotePrefix quote =
+            insideFence ? QuotePrefix{} : quotePrefix(block.text());
+        const int contentStart =
+            quote.depth > 0 ? quote.contentStart
+                            : insideFence ? -1 : listContentStart(block.text());
+        qreal prefixWidth = 0.0;
         if (contentStart > 0) {
             // MarkdownHighlighter changes the advance of concealed markers
             // (notably the custom-painted task checkbox). Measure the prefix
@@ -469,31 +499,47 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                                      firstLine.textLength();
                 if (contentStart > firstLine.textStart() &&
                     contentStart <= firstEnd) {
-                    indent = firstLine.cursorToX(contentStart) -
-                             firstLine.x();
+                    prefixWidth = firstLine.cursorToX(contentStart) -
+                                  firstLine.x();
                 }
             }
-            if (indent <= 0.0 || indent >= available - 1.0)
-                indent = 0.0;
+            if (prefixWidth <= 0.0 || prefixWidth >= available - 1.0)
+                prefixWidth = 0.0;
         }
 
         QTextBlockFormat format = block.blockFormat();
         const int level = insideFence ? 0 : headingLevel(block.text());
         const HeadingSpacing spacing = headingSpacing(qMax(1, level));
-        const qreal topMargin = level > 0 ? bodyLineHeight * spacing.topLines : 0.0;
+        const qreal quoteIndent = bodyLineHeight * 1.18;
+        const qreal leftMargin = quote.depth > 0 ? quote.depth * quoteIndent
+                                                 : prefixWidth;
+        const qreal textIndent = -prefixWidth;
+        const int previousQuoteDepth =
+            block.previous().isValid() ? quotePrefix(block.previous().text()).depth : 0;
+        const int nextQuoteDepth =
+            block.next().isValid() ? quotePrefix(block.next().text()).depth : 0;
+        const qreal quoteTop = quote.depth > 0 && previousQuoteDepth == 0
+                                   ? bodyLineHeight * 0.18
+                                   : 0.0;
+        const qreal quoteBottom = quote.depth > 0 && nextQuoteDepth == 0
+                                      ? bodyLineHeight * 0.18
+                                      : 0.0;
+        const qreal topMargin =
+            (level > 0 ? bodyLineHeight * spacing.topLines : 0.0) + quoteTop;
         const qreal bottomMargin =
-            extra + (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0);
+            extra + (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0) +
+            quoteBottom;
         const bool changed = !qFuzzyCompare(format.leftMargin() + 1.0,
-                                            indent + 1.0) ||
+                                            leftMargin + 1.0) ||
                              !qFuzzyCompare(format.textIndent() + 1.0,
-                                            -indent + 1.0) ||
+                                            textIndent + 1.0) ||
                              !qFuzzyCompare(format.topMargin() + 1.0,
                                             topMargin + 1.0) ||
                              !qFuzzyCompare(format.bottomMargin() + 1.0,
                                             bottomMargin + 1.0);
         if (changed) {
-            format.setLeftMargin(indent);
-            format.setTextIndent(-indent);
+            format.setLeftMargin(leftMargin);
+            format.setTextIndent(textIndent);
             format.setTopMargin(topMargin);
             format.setBottomMargin(bottomMargin);
             QTextCursor cursor(block);
@@ -2446,6 +2492,52 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             path.closeSubpath();
             bg.fillPath(path, QColor(0x1f, 0x47, 0x33));
         });
+    }
+
+    // Quote guides sit behind the document glyphs. Each nesting level gets its
+    // own rail; consecutive quote blocks meet through their paragraph margins
+    // so the quote reads as one visual region rather than unrelated lines.
+    {
+        QPainter quotePainter(viewport());
+        quotePainter.setRenderHint(QPainter::Antialiasing);
+        QColor accent = palette().color(QPalette::Highlight);
+        if (!accent.isValid())
+            accent = QColor(0x2b, 0xbf, 0x74);
+        const qreal lineHeight = QFontMetricsF(font()).lineSpacing();
+        const qreal quoteIndent = lineHeight * 1.18;
+        const qreal documentMargin = document()->documentMargin();
+
+        for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
+             block = block.next()) {
+            if (!block.isVisible() || insideCodeBlock(block))
+                continue;
+            const QRectF geo = blockViewportRect(block);
+            if (geo.top() > event->rect().bottom())
+                break;
+            if (geo.bottom() < event->rect().top())
+                continue;
+            const QuotePrefix quote = quotePrefix(block.text());
+            if (quote.depth == 0)
+                continue;
+
+            QColor wash = accent;
+            wash.setAlpha(10);
+            quotePainter.fillRect(
+                QRectF(documentMargin, geo.top(),
+                       qMax(qreal(0), viewport()->width() - documentMargin * 2),
+                       geo.height()),
+                wash);
+            for (int depth = 0; depth < quote.depth; ++depth) {
+                QColor rail = accent;
+                rail.setAlpha(qMax(70, 170 - depth * 35));
+                QPen pen(rail, depth == 0 ? 2.2 : 1.6);
+                pen.setCapStyle(Qt::SquareCap);
+                quotePainter.setPen(pen);
+                const qreal x = documentMargin + depth * quoteIndent + 3.0;
+                quotePainter.drawLine(QPointF(x, geo.top()),
+                                      QPointF(x, geo.bottom()));
+            }
+        }
     }
 
     QTextEdit::paintEvent(event);

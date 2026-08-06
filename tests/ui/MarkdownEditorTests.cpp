@@ -218,6 +218,41 @@ int main(int argc, char **argv) {
     check(qFuzzyIsNull(fencedHeading.blockFormat().topMargin()),
           QStringLiteral("heading-looking fenced code should have no heading margin"));
 
+    // Quotes use a stable hanging content edge and progressively deeper rails.
+    // Both compact (`>>`) and spaced (`> >`) nesting are valid Markdown forms.
+    const QString quoteTail = QStringLiteral(
+        "quoted words continue for long enough to wrap across several visual "
+        "lines in this deliberately narrow editor viewport");
+    editor.resize(250, 220);
+    editor.setPlainText(QStringLiteral("> ") + quoteTail +
+                        QStringLiteral("\n> > nested ") + quoteTail +
+                        QStringLiteral("\nafter quote"));
+    const QTextBlock quoteOne = editor.document()->findBlockByNumber(0);
+    const QTextBlock quoteTwo = editor.document()->findBlockByNumber(1);
+    const QTextBlock afterQuote = editor.document()->findBlockByNumber(2);
+    settleLayout(editor, quoteTwo);
+    checkWrappedBlock(quoteOne, 2, QStringLiteral("single blockquote"));
+    checkWrappedBlock(quoteTwo, 4, QStringLiteral("nested blockquote"));
+    check(quoteTwo.blockFormat().leftMargin() >
+              quoteOne.blockFormat().leftMargin(),
+          QStringLiteral("nested blockquotes should receive deeper indentation"));
+    check(quoteOne.blockFormat().topMargin() > 0.0 &&
+              quoteTwo.blockFormat().topMargin() == 0.0 &&
+              quoteTwo.blockFormat().bottomMargin() >
+                  afterQuote.blockFormat().bottomMargin(),
+          QStringLiteral("quote group spacing should occur only at its edges"));
+    check(editor.toPlainText() ==
+              QStringLiteral("> ") + quoteTail +
+                  QStringLiteral("\n> > nested ") + quoteTail +
+                  QStringLiteral("\nafter quote"),
+          QStringLiteral("blockquote layout must preserve Markdown source"));
+
+    editor.setPlainText(QStringLiteral("```\n> literal quote\n```"));
+    const QTextBlock fencedQuote = editor.document()->findBlockByNumber(1);
+    settleLayout(editor, fencedQuote);
+    check(qFuzzyIsNull(fencedQuote.blockFormat().leftMargin()),
+          QStringLiteral("quote-looking fenced code should remain unindented"));
+
     // Paragraph-only presentation changes must never become separate undo
     // commands. Moving away from a list conceals its marker and can change the
     // measured hanging indent, but Ctrl+Z should still address source edits.

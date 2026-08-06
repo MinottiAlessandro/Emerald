@@ -118,7 +118,8 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
 
     m_reHeading    = QRegularExpression(QStringLiteral("^(#{1,6})\\s+(.+)$"));
     m_reFence      = QRegularExpression(QStringLiteral("^\\s*(```|~~~)\\s*(\\S*).*$"));
-    m_reQuote      = QRegularExpression(QStringLiteral("^(\\s*>+\\s?)(.*)$"));
+    m_reQuote      = QRegularExpression(
+        QStringLiteral("^(\\s*(?:>\\s*)+)(.*)$"));
     m_reRule       = QRegularExpression(
         QStringLiteral("^\\s*([-*_])\\s*(?:\\1\\s*){2,}$"));
     m_reTask       = QRegularExpression(
