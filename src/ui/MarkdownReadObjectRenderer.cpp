@@ -376,6 +376,7 @@ QTextCharFormat MarkdownReadObjectRenderer::checkboxFormat(const QFont &baseFont
     format.setObjectType(ObjectType);
     format.setProperty(KindProperty, int(Kind::Checkbox));
     format.setProperty(CheckedProperty, checked);
+    format.setVerticalAlignment(QTextCharFormat::AlignMiddle);
     format.setToolTip(checked ? QObject::tr("Completed task")
                               : QObject::tr("Incomplete task"));
     return format;

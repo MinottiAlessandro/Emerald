@@ -1026,7 +1026,8 @@ void MarkdownEditor::setReadMode(bool enabled) {
         setSourceTextCursor(m_sourceCursor);
         setAccessibleName(tr("Note reader"));
         setAccessibleDescription(
-            tr("Read-only rendered note. Text can be selected and copied."));
+            tr("Rendered note. Text can be selected and copied; task "
+               "checkboxes can be toggled."));
         // QTextEdit::setDocument() marks the newly installed document dirty as
         // part of resetting its control. Presentation is derived state, never
         // a saveable edit, so normalize that Qt bookkeeping immediately.
@@ -1183,6 +1184,87 @@ QRectF MarkdownEditor::readObjectRect(const QTextBlock &block) const {
     const qreal x2 = xOffset + line.cursorToX(1);
     return QRectF(qMin(x1, x2), blockViewportRect(block).top() + line.y(),
                   qAbs(x2 - x1), line.height());
+}
+
+QTextBlock MarkdownEditor::readCheckboxBlockAt(const QPoint &pos) const {
+    if (!m_readMode)
+        return {};
+    const QTextBlock block = cursorForPosition(pos).block();
+    if (MarkdownReadObjectRenderer::kind(readObjectFormat(block)) !=
+        MarkdownReadObjectRenderer::Kind::Checkbox)
+        return {};
+    return readObjectRect(block).adjusted(-2, -2, 2, 2).contains(pos)
+               ? block
+               : QTextBlock();
+}
+
+bool MarkdownEditor::toggleReadCheckboxAt(const QPoint &pos) {
+    const QTextBlock readBlock = readCheckboxBlockAt(pos);
+    if (!readBlock.isValid() || !m_sourceDocument)
+        return false;
+
+    QTextCursor readCursor(readBlock);
+    const QTextCursor mapped = MarkdownReadRenderer::mapToSourceCursor(
+        m_sourceDocument, readCursor);
+    const QTextBlock sourceBlock = mapped.block();
+    const auto match = taskRe().match(sourceBlock.text());
+    if (!match.hasMatch())
+        return false;
+
+    const int statusPosition = match.capturedStart(2);
+    const bool checked = sourceBlock.text().at(statusPosition).toLower() ==
+                         QLatin1Char('x');
+    QTextCursor edit(sourceBlock);
+    edit.setPosition(sourceBlock.position() + statusPosition);
+    edit.setPosition(sourceBlock.position() + statusPosition + 1,
+                     QTextCursor::KeepAnchor);
+    edit.insertText(checked ? QStringLiteral(" ") : QStringLiteral("x"));
+
+    const bool nowChecked = !checked;
+    const QFont objectFont = readObjectFormat(readBlock).font();
+    QTextCursor objectCursor(readBlock);
+    objectCursor.movePosition(QTextCursor::NextCharacter,
+                              QTextCursor::KeepAnchor);
+    objectCursor.setCharFormat(
+        MarkdownReadObjectRenderer::checkboxFormat(objectFont, nowChecked));
+
+    struct ReadFormatSpan {
+        int start;
+        int length;
+        QTextCharFormat format;
+    };
+    QList<ReadFormatSpan> labelFormats;
+    const int labelStart = readBlock.position() + 2; // object + compact space
+    const int blockEnd = readBlock.position() + readBlock.length() - 1;
+    for (auto it = readBlock.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid())
+            continue;
+        const int start = qMax(labelStart, fragment.position());
+        const int end = qMin(blockEnd, fragment.position() + fragment.length());
+        if (start >= end)
+            continue;
+        QTextCharFormat format = fragment.charFormat();
+        format.setFontStrikeOut(nowChecked);
+        const QColor foreground = format.foreground().color();
+        const QColor body(0xd7, 0xee, 0xe2);
+        const QColor completed(0x78, 0x93, 0x84);
+        if (nowChecked && foreground == body)
+            format.setForeground(completed);
+        else if (!nowChecked && foreground == completed)
+            format.setForeground(body);
+        labelFormats.append({start, end - start, format});
+    }
+    for (const ReadFormatSpan &span : std::as_const(labelFormats)) {
+        QTextCursor label(m_readDocument);
+        label.setPosition(span.start);
+        label.setPosition(span.start + span.length, QTextCursor::KeepAnchor);
+        label.setCharFormat(span.format);
+    }
+    m_readDocument->setModified(false);
+    emit sourceChanged();
+    viewport()->update();
+    return true;
 }
 
 bool MarkdownEditor::isOverReadCodeCopyButton(const QPoint &pos) const {
@@ -1785,6 +1867,9 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         return;
     }
     if (m_readMode && event->button() == Qt::LeftButton &&
+        toggleReadCheckboxAt(event->pos()))
+        return;
+    if (m_readMode && event->button() == Qt::LeftButton &&
         copyReadCodeBlockAt(event->pos()))
         return;
     // A click in the left margin next to a heading folds/unfolds its section.
@@ -1819,6 +1904,7 @@ void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
     // heading fold control, and a code block's copy button.
     const QPoint p = event->pos();
     const bool clickable = followsLink(p, event->modifiers()) ||
+                           (m_readMode && readCheckboxBlockAt(p).isValid()) ||
                            (m_readMode && isOverReadCodeCopyButton(p)) ||
                            (!m_readMode && taskCheckboxBlockAt(p).isValid()) ||
                            isOverFoldControl(p) || isOverCopyButton(p);

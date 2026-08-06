@@ -140,6 +140,21 @@ bool containsPixel(const QImage &image, QRgb expected) {
     return false;
 }
 
+QRectF firstObjectViewportRect(MarkdownEditor &editor,
+                               const QTextBlock &block) {
+    if (!block.isValid() || !block.layout() || block.layout()->lineCount() == 0)
+        return {};
+    const QTextLine line = block.layout()->lineAt(0);
+    QTextCursor origin(block);
+    const qreal xOffset = editor.cursorRect(origin).left() - line.cursorToX(0);
+    const QRectF documentRect =
+        editor.document()->documentLayout()->blockBoundingRect(block);
+    return QRectF(xOffset + line.cursorToX(0),
+                  documentRect.top() - editor.verticalScrollBar()->value() +
+                      line.y(),
+                  qAbs(line.cursorToX(1) - line.cursorToX(0)), line.height());
+}
+
 void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
              Qt::KeyboardModifiers modifiers,
              const QString &text = QString()) {
@@ -786,7 +801,9 @@ int main(int argc, char **argv) {
     bool sawTableWikiAnchor = false;
     int renderedWikiPosition = -1;
     QTextBlock imageObjectBlock;
+    QTextBlock checkboxObjectBlock;
     QTextBlock codeObjectBlock;
+    QTextCharFormat checkboxObjectFormat;
     QTextCharFormat codeObjectFormat;
     QTextTable *renderedTable = nullptr;
     for (QTextBlock block = editor.document()->firstBlock(); block.isValid();
@@ -830,6 +847,8 @@ int main(int argc, char **argv) {
                 break;
             case MarkdownReadObjectRenderer::Kind::Checkbox:
                 sawCheckboxObject = true;
+                checkboxObjectBlock = block;
+                checkboxObjectFormat = format;
                 break;
             case MarkdownReadObjectRenderer::Kind::CodeBlock:
                 sawCodeObject = true;
@@ -845,6 +864,10 @@ int main(int argc, char **argv) {
               sawRuleObject && sawCheckboxObject && sawCodeObject,
           QStringLiteral("Read Mode should embed native image, math, rule, "
                          "checkbox, and code objects"));
+    check(checkboxObjectFormat.verticalAlignment() ==
+              QTextCharFormat::AlignMiddle,
+          QStringLiteral("Read Mode checkboxes should request middle inline "
+                         "alignment with their labels"));
     check(sawWikiAnchor && sawExternalAnchor && sawTableWikiAnchor,
           QStringLiteral("Read Mode should retain semantic wiki and external "
                          "anchors, including links inside table cells"));
@@ -857,6 +880,7 @@ int main(int argc, char **argv) {
               !codeObjectFormat.toolTip().isEmpty(),
           QStringLiteral("custom Read Mode objects should expose readable text "
                          "and a descriptive tooltip"));
+
     check(renderedTable && renderedTable->rows() == 3 &&
               renderedTable->columns() == 3 &&
               renderedTable->format().headerRowCount() == 1,
@@ -1100,6 +1124,84 @@ int main(int argc, char **argv) {
                   QStringLiteral("the Read Mode code-card Copy control should "
                                  "copy the unfenced source"));
         }
+    }
+
+    // Checkbox clicks intentionally rebuild the Read Mode document, so exercise
+    // them only after every assertion that retains a block/table pointer into
+    // the original rendered document.
+    int readCheckboxChanges = 0;
+    QObject::connect(&editor, &MarkdownEditor::sourceChanged,
+                     [&readCheckboxChanges] { ++readCheckboxChanges; });
+    auto findReadCheckbox = [&editor] {
+        for (QTextBlock block = editor.document()->firstBlock(); block.isValid();
+             block = block.next()) {
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const QTextFragment fragment = it.fragment();
+                if (fragment.isValid() &&
+                    MarkdownReadObjectRenderer::kind(fragment.charFormat()) ==
+                        MarkdownReadObjectRenderer::Kind::Checkbox)
+                    return block;
+            }
+        }
+        return QTextBlock();
+    };
+    auto positionReadCheckbox = [&editor](const QTextBlock &block) {
+        if (!block.isValid())
+            return QRectF();
+        settleLayout(editor, block);
+        const QRectF documentRect =
+            editor.document()->documentLayout()->blockBoundingRect(block);
+        editor.verticalScrollBar()->setValue(
+            qMax(0, qRound(documentRect.top()) - 20));
+        QApplication::processEvents();
+        return firstObjectViewportRect(editor, block);
+    };
+    if (checkboxObjectBlock.isValid()) {
+        QRectF checkboxRect = positionReadCheckbox(checkboxObjectBlock);
+        QImage readCheckboxRender(editor.viewport()->size(),
+                                  QImage::Format_ARGB32_Premultiplied);
+        readCheckboxRender.fill(Qt::transparent);
+        editor.viewport()->render(&readCheckboxRender);
+        QRect paintedReadCheckbox;
+        const QRect scan = checkboxRect.adjusted(-2, -2, 2, 2)
+                               .toAlignedRect()
+                               .intersected(readCheckboxRender.rect());
+        for (int y = scan.top(); y <= scan.bottom(); ++y) {
+            const QRgb *line = reinterpret_cast<const QRgb *>(
+                readCheckboxRender.constScanLine(y));
+            for (int x = scan.left(); x <= scan.right(); ++x) {
+                if (line[x] != QColor(0x2b, 0xbf, 0x74).rgba())
+                    continue;
+                paintedReadCheckbox =
+                    paintedReadCheckbox.isNull()
+                        ? QRect(x, y, 1, 1)
+                        : paintedReadCheckbox.united(QRect(x, y, 1, 1));
+            }
+        }
+        QTextCursor readTaskLabel(checkboxObjectBlock);
+        readTaskLabel.setPosition(checkboxObjectBlock.position() + 2);
+        const QRect labelCell = editor.cursorRect(readTaskLabel);
+        check(!paintedReadCheckbox.isNull() &&
+                  qAbs(paintedReadCheckbox.center().y() -
+                       labelCell.center().y()) <= 2,
+              QStringLiteral("the Read Mode checkbox should be vertically "
+                             "centered on its text line"));
+
+        clickEditor(editor, checkboxRect.center().toPoint());
+        check(editor.sourceDocument()->toPlainText().contains(
+                  QStringLiteral("- [ ] A completed task")) &&
+                  readCheckboxChanges == 1,
+              QStringLiteral("clicking a Read Mode checkbox should update its "
+                             "Markdown source and request autosave"));
+
+        const QTextBlock uncheckedBlock = findReadCheckbox();
+        checkboxRect = positionReadCheckbox(uncheckedBlock);
+        if (checkboxRect.isValid())
+            clickEditor(editor, checkboxRect.center().toPoint());
+        check(editor.sourceDocument()->toPlainText() == readingSource &&
+                  readCheckboxChanges == 2,
+              QStringLiteral("a second Read Mode checkbox click should restore "
+                             "the checked source state"));
     }
     check(editor.toPlainText() == readingSource &&
               editor.sourceDocument()->toPlainText() == readingSource,

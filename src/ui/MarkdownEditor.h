@@ -66,9 +66,10 @@ public:
     void jumpToMatch(const QString &text);
     void centerCursor();
 
-    // Reading-only presentation: swap the Markdown source for a separate,
-    // syntax-free document, prevent edits, and hide the caret. Plain Up/Down
-    // scroll the viewport instead of moving the hidden text cursor.
+    // Reading presentation: swap the Markdown source for a separate,
+    // syntax-free document, prevent text edits, and hide the caret. Task
+    // checkboxes remain explicitly interactive. Plain Up/Down scroll the
+    // viewport instead of moving the hidden text cursor.
     void setReadMode(bool enabled);
     bool readMode() const { return m_readMode; }
     bool smoothScrollActive() const;
@@ -103,6 +104,10 @@ signals:
     // the active vault and note path.
     void imageFilesInserted(const QStringList &paths);
     void imagePasted(const QImage &image);
+    // A permitted Read Mode interaction changed the hidden Markdown source
+    // (currently toggling a task checkbox). MainWindow uses this to autosave
+    // even though ordinary Read Mode editing remains disabled.
+    void sourceChanged();
     // The mascot seed changed — on load, on Generate/Delete, or when the user
     // hand-edits the revealed header line. 0 means the note now has no mascot.
     void mascotSeedChanged(quint64 seed);
@@ -132,6 +137,8 @@ private:
     void restoreScrollRatio(qreal ratio);
     QTextCharFormat readObjectFormat(const QTextBlock &block) const;
     QRectF readObjectRect(const QTextBlock &block) const;
+    QTextBlock readCheckboxBlockAt(const QPoint &pos) const;
+    bool toggleReadCheckboxAt(const QPoint &pos);
     bool isOverReadCodeCopyButton(const QPoint &pos) const;
     bool copyReadCodeBlockAt(const QPoint &pos);
     QTextBlock firstVisibleTextBlock() const;
@@ -313,7 +320,7 @@ private:
     bool m_visualFormatQueued = false;
     int m_pendingVisualFormatStart = -1;
     int m_pendingVisualFormatEnd = -1;
-    bool m_readMode = false;        // navigation-only, fully rendered document
+    bool m_readMode = false;        // rendered document; task toggles allowed
     int m_editCursorWidth = 1;      // restored when leaving Read Mode
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
     quint64 m_mascotSeed = 0;    // last seen mascot seed, to detect changes

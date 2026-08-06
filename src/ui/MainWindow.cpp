@@ -929,6 +929,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             maybeAutoGenerateMascot();
         }
     });
+    connect(m_editor, &MarkdownEditor::sourceChanged, this, [this] {
+        if (!m_loading)
+            m_saveTimer->start();
+    });
 
     const QString last = QSettings().value(QStringLiteral("lastVault")).toString();
     if (!last.isEmpty() && QDir(last).exists())
@@ -2579,7 +2583,7 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
 }
 
 void MainWindow::saveCurrent() {
-    if (!m_vault || m_readMode)
+    if (!m_vault)
         return;
     if (m_currentPath.isEmpty()) {
         // Untitled buffer: a save creates the note, but only once it has a
