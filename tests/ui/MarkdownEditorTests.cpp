@@ -385,6 +385,26 @@ int main(int argc, char **argv) {
     const qreal roomyImageHeight = imageBlock.blockFormat().lineHeight();
     check(roomyImageHeight > compactImageHeight,
           QStringLiteral("image preview should grow when viewport bounds allow"));
+    editor.verticalScrollBar()->setValue(0);
+    QImage editModeImageRender(editor.viewport()->size(),
+                               QImage::Format_ARGB32_Premultiplied);
+    editModeImageRender.fill(Qt::transparent);
+    editor.viewport()->render(&editModeImageRender);
+    bool paintedEditModeImage = false;
+    const QRgb expectedEditImagePixel = QColor(0x2b, 0xbf, 0x74).rgba();
+    for (int y = 0; y < editModeImageRender.height() && !paintedEditModeImage;
+         ++y) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(
+            editModeImageRender.constScanLine(y));
+        for (int x = 0; x < editModeImageRender.width(); ++x) {
+            if (line[x] == expectedEditImagePixel) {
+                paintedEditModeImage = true;
+                break;
+            }
+        }
+    }
+    check(paintedEditModeImage,
+          QStringLiteral("edit mode should paint loaded local image content"));
     QTextCursor editImage(imageBlock);
     editor.setTextCursor(editImage);
     QApplication::processEvents();

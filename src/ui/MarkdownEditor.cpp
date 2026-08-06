@@ -925,7 +925,14 @@ qreal MarkdownEditor::imagePreviewContentHeight(const QTextBlock &block) const {
 }
 
 QRectF MarkdownEditor::imagePreviewArea(const QTextBlock &block) const {
-    const QRectF geo = blockViewportRect(block);
+    QRectF geo = blockViewportRect(block);
+    // QTextDocument's block bounding rect follows the concealed source glyphs
+    // and can therefore be only a couple of pixels tall even though the fixed
+    // paragraph line height reserves the full preview. Use that explicit
+    // height for the custom-painted image surface.
+    const QTextBlockFormat format = block.blockFormat();
+    if (format.lineHeightType() == QTextBlockFormat::FixedHeight)
+        geo.setHeight(qMax(geo.height(), format.lineHeight()));
     const qreal margin = document()->documentMargin() + 12.0;
     return QRectF(margin, geo.top() + 12.0,
                   qMax(qreal(0), viewport()->width() - margin * 2.0),
