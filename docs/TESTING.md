@@ -59,6 +59,8 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] `Tab` walks cells and grows the grid at its edges; columns re-align on each press.
 - [ ] Enter on the last row leaves the table.
 - [ ] Leaving a table re-aligns (prettifies) its columns into a monospace grid.
+- [ ] A table has one rounded grid surface, a stronger header, a separator rail and alternating data-row shading.
+- [ ] Pipes remain visible and directly editable in the source-mode table preview.
 - [ ] **A row that would wrap to a new line does NOT get auto-formatted** (grid no longer breaks). ★
 - [ ] **Tab on the `| --- |` separator row** lands in the first cell of the data row below — creating that row only when the table is still just header + separator (an existing data row is reused, not pushed down). ◆
 

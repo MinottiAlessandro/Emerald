@@ -2703,6 +2703,108 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
     }
 
+    // Pipe tables remain editable plain text, but consecutive rows share one
+    // lightweight grid surface. The source pipes stay visible as useful edit
+    // affordances while these rails make headers, columns and data rows easier
+    // to follow at a glance.
+    {
+        QPainter tablePainter(viewport());
+        tablePainter.setRenderHint(QPainter::Antialiasing);
+        QTextBlock block = firstVisibleTextBlock();
+        while (block.previous().isValid() &&
+               isTableRow(block.previous().text()) &&
+               block.previous().userState() != 1)
+            block = block.previous();
+
+        while (block.isValid()) {
+            if (!block.isVisible() || block.userState() == 1 ||
+                !isTableRow(block.text())) {
+                block = block.next();
+                continue;
+            }
+
+            QList<QTextBlock> rows;
+            QTextBlock after = block;
+            while (after.isValid() && after.isVisible() &&
+                   after.userState() != 1 && isTableRow(after.text())) {
+                rows.append(after);
+                after = after.next();
+            }
+            if (rows.isEmpty()) {
+                block = after;
+                continue;
+            }
+
+            qreal left = viewport()->width();
+            qreal right = 0.0;
+            for (const QTextBlock &row : rows) {
+                const QString text = row.text();
+                const int firstPipe = text.indexOf(QLatin1Char('|'));
+                const int lastPipe = text.lastIndexOf(QLatin1Char('|'));
+                if (firstPipe < 0 || lastPipe <= firstPipe)
+                    continue;
+                QTextCursor firstCursor(row);
+                firstCursor.setPosition(row.position() + firstPipe);
+                QTextCursor lastCursor(row);
+                lastCursor.setPosition(row.position() + lastPipe);
+                left = qMin(left, cursorRect(firstCursor).left() - 5.0);
+                right = qMax(right, cursorRect(lastCursor).right() + 5.0);
+            }
+            const QRectF firstGeo = blockViewportRect(rows.first());
+            const QRectF lastGeo = blockViewportRect(rows.last());
+            QRectF tableRect(left, firstGeo.top(), qMax(qreal(0), right - left),
+                             lastGeo.bottom() - firstGeo.top());
+            if (tableRect.width() <= 0 || !tableRect.intersects(event->rect())) {
+                block = after;
+                continue;
+            }
+
+            QPainterPath tableClip;
+            tableClip.addRoundedRect(tableRect, 5, 5);
+            tablePainter.save();
+            tablePainter.setClipPath(tableClip);
+            tablePainter.fillPath(tableClip, QColor(0x12, 0x1d, 0x18));
+
+            int dataRow = 0;
+            for (int rowIndex = 0; rowIndex < rows.size(); ++rowIndex) {
+                const QTextBlock &row = rows.at(rowIndex);
+                const QRectF geo = blockViewportRect(row);
+                const bool separator = isSeparatorRow(row.text());
+                const bool header = rowIndex + 1 < rows.size() &&
+                                    isSeparatorRow(rows.at(rowIndex + 1).text());
+                const QRectF rowRect(tableRect.left(), geo.top(),
+                                     tableRect.width(), geo.height());
+                if (header) {
+                    tablePainter.fillRect(rowRect, QColor(0x1a, 0x35, 0x27));
+                } else if (!separator && (dataRow++ % 2) == 1) {
+                    tablePainter.fillRect(rowRect, QColor(0x17, 0x29, 0x20));
+                }
+
+                tablePainter.setPen(QPen(QColor(0x32, 0x55, 0x43), 1.0));
+                for (int pos = 0; pos < row.text().size(); ++pos) {
+                    if (row.text().at(pos) != QLatin1Char('|'))
+                        continue;
+                    QTextCursor pipe(row);
+                    pipe.setPosition(row.position() + pos);
+                    const qreal x = cursorRect(pipe).center().x();
+                    tablePainter.drawLine(QPointF(x, geo.top()),
+                                          QPointF(x, geo.bottom()));
+                }
+                if (separator) {
+                    tablePainter.setPen(QPen(QColor(0x3c, 0x6d, 0x52), 1.4));
+                    tablePainter.drawLine(
+                        QPointF(tableRect.left(), geo.center().y()),
+                        QPointF(tableRect.right(), geo.center().y()));
+                }
+            }
+            tablePainter.restore();
+            tablePainter.setPen(QPen(QColor(0x2c, 0x4d, 0x3c), 1.0));
+            tablePainter.setBrush(Qt::NoBrush);
+            tablePainter.drawRoundedRect(tableRect, 5, 5);
+            block = after;
+        }
+    }
+
     // Inline code keeps real monospace text, with a rounded span painted behind
     // it instead of per-glyph square backgrounds. Wrapped spans are split into
     // one rounded segment per visual line.

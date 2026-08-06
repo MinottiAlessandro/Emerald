@@ -102,6 +102,15 @@ void checkListCase(MarkdownEditor &editor, const QString &line,
     editor.resize(250, 220);
 }
 
+QTextCharFormat formatAt(const QTextBlock &block, int position) {
+    if (!block.layout())
+        return {};
+    for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (position >= range.start && position < range.start + range.length)
+            return range.format;
+    return {};
+}
+
 void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
              Qt::KeyboardModifiers modifiers,
              const QString &text = QString()) {
@@ -230,6 +239,25 @@ int main(int argc, char **argv) {
     check(editor.toPlainText() == paddedCodeSource &&
               !editor.document()->isUndoAvailable(),
           QStringLiteral("code-box padding must preserve source and undo history"));
+
+    const QString tableSource = QStringLiteral(
+        "| Name  | Score |\n| :---- | ----: |\n| Ada   |    10 |\n"
+        "| Grace |     9 |\nafter table");
+    editor.setPlainText(tableSource);
+    editor.moveCursor(QTextCursor::End);
+    const QTextBlock tableHeader = editor.document()->findBlockByNumber(0);
+    const QTextBlock tableBody = editor.document()->findBlockByNumber(2);
+    settleLayout(editor, tableBody);
+    const QTextCharFormat headerCell = formatAt(tableHeader, 2);
+    const QTextCharFormat bodyCell = formatAt(tableBody, 2);
+    check(headerCell.fontWeight() > bodyCell.fontWeight(),
+          QStringLiteral("table headers should be visually stronger than data"));
+    check(headerCell.fontStyleHint() == QFont::Monospace &&
+              bodyCell.fontStyleHint() == QFont::Monospace,
+          QStringLiteral("table cells should retain a cross-platform monospace grid"));
+    check(editor.toPlainText() == tableSource &&
+              !editor.document()->isUndoAvailable(),
+          QStringLiteral("table preview must preserve source and undo history"));
 
     // Heading hierarchy affects both glyph size and paragraph rhythm while
     // remaining a presentation-only property of the plain Markdown document.
