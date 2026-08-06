@@ -1,14 +1,18 @@
 #include "MarkdownReadRenderer.h"
 
-#include "core/MascotSeed.h"
 #include "MathRender.h"
+#include "MarkdownReadObjectRenderer.h"
+#include "core/ContentSecurity.h"
+#include "core/MascotSeed.h"
 
+#include <QImageReader>
 #include <QRegularExpression>
 #include <QTextBlockFormat>
 #include <QTextBlockUserData>
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QUrl>
 
 namespace {
 class ReadBlockData final : public QTextBlockUserData {
@@ -55,7 +59,8 @@ int closingMarker(const QString &text, const QString &marker, int from) {
 // preview syntax without passing note content through HTML or loading external
 // resources. Recursive formatting lets emphasis nest inside links/strong text.
 void insertInline(QTextCursor &cursor, const QString &text,
-                  const QTextCharFormat &base) {
+                  const QTextCharFormat &base,
+                  const MarkdownReadRenderer::Options &options) {
     const QColor accent(0x58, 0xd6, 0x91);
     const QColor muted(0x79, 0x9a, 0x88);
     int pos = 0;
@@ -77,7 +82,7 @@ void insertInline(QTextCursor &cursor, const QString &text,
                     f.setForeground(accent);
                     f.setFontUnderline(true);
                 });
-                insertInline(cursor, label, link);
+                insertInline(cursor, label, link, options);
                 pos = end + 2;
                 continue;
             }
@@ -95,7 +100,8 @@ void insertInline(QTextCursor &cursor, const QString &text,
                             f.setFontUnderline(true);
                         });
                     insertInline(cursor,
-                                 text.mid(pos + 1, labelEnd - pos - 1), link);
+                                 text.mid(pos + 1, labelEnd - pos - 1), link,
+                                 options);
                     pos = targetEnd + 1;
                     continue;
                 }
@@ -145,7 +151,8 @@ void insertInline(QTextCursor &cursor, const QString &text,
                     format.setBackground(QColor(0x55, 0x66, 0x22));
                     format.setForeground(QColor(0xe7, 0xf2, 0xc5));
                 }
-                insertInline(cursor, text.mid(pos + 2, end - pos - 2), format);
+                insertInline(cursor, text.mid(pos + 2, end - pos - 2), format,
+                             options);
                 pos = end + 2;
                 continue;
             }
@@ -167,10 +174,12 @@ void insertInline(QTextCursor &cursor, const QString &text,
         if (text.at(pos) == QLatin1Char('$')) {
             const auto math = MathRender::pattern().match(text, pos);
             if (math.hasMatch() && math.capturedStart(0) == pos) {
-                QTextCharFormat formula = base;
-                formula.setForeground(QColor(0x6f, 0xcf, 0xc0));
-                formula.setFontItalic(true);
-                cursor.insertText(math.captured(1), formula);
+                const QTextCharFormat formula =
+                    MarkdownReadObjectRenderer::inlineMathFormat(
+                        options.baseFont, math.captured(1));
+                cursor.insertText(
+                    QString(1, QChar(QChar::ObjectReplacementCharacter)),
+                    formula);
                 pos = math.capturedEnd(0);
                 continue;
             }
@@ -183,7 +192,8 @@ void insertInline(QTextCursor &cursor, const QString &text,
             if (end >= 0) {
                 const QTextCharFormat emphasis =
                     merged(base, [](QTextCharFormat &f) { f.setFontItalic(true); });
-                insertInline(cursor, text.mid(pos + 1, end - pos - 1), emphasis);
+                insertInline(cursor, text.mid(pos + 1, end - pos - 1), emphasis,
+                             options);
                 pos = end + 1;
                 continue;
             }
@@ -228,6 +238,13 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
 
     QTextCursor cursor(target);
     const QStringList lines = source.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    QVector<int> lineStarts;
+    lineStarts.reserve(lines.size());
+    int nextLineStart = 0;
+    for (const QString &line : lines) {
+        lineStarts.append(nextLineStart);
+        nextLineStart += line.size() + 1;
+    }
     const qreal baseSize = options.baseFont.pointSizeF() > 0
                                ? options.baseFont.pointSizeF()
                                : 12.0;
@@ -241,63 +258,103 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     const QRegularExpression headingRe(QStringLiteral("^(#{1,6})\\s+(.*)$"));
     const QRegularExpression fenceRe(
         QStringLiteral("^\\s*(```|~~~)\\s*([^`~]*)$"));
-    const QRegularExpression mathFenceRe(QStringLiteral("^\\s*\\$\\$\\s*$"));
     const QRegularExpression listRe(QStringLiteral(
         "^(\\s*)([-*+]|\\d+[.)])\\s+(?:\\[([ xX])\\]\\s+)?(.*)$"));
     const QRegularExpression ruleRe(
         QStringLiteral("^\\s*([-*_])\\s*(?:\\1\\s*){2,}$"));
     const QRegularExpression tableRe(QStringLiteral("^\\s*\\|.*\\|\\s*$"));
+    const QRegularExpression imageRe(QStringLiteral(
+        "^\\s*!\\[([^]\\n]*)\\]\\((?:<([^>]+)>|([^\\)\\n]+))\\)\\s*$"));
 
     bool firstOutput = true;
-    bool inCode = false;
-    bool inMath = false;
-    int sourceStart = 0;
     for (int sourceBlock = 0; sourceBlock < lines.size(); ++sourceBlock) {
         const QString line = lines.at(sourceBlock);
-        const int lineStart = sourceStart;
-        sourceStart += line.size() + 1;
+        const int lineStart = lineStarts.at(sourceBlock);
+        int sourceEndBlock = sourceBlock;
 
         if (sourceBlock == 0 && MascotSeed::fromLine(line) != 0)
             continue;
 
-        const auto fence = fenceRe.match(line);
-        if (!inMath && fence.hasMatch()) {
-            inCode = !inCode;
-            continue;
-        }
-        if (!inCode && mathFenceRe.match(line).hasMatch()) {
-            inMath = !inMath;
-            continue;
-        }
-
         QTextBlockFormat block = baseBlockFormat(options.lineSpacing);
         QTextCharFormat text = body;
+        QTextCharFormat object;
         QString content = line;
         bool parseInline = true;
+        bool taskItem = false;
+        bool checkedTask = false;
 
-        if (inCode) {
-            block.setLeftMargin(14.0);
-            block.setRightMargin(14.0);
-            block.setBackground(QColor(0x12, 0x1d, 0x18));
-            block.setBottomMargin(0.0);
-            text.setFont(mono);
-            text.setForeground(QColor(0xc7, 0xdd, 0xd1));
-            parseInline = false;
-        } else if (inMath) {
-            block.setAlignment(Qt::AlignCenter);
-            block.setLeftMargin(18.0);
-            block.setRightMargin(18.0);
-            text.setForeground(QColor(0x6f, 0xcf, 0xc0));
-            text.setFontItalic(true);
-            parseInline = false;
-        } else if (const auto displayMath = MathRender::displayPattern().match(line);
-                   displayMath.hasMatch()) {
-            content = displayMath.captured(1);
-            block.setAlignment(Qt::AlignCenter);
+        if (const auto fence = fenceRe.match(line); fence.hasMatch()) {
+            const QString marker = fence.captured(1);
+            QStringList codeLines;
+            int closingBlock = lines.size();
+            for (int blockNumber = sourceBlock + 1;
+                 blockNumber < lines.size(); ++blockNumber) {
+                if (lines.at(blockNumber).trimmed().startsWith(marker)) {
+                    closingBlock = blockNumber;
+                    break;
+                }
+                codeLines.append(lines.at(blockNumber));
+            }
+            sourceEndBlock = closingBlock < lines.size()
+                                 ? closingBlock
+                                 : lines.size() - 1;
+            object = MarkdownReadObjectRenderer::codeBlockFormat(
+                options.baseFont, fence.captured(2),
+                codeLines.join(QLatin1Char('\n')), options.fallbackWidth);
             block.setTopMargin(baseSize * 0.35);
+            block.setBottomMargin(baseSize * 0.55);
+            block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
+            parseInline = false;
+        } else if (const auto displayMath =
+                       MathRender::displayPattern().match(line);
+                   displayMath.hasMatch()) {
+            object = MarkdownReadObjectRenderer::displayMathFormat(
+                options.baseFont, displayMath.captured(1), options.fallbackWidth);
+            block.setTopMargin(baseSize * 0.3);
+            block.setBottomMargin(baseSize * 0.3);
+            block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
+            parseInline = false;
+        } else if (MathRender::opensBlock(line)) {
+            QStringList formulaParts{MathRender::bodyAfterOpen(line)};
+            for (int blockNumber = sourceBlock + 1;
+                 blockNumber < lines.size(); ++blockNumber) {
+                sourceEndBlock = blockNumber;
+                const QString formulaLine = lines.at(blockNumber);
+                if (formulaLine.contains(QStringLiteral("$$"))) {
+                    formulaParts.append(
+                        MathRender::bodyBeforeClose(formulaLine));
+                    break;
+                }
+                formulaParts.append(formulaLine);
+            }
+            object = MarkdownReadObjectRenderer::displayMathFormat(
+                options.baseFont,
+                formulaParts.join(QLatin1Char(' ')).simplified(),
+                options.fallbackWidth);
+            block.setTopMargin(baseSize * 0.3);
+            block.setBottomMargin(baseSize * 0.3);
+            block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
+            parseInline = false;
+        } else if (const auto image = imageRe.match(line); image.hasMatch()) {
+            const QString rawTarget = !image.captured(2).isEmpty()
+                                          ? image.captured(2)
+                                          : image.captured(3);
+            const QString decodedTarget =
+                QUrl::fromPercentEncoding(rawTarget.toUtf8());
+            const QString path = ContentSecurity::resolveLocalImage(
+                decodedTarget, options.imageBasePath, options.vaultRootPath);
+            QSize sourceSize;
+            if (!path.isEmpty()) {
+                QImageReader reader(path);
+                reader.setAutoTransform(true);
+                sourceSize = reader.size();
+            }
+            object = MarkdownReadObjectRenderer::imageFormat(
+                options.baseFont, path, decodedTarget, image.captured(1),
+                sourceSize, options.fallbackWidth, options.maxImageHeight);
+            block.setTopMargin(baseSize * 0.25);
             block.setBottomMargin(baseSize * 0.35);
-            text.setForeground(QColor(0x6f, 0xcf, 0xc0));
-            text.setFontItalic(true);
+            block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
             parseInline = false;
         } else if (const auto heading = headingRe.match(line);
                    heading.hasMatch()) {
@@ -338,22 +395,30 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                     columns += ch == QLatin1Char('\t') ? 2 : 1;
                 const int depth = (columns + 1) / 2;
                 QString marker = list.captured(2);
-                if (!list.captured(3).isNull()) {
-                    marker = list.captured(3).trimmed().isEmpty()
-                                 ? QString(QChar(0x2610))
-                                 : QString(QChar(0x2611));
+                if (list.capturedStart(3) >= 0) {
+                    taskItem = true;
+                    checkedTask =
+                        !list.captured(3).trimmed().isEmpty();
+                    content = list.captured(4);
+                    if (checkedTask) {
+                        text.setFontStrikeOut(true);
+                        text.setForeground(QColor(0x78, 0x93, 0x84));
+                    }
                 } else if (!marker.at(0).isDigit()) {
                     static const QChar bullets[] = {QChar(0x2022), QChar(0x25E6),
                                                     QChar(0x25AA)};
                     marker = QString(bullets[depth % 3]);
                 }
-                content = marker + QLatin1Char(' ') + list.captured(4);
+                if (!taskItem)
+                    content = marker + QLatin1Char(' ') + list.captured(4);
                 block.setLeftMargin(18.0 + depth * 22.0);
                 block.setTextIndent(-14.0);
             } else if (ruleRe.match(content).hasMatch()) {
-                content = QString(28, QChar(0x2500));
-                text.setForeground(QColor(0x48, 0x70, 0x5b));
-                block.setAlignment(Qt::AlignCenter);
+                object = MarkdownReadObjectRenderer::ruleFormat(
+                    options.baseFont, options.fallbackWidth);
+                block.setTopMargin(baseSize * 0.15);
+                block.setBottomMargin(baseSize * 0.15);
+                block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
                 parseInline = false;
             } else if (tableRe.match(content).hasMatch()) {
                 text.setFont(mono);
@@ -371,11 +436,26 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
             cursor.setBlockFormat(block);
         firstOutput = false;
 
-        if (parseInline)
-            insertInline(cursor, content, text);
-        else
+        if (object.objectType() == MarkdownReadObjectRenderer::ObjectType) {
+            cursor.insertText(
+                QString(1, QChar(QChar::ObjectReplacementCharacter)), object);
+        } else if (parseInline) {
+            if (taskItem) {
+                cursor.insertText(
+                    QString(1, QChar(QChar::ObjectReplacementCharacter)),
+                    MarkdownReadObjectRenderer::checkboxFormat(
+                        options.baseFont, checkedTask));
+                cursor.insertText(QStringLiteral(" "), text);
+            }
+            insertInline(cursor, content, text, options);
+        } else {
             cursor.insertText(content, text);
-        attachSourceData(cursor.block(), sourceBlock, lineStart, line.size());
+        }
+        const int sourceEnd = lineStarts.at(sourceEndBlock) +
+                              lines.at(sourceEndBlock).size();
+        attachSourceData(cursor.block(), sourceBlock, lineStart,
+                         sourceEnd - lineStart);
+        sourceBlock = sourceEndBlock;
     }
 
     // A note containing only a mascot header still needs a valid visible block.

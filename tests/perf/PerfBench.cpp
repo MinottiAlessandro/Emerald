@@ -591,6 +591,13 @@ int main(int argc, char **argv) {
                   app.processEvents();
               }),
               QStringLiteral("ms"));
+    addMetric(metrics, QStringLiteral("editor_render_read_viewport"),
+              timeMs([&] {
+                  editorImage.fill(Qt::transparent);
+                  QPainter p(&editorImage);
+                  editor.render(&p);
+              }),
+              QStringLiteral("ms"));
     editor.setReadMode(false);
     app.processEvents();
     addCurrentRssMetric(QStringLiteral("rss_after_editor_current"));

@@ -1,10 +1,12 @@
 #include "ui/MarkdownEditor.h"
+#include "ui/MarkdownReadObjectRenderer.h"
 #include "ui/MathRender.h"
 
 #include "core/Perf.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
+#include <QClipboard>
 #include <QEventLoop>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -13,6 +15,7 @@
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextDocument>
+#include <QTextFragment>
 #include <QTextLayout>
 #include <QTextStream>
 #include <QTemporaryDir>
@@ -539,7 +542,10 @@ int main(int argc, char **argv) {
         QStringLiteral("A **bold** paragraph with [[Target|wiki label]] and "
                        "[site](https://example.com), plus $x^2$."),
         QStringLiteral("> A quoted paragraph"),
-        QStringLiteral("- A list item"), QStringLiteral("```cpp"),
+        QStringLiteral("- A list item"),
+        QStringLiteral("- [x] A completed task"), QStringLiteral("---"),
+        QStringLiteral("![Wide preview](wide.png)"),
+        QStringLiteral("```cpp"),
         QStringLiteral("const int answer = 42;"), QStringLiteral("```"),
         QStringLiteral("$$ E = mc^2 $$")};
     for (int i = 0; i < 80; ++i)
@@ -566,9 +572,6 @@ int main(int argc, char **argv) {
     check(renderedReading.contains(QStringLiteral("Rendered heading")) &&
               renderedReading.contains(QStringLiteral("bold")) &&
               renderedReading.contains(QStringLiteral("wiki label")) &&
-              renderedReading.contains(QStringLiteral("x^2")) &&
-              renderedReading.contains(QStringLiteral("const int answer")) &&
-              renderedReading.contains(QStringLiteral("E = mc^2")) &&
               !renderedReading.contains(QStringLiteral("# Rendered")) &&
               !renderedReading.contains(QStringLiteral("**bold**")) &&
               !renderedReading.contains(QStringLiteral("[[Target")) &&
@@ -586,6 +589,122 @@ int main(int argc, char **argv) {
                   editor.font().pointSizeF(),
           QStringLiteral("the rendered document should retain heading visual "
                          "hierarchy without source markers"));
+
+    bool sawImageObject = false;
+    bool sawInlineMathObject = false;
+    bool sawDisplayMathObject = false;
+    bool sawRuleObject = false;
+    bool sawCheckboxObject = false;
+    bool sawCodeObject = false;
+    QTextBlock imageObjectBlock;
+    QTextBlock codeObjectBlock;
+    QTextCharFormat codeObjectFormat;
+    for (QTextBlock block = editor.document()->firstBlock(); block.isValid();
+         block = block.next()) {
+        for (auto fragmentIt = block.begin(); !fragmentIt.atEnd(); ++fragmentIt) {
+            const QTextFragment fragment = fragmentIt.fragment();
+            if (!fragment.isValid())
+                continue;
+            const QTextCharFormat format = fragment.charFormat();
+            switch (MarkdownReadObjectRenderer::kind(format)) {
+            case MarkdownReadObjectRenderer::Kind::Image:
+                sawImageObject = true;
+                imageObjectBlock = block;
+                break;
+            case MarkdownReadObjectRenderer::Kind::InlineMath:
+                sawInlineMathObject = true;
+                break;
+            case MarkdownReadObjectRenderer::Kind::DisplayMath:
+                sawDisplayMathObject = true;
+                break;
+            case MarkdownReadObjectRenderer::Kind::Rule:
+                sawRuleObject = true;
+                break;
+            case MarkdownReadObjectRenderer::Kind::Checkbox:
+                sawCheckboxObject = true;
+                break;
+            case MarkdownReadObjectRenderer::Kind::CodeBlock:
+                sawCodeObject = true;
+                codeObjectBlock = block;
+                codeObjectFormat = format;
+                break;
+            case MarkdownReadObjectRenderer::Kind::None:
+                break;
+            }
+        }
+    }
+    check(sawImageObject && sawInlineMathObject && sawDisplayMathObject &&
+              sawRuleObject && sawCheckboxObject && sawCodeObject,
+          QStringLiteral("Read Mode should embed native image, math, rule, "
+                         "checkbox, and code objects"));
+    check(MarkdownReadObjectRenderer::codeText(codeObjectFormat) ==
+              QStringLiteral("const int answer = 42;"),
+          QStringLiteral("the code-card object should retain exact copyable "
+                         "source without its Markdown fences"));
+    if (imageObjectBlock.isValid()) {
+        settleLayout(editor, imageObjectBlock);
+        check(editor.document()->documentLayout()
+                      ->blockBoundingRect(imageObjectBlock)
+                      .height() > 70.0,
+              QStringLiteral("a Read Mode image object should reserve a "
+                             "metadata-derived visual area"));
+    }
+
+    // Force a real widget render so each registered QTextObjectInterface paint
+    // path runs under the offscreen regression test.
+    const QSizeF readDocumentSize = editor.document()->size();
+    QImage readModeRender(qMax(1, qCeil(readDocumentSize.width())),
+                          qMax(1, qCeil(readDocumentSize.height())),
+                          QImage::Format_ARGB32_Premultiplied);
+    readModeRender.fill(Qt::transparent);
+    {
+        QPainter painter(&readModeRender);
+        editor.document()->drawContents(&painter);
+    }
+    bool paintedLocalImage = false;
+    const QRgb expectedImagePixel = QColor(0x2b, 0xbf, 0x74).rgba();
+    for (int y = 0; y < readModeRender.height() && !paintedLocalImage; ++y) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(
+            readModeRender.constScanLine(y));
+        for (int x = 0; x < readModeRender.width(); ++x) {
+            if (line[x] == expectedImagePixel) {
+                paintedLocalImage = true;
+                break;
+            }
+        }
+    }
+    check(!readModeRender.isNull() && paintedLocalImage,
+          QStringLiteral("native Read Mode objects should paint through the Qt "
+                         "document layout and load vault-local image content"));
+
+    if (codeObjectBlock.isValid()) {
+        settleLayout(editor, codeObjectBlock);
+        const QRectF documentCodeRect = editor.document()->documentLayout()
+                                            ->blockBoundingRect(codeObjectBlock);
+        editor.verticalScrollBar()->setValue(qRound(documentCodeRect.top()));
+        QApplication::processEvents();
+        QTextLayout *layout = codeObjectBlock.layout();
+        if (layout && layout->lineCount() > 0) {
+            const QTextLine line = layout->lineAt(0);
+            QTextCursor origin(codeObjectBlock);
+            const qreal xOffset =
+                editor.cursorRect(origin).left() - line.cursorToX(0);
+            const QRectF objectRect(
+                xOffset + line.cursorToX(0),
+                documentCodeRect.top() - editor.verticalScrollBar()->value() +
+                    line.y(),
+                qAbs(line.cursorToX(1) - line.cursorToX(0)), line.height());
+            QApplication::clipboard()->clear();
+            clickEditor(editor,
+                        MarkdownReadObjectRenderer::codeCopyButtonRect(objectRect)
+                            .center()
+                            .toPoint());
+            check(QApplication::clipboard()->text() ==
+                      QStringLiteral("const int answer = 42;"),
+                  QStringLiteral("the Read Mode code-card Copy control should "
+                                 "copy the unfenced source"));
+        }
+    }
     check(editor.toPlainText() == readingSource &&
               editor.sourceDocument()->toPlainText() == readingSource,
           QStringLiteral("Read Mode presentation must not replace the Markdown "

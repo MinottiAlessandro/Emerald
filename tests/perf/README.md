@@ -67,6 +67,8 @@ Metrics:
 - `editor_render_viewport`: render the editor viewport once.
 - `editor_build_read_document`: parse the same large Markdown note into the
   separate presentation-only Read Mode document and install it in the editor.
+- `editor_render_read_viewport`: render one viewport of the separate Read Mode
+  document, including any native math, code, task, rule, and image objects.
 - `math_measure_and_paint`: repeated formula measure/paint loop.
 - `mascot_render_unique_500`: render 500 different deterministic mascot pixmaps.
 - `mascot_render_repeated_500`: render the same mascot 500 times to measure cache reuse.

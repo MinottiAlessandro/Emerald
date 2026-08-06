@@ -1,6 +1,7 @@
 #include "MarkdownEditor.h"
 
 #include "MarkdownHighlighter.h"
+#include "MarkdownReadObjectRenderer.h"
 #include "MarkdownReadRenderer.h"
 #include "MathRender.h"
 #include "core/ContentSecurity.h"
@@ -300,6 +301,9 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     m_sourceDocument = document();
     m_sourceDocument->setParent(m_documentOwner);
     m_readDocument = new QTextDocument(m_documentOwner);
+    m_readObjectRenderer = new MarkdownReadObjectRenderer(this);
+    m_readDocument->documentLayout()->registerHandler(
+        MarkdownReadObjectRenderer::ObjectType, m_readObjectRenderer);
     m_sourceCursor = QTextCursor(m_sourceDocument);
     // Keep the existing reading-friendly overscroll: one extra viewport lets
     // the final line rise to the top. QTextEdit's range is pixel-addressable,
@@ -528,6 +532,9 @@ void MarkdownEditor::setImagePaths(const QString &basePath,
     m_imageRootPath = vaultRoot;
     m_imageSizeCache.clear();
     m_imageSizeCacheOrder.clear();
+    // MainWindow updates paths immediately before setPlainText when opening a
+    // note; that single source replacement rebuilds Read Mode with the new
+    // paths. Avoid parsing the old note once here and the new note again there.
     if (!m_readMode)
         applyImagePreviewFormats();
     viewport()->update();
@@ -1049,10 +1056,63 @@ void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
     MarkdownReadRenderer::Options options;
     options.baseFont = font();
     options.lineSpacing = m_lineSpacing;
+    options.imageBasePath = m_imageBasePath;
+    options.vaultRootPath = m_imageRootPath;
+    options.fallbackWidth = qMax(80, viewport()->width());
+    options.maxImageHeight =
+        qBound(qreal(120), viewport()->height() * 0.62, qreal(520));
     MarkdownReadRenderer::render(m_readDocument,
                                  m_sourceDocument->toPlainText(), options);
     if (document() == m_readDocument)
         restoreScrollRatio(scrollRatio);
+}
+
+QTextCharFormat MarkdownEditor::readObjectFormat(
+    const QTextBlock &block) const {
+    if (!block.isValid() || block.text().isEmpty() ||
+        block.text().at(0) != QChar::ObjectReplacementCharacter)
+        return {};
+    QTextCursor cursor(block);
+    cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+    return cursor.charFormat();
+}
+
+QRectF MarkdownEditor::readObjectRect(const QTextBlock &block) const {
+    if (!block.isValid() || !block.layout() ||
+        block.layout()->lineCount() == 0)
+        return {};
+    const QTextLine line = block.layout()->lineAt(0);
+    QTextCursor origin(block);
+    const qreal xOffset = cursorRect(origin).left() - line.cursorToX(0);
+    const qreal x1 = xOffset + line.cursorToX(0);
+    const qreal x2 = xOffset + line.cursorToX(1);
+    return QRectF(qMin(x1, x2), blockViewportRect(block).top() + line.y(),
+                  qAbs(x2 - x1), line.height());
+}
+
+bool MarkdownEditor::isOverReadCodeCopyButton(const QPoint &pos) const {
+    if (!m_readMode)
+        return false;
+    const QTextBlock block = cursorForPosition(pos).block();
+    const QTextCharFormat format = readObjectFormat(block);
+    if (MarkdownReadObjectRenderer::kind(format) !=
+        MarkdownReadObjectRenderer::Kind::CodeBlock)
+        return false;
+    const QRectF objectRect = readObjectRect(block);
+    return objectRect.isValid() &&
+           MarkdownReadObjectRenderer::codeCopyButtonRect(objectRect)
+               .contains(pos);
+}
+
+bool MarkdownEditor::copyReadCodeBlockAt(const QPoint &pos) {
+    if (!isOverReadCodeCopyButton(pos))
+        return false;
+    const QTextCharFormat format =
+        readObjectFormat(cursorForPosition(pos).block());
+    QApplication::clipboard()->setText(
+        MarkdownReadObjectRenderer::codeText(format));
+    emit noticeRequested(tr("Code copied"));
+    return true;
 }
 
 void MarkdownEditor::updateActiveHighlight() {
@@ -1560,6 +1620,9 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         emit navigateForward();
         return;
     }
+    if (m_readMode && event->button() == Qt::LeftButton &&
+        copyReadCodeBlockAt(event->pos()))
+        return;
     // A click in the left margin next to a heading folds/unfolds its section.
     if (event->button() == Qt::LeftButton && isOverFoldControl(event->pos())) {
         toggleFoldAt(cursorForPosition(event->pos()).block());
@@ -1592,6 +1655,7 @@ void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
     // heading fold control, and a code block's copy button.
     const QPoint p = event->pos();
     const bool clickable = followsLink(p, event->modifiers()) ||
+                           (m_readMode && isOverReadCodeCopyButton(p)) ||
                            (!m_readMode && taskCheckboxBlockAt(p).isValid()) ||
                            isOverFoldControl(p) || isOverCopyButton(p);
     viewport()->setCursor(clickable ? Qt::PointingHandCursor : Qt::IBeamCursor);
@@ -2881,8 +2945,16 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     const qreal anchorOffset = blockViewportRect(anchor).top();
 
     QTextEdit::resizeEvent(event);
-    if (!m_readMode)
+    if (!m_readMode) {
         applyImagePreviewFormats(); // source media rows depend on viewport width
+    } else if (!m_readResizeQueued) {
+        m_readResizeQueued = true;
+        QTimer::singleShot(0, this, [this] {
+            m_readResizeQueued = false;
+            if (m_readMode)
+                rebuildReadDocument(currentScrollRatio());
+        });
+    }
 
     if (!anchor.isValid() || anchor.blockNumber() <= 0 ||
         !document()->documentLayout())

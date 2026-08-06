@@ -10,6 +10,7 @@
 #include <functional>
 
 class MarkdownHighlighter;
+class MarkdownReadObjectRenderer;
 class QCompleter;
 class QFocusEvent;
 class QMimeData;
@@ -124,6 +125,10 @@ private:
     void rebuildReadDocument(qreal scrollRatio = -1.0);
     qreal currentScrollRatio() const;
     void restoreScrollRatio(qreal ratio);
+    QTextCharFormat readObjectFormat(const QTextBlock &block) const;
+    QRectF readObjectRect(const QTextBlock &block) const;
+    bool isOverReadCodeCopyButton(const QPoint &pos) const;
+    bool copyReadCodeBlockAt(const QPoint &pos);
     QTextBlock firstVisibleTextBlock() const;
     QRectF blockViewportRect(const QTextBlock &block) const;
     QList<QRectF> textRangeViewportRects(const QTextBlock &block, int start,
@@ -274,8 +279,10 @@ private:
     QObject *m_documentOwner = nullptr;
     QTextDocument *m_sourceDocument = nullptr;
     QTextDocument *m_readDocument = nullptr;
+    MarkdownReadObjectRenderer *m_readObjectRenderer = nullptr;
     QTextCursor m_sourceCursor;
     bool m_switchingDocuments = false;
+    bool m_readResizeQueued = false;
     QCompleter *m_completer = nullptr;
     QStringListModel *m_completionModel = nullptr;
 

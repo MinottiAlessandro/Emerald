@@ -13,6 +13,10 @@ public:
     struct Options {
         QFont baseFont;
         int lineSpacing = 100;
+        QString imageBasePath;
+        QString vaultRootPath;
+        qreal fallbackWidth = 720.0;
+        qreal maxImageHeight = 520.0;
     };
 
     static void render(QTextDocument *target, const QString &source,
