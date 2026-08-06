@@ -57,7 +57,7 @@ const QRegularExpression &mdLinkRe() {
 // alphabetical order, keeping the most convenient keys spatially grouped.
 constexpr auto QuickJumpKeys = "QWERTYUIOPASDFGHJKLZXCVBNM";
 constexpr int QuickJumpKeyCount = 26;
-constexpr int QuickJumpHoldMs = 250;
+constexpr int QuickJumpHoldMs = 100;
 
 QString quickJumpHint(int index, int width) {
     QString hint(width, QLatin1Char('Q'));
