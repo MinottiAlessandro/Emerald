@@ -149,6 +149,33 @@ int main(int argc, char **argv) {
     checkListCase(editor, QStringLiteral("    - [ ] Checklist item ") + tail, 10,
                   QStringLiteral("nested rendered checklist"), true);
 
+    // Source indentation is normalized into stable visual nesting steps. The
+    // marker width remains font-shaped, so ordered and task markers can differ
+    // without disturbing the content edge or wrapped continuation lines.
+    const QString listGroup = QStringLiteral(
+        "- top level\n  - nested level\n    12. deeper ordered item\n"
+        "    - [ ] deeper task item\nafter list");
+    editor.setPlainText(listGroup);
+    const QTextBlock listTop = editor.document()->findBlockByNumber(0);
+    const QTextBlock listNested = editor.document()->findBlockByNumber(1);
+    const QTextBlock listDeep = editor.document()->findBlockByNumber(2);
+    const QTextBlock listTask = editor.document()->findBlockByNumber(3);
+    const QTextBlock listAfter = editor.document()->findBlockByNumber(4);
+    settleLayout(editor, listTask);
+    const qreal firstNestStep = listNested.blockFormat().leftMargin() -
+                                listTop.blockFormat().leftMargin();
+    const qreal secondNestStep = listDeep.blockFormat().leftMargin() -
+                                 listNested.blockFormat().leftMargin();
+    check(firstNestStep > 0.0 && secondNestStep > 0.0,
+          QStringLiteral("nested list levels should move progressively inward"));
+    check(listTop.blockFormat().topMargin() > 0.0 &&
+              qFuzzyIsNull(listNested.blockFormat().topMargin()) &&
+              listTask.blockFormat().bottomMargin() >
+                  listAfter.blockFormat().bottomMargin(),
+          QStringLiteral("list group spacing should occur only at its edges"));
+    check(editor.toPlainText() == listGroup,
+          QStringLiteral("normalized list layout must preserve source indentation"));
+
     const QString paragraph = QStringLiteral(
         "An ordinary paragraph also contains enough words to wrap across "
         "several visual lines without receiving a hanging indent.");
@@ -272,6 +299,24 @@ int main(int argc, char **argv) {
     editor.undo();
     check(editor.toPlainText() == undoSource,
           QStringLiteral("one undo should revert one source edit"));
+
+    editor.setPlainText(QStringLiteral("item"));
+    editor.moveCursor(QTextCursor::Start);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Minus, Qt::NoModifier,
+            QStringLiteral("-"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier,
+            QStringLiteral(" "));
+    QApplication::processEvents();
+    check(editor.toPlainText() == QStringLiteral("- item"),
+          QStringLiteral("typing a marker should create a list item"));
+    editor.undo();
+    check(editor.toPlainText() == QStringLiteral("item"),
+          QStringLiteral("one undo should remove a typed list marker despite "
+                         "visual layout changes"));
+    editor.redo();
+    check(editor.toPlainText() == QStringLiteral("- item"),
+          QStringLiteral("one redo should restore source while skipping "
+                         "visual-only layout commands"));
 
     // Read Mode removes the caret, rejects editing keys, and turns plain arrow
     // navigation into viewport scrolling without relocating the text cursor.

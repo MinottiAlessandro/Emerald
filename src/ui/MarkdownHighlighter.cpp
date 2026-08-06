@@ -881,6 +881,14 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     const auto q = m_reQuote.match(text);
     if (q.hasMatch()) {
         markup(0, q.capturedLength(1), consumed, reveal);
+        if (!reveal) {
+            // Preserve the source marker's advance while hiding its glyphs.
+            // A stable prefix keeps the quote's hanging indent unchanged when
+            // the caret enters or leaves the line.
+            QTextCharFormat hiddenMarker;
+            hiddenMarker.setForeground(QColor(0, 0, 0, 0));
+            setFormat(0, q.capturedLength(1), hiddenMarker);
+        }
         setFormat(q.capturedStart(2), q.capturedLength(2), m_quote);
     }
 
@@ -904,12 +912,11 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
             // them full width to reserve the box's space.
             QTextCharFormat space;
             space.setForeground(QColor(0, 0, 0, 0)); // full width, no glyph
-            const QTextCharFormat hide = conceal();
             for (int i = 0; i < markerEnd && i < text.size(); ++i) {
-                const QChar ch = text.at(i);
-                const bool blank =
-                    ch == QLatin1Char(' ') || ch == QLatin1Char('\t');
-                setFormat(i, 1, blank ? space : hide);
+                // Keep the whole raw marker at its natural width so entering
+                // the line never changes wrapping or creates a new paragraph
+                // format. The editor paints one compact checkbox over it.
+                setFormat(i, 1, space);
             }
         }
         for (int i = 0; i < markerEnd && i < consumed.size(); ++i)

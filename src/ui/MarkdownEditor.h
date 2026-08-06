@@ -25,6 +25,13 @@ class MarkdownEditor : public QTextEdit {
 public:
     explicit MarkdownEditor(QWidget *parent = nullptr);
 
+    // Replace the Markdown source and finish all presentation-only paragraph
+    // formatting before exposing the new document to undo/redo. QTextEdit's
+    // reset clears source history, so visual margins must not reintroduce it.
+    void setPlainText(const QString &text);
+    void undo();
+    void redo();
+
     // The note titles offered by [[ autocomplete. Call when the vault changes.
     void setCompletions(const QStringList &titles);
 
@@ -106,6 +113,7 @@ private:
     QTextBlock firstVisibleTextBlock() const;
     QRectF blockViewportRect(const QTextBlock &block) const;
     void applyVisualBlockFormats(int position = 0, int charsChanged = -1);
+    void scheduleVisualBlockFormats(int position, int charsChanged);
     void smoothScrollBy(qreal pixels, int durationMs = 140);
     void stopSmoothScroll();
     QString linkAt(const QPoint &pos) const;
@@ -260,6 +268,9 @@ private:
     bool m_prettifying = false;  // guard against re-entrant table reformatting
     bool m_adjustingScroll = false; // guard the over-scroll range extension
     bool m_applyingVisualBlockFormats = false;
+    bool m_visualFormatQueued = false;
+    int m_pendingVisualFormatStart = -1;
+    int m_pendingVisualFormatEnd = -1;
     bool m_readMode = false;        // navigation-only, fully rendered document
     int m_editCursorWidth = 1;      // restored when leaving Read Mode
     int m_lineSpacing = 100;     // row spacing, percent of natural line height

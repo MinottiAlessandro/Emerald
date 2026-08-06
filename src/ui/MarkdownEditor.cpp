@@ -20,6 +20,7 @@
 #include <QFontMetricsF>
 #include <QImageReader>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -208,13 +209,28 @@ QStringList imageFilePathsFromMimeData(const QMimeData *mime) {
     return paths;
 }
 
-int listContentStart(const QString &text) {
+struct ListPrefix {
+    int contentStart = -1;
+    int markerStart = -1;
+    int depth = 0;
+
+    bool valid() const { return contentStart >= 0; }
+};
+
+ListPrefix listPrefix(const QString &text) {
     // Keep this syntax in step with continueList(): indentation, a bullet or
     // ordinal, and an optional task marker all belong to the hanging prefix.
     static const QRegularExpression re(QStringLiteral(
-        "^\\s*(?:[-*+]|\\d+[.)])\\s+(?:\\[[ xX]\\]\\s+)?"));
+        "^(\\s*)(?:[-*+]|\\d+[.)])\\s+(?:\\[[ xX]\\]\\s+)?"));
     const auto match = re.match(text);
-    return match.hasMatch() ? match.capturedEnd() : -1;
+    if (!match.hasMatch())
+        return {};
+
+    int columns = 0;
+    for (const QChar ch : match.captured(1))
+        columns += ch == QLatin1Char('\t') ? 2 : 1;
+    return {int(match.capturedEnd()), int(match.capturedEnd(1)),
+            (columns + 1) / 2};
 }
 
 struct QuotePrefix {
@@ -383,7 +399,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     connect(document(), &QTextDocument::contentsChange, this,
             [this](int position, int charsRemoved, int charsAdded) {
                 Q_UNUSED(charsRemoved);
-                applyVisualBlockFormats(position, qMax(1, charsAdded));
+                scheduleVisualBlockFormats(position, qMax(1, charsAdded));
             });
 
     m_completionModel = new QStringListModel(this);
@@ -395,6 +411,34 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     m_completer->popup()->setObjectName(QStringLiteral("completer"));
     connect(m_completer, qOverload<const QString &>(&QCompleter::activated), this,
             &MarkdownEditor::insertCompletion);
+}
+
+void MarkdownEditor::setPlainText(const QString &text) {
+    QTextEdit::setPlainText(text);
+    // A document replacement intentionally starts a fresh undo history. Finish
+    // the derived block layout synchronously, then remove any paragraph-format
+    // command Qt recorded after its own reset.
+    applyVisualBlockFormats();
+    document()->clearUndoRedoStacks();
+    document()->setModified(false);
+}
+
+void MarkdownEditor::undo() {
+    const QString sourceBefore = toPlainText();
+    while (document()->isUndoAvailable()) {
+        QTextEdit::undo();
+        if (toPlainText() != sourceBefore)
+            break;
+    }
+}
+
+void MarkdownEditor::redo() {
+    const QString sourceBefore = toPlainText();
+    while (document()->isRedoAvailable()) {
+        QTextEdit::redo();
+        if (toPlainText() != sourceBefore)
+            break;
+    }
 }
 
 void MarkdownEditor::setCompletions(const QStringList &titles) {
@@ -427,6 +471,29 @@ void MarkdownEditor::applyLineSpacing() {
     applyVisualBlockFormats();
 }
 
+void MarkdownEditor::scheduleVisualBlockFormats(int position, int charsChanged) {
+    const int start = qMax(0, position);
+    const int end = start + qMax(1, charsChanged);
+    m_pendingVisualFormatStart = m_pendingVisualFormatStart < 0
+                                     ? start
+                                     : qMin(m_pendingVisualFormatStart, start);
+    m_pendingVisualFormatEnd = qMax(m_pendingVisualFormatEnd, end);
+    if (m_visualFormatQueued)
+        return;
+
+    m_visualFormatQueued = true;
+    QTimer::singleShot(0, this, [this] {
+        m_visualFormatQueued = false;
+        const int pendingStart = m_pendingVisualFormatStart;
+        const int pendingEnd = m_pendingVisualFormatEnd;
+        m_pendingVisualFormatStart = -1;
+        m_pendingVisualFormatEnd = -1;
+        if (pendingStart >= 0)
+            applyVisualBlockFormats(pendingStart,
+                                    qMax(1, pendingEnd - pendingStart));
+    });
+}
+
 void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     if (m_applyingVisualBlockFormats || !document())
         return;
@@ -436,12 +503,16 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                            : document()->findBlock(qMax(0, position));
     if (!first.isValid())
         return;
+    if (charsChanged >= 0 && first.previous().isValid())
+        first = first.previous(); // list/quote group edge spacing is contextual
     const int endPosition =
         charsChanged < 0
             ? qMax(0, document()->characterCount() - 1)
             : qMin(qMax(0, document()->characterCount() - 1),
                    position + qMax(1, charsChanged));
-    const QTextBlock last = document()->findBlock(endPosition);
+    QTextBlock last = document()->findBlock(endPosition);
+    if (charsChanged >= 0 && last.next().isValid())
+        last = last.next();
 
     static const QRegularExpression fenceRe(
         QStringLiteral("^\\s*(```|~~~)"));
@@ -462,6 +533,8 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     }
 
     m_applyingVisualBlockFormats = true;
+    QTextCursor formatCursor = textCursor();
+    bool formatEditOpen = false;
     const qreal extra = QFontMetricsF(font()).lineSpacing() *
                         (m_lineSpacing - 100) / 100.0;
     const qreal bodyLineHeight = QFontMetricsF(font()).lineSpacing();
@@ -482,10 +555,14 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
 
         const QuotePrefix quote =
             insideFence ? QuotePrefix{} : quotePrefix(block.text());
+        const ListPrefix list = insideFence || quote.depth > 0
+                                    ? ListPrefix{}
+                                    : listPrefix(block.text());
         const int contentStart =
             quote.depth > 0 ? quote.contentStart
-                            : insideFence ? -1 : listContentStart(block.text());
+                            : list.contentStart;
         qreal prefixWidth = 0.0;
+        qreal leadingWidth = 0.0;
         if (contentStart > 0) {
             // MarkdownHighlighter changes the advance of concealed markers
             // (notably the custom-painted task checkbox). Measure the prefix
@@ -501,6 +578,9 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                     contentStart <= firstEnd) {
                     prefixWidth = firstLine.cursorToX(contentStart) -
                                   firstLine.x();
+                    if (list.valid() && list.markerStart > 0)
+                        leadingWidth = firstLine.cursorToX(list.markerStart) -
+                                       firstLine.x();
                 }
             }
             if (prefixWidth <= 0.0 || prefixWidth >= available - 1.0)
@@ -511,8 +591,12 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const int level = insideFence ? 0 : headingLevel(block.text());
         const HeadingSpacing spacing = headingSpacing(qMax(1, level));
         const qreal quoteIndent = bodyLineHeight * 1.18;
-        const qreal leftMargin = quote.depth > 0 ? quote.depth * quoteIndent
-                                                 : prefixWidth;
+        const qreal listIndent = bodyLineHeight * 1.05;
+        const qreal markerWidth = qMax(qreal(0), prefixWidth - leadingWidth);
+        const qreal leftMargin =
+            quote.depth > 0
+                ? quote.depth * quoteIndent
+                : list.valid() ? list.depth * listIndent + markerWidth : 0.0;
         const qreal textIndent = -prefixWidth;
         const int previousQuoteDepth =
             block.previous().isValid() ? quotePrefix(block.previous().text()).depth : 0;
@@ -524,11 +608,22 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const qreal quoteBottom = quote.depth > 0 && nextQuoteDepth == 0
                                       ? bodyLineHeight * 0.18
                                       : 0.0;
+        const bool previousIsList = block.previous().isValid() &&
+                                    listPrefix(block.previous().text()).valid();
+        const bool nextIsList = block.next().isValid() &&
+                                listPrefix(block.next().text()).valid();
+        const qreal listTop = list.valid() && !previousIsList
+                                  ? bodyLineHeight * 0.10
+                                  : 0.0;
+        const qreal listBottom = list.valid() && !nextIsList
+                                     ? bodyLineHeight * 0.10
+                                     : 0.0;
         const qreal topMargin =
-            (level > 0 ? bodyLineHeight * spacing.topLines : 0.0) + quoteTop;
+            (level > 0 ? bodyLineHeight * spacing.topLines : 0.0) + quoteTop +
+            listTop;
         const qreal bottomMargin =
             extra + (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0) +
-            quoteBottom;
+            quoteBottom + listBottom;
         const bool changed = !qFuzzyCompare(format.leftMargin() + 1.0,
                                             leftMargin + 1.0) ||
                              !qFuzzyCompare(format.textIndent() + 1.0,
@@ -538,16 +633,25 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                              !qFuzzyCompare(format.bottomMargin() + 1.0,
                                             bottomMargin + 1.0);
         if (changed) {
+            if (!formatEditOpen) {
+                // Paragraph layout is derived from the source edit that caused
+                // it. Join when Qt has already finalized that edit; source-aware
+                // undo()/redo() also skip any format-only command Qt retains.
+                formatCursor.joinPreviousEditBlock();
+                formatEditOpen = true;
+            }
             format.setLeftMargin(leftMargin);
             format.setTextIndent(textIndent);
             format.setTopMargin(topMargin);
             format.setBottomMargin(bottomMargin);
-            QTextCursor cursor(block);
-            cursor.setBlockFormat(format);
+            formatCursor.setPosition(block.position());
+            formatCursor.setBlockFormat(format);
         }
         if (block == last)
             break;
     }
+    if (formatEditOpen)
+        formatCursor.endEditBlock();
     m_applyingVisualBlockFormats = false;
     viewport()->update();
 }
@@ -682,9 +786,9 @@ void MarkdownEditor::updateActiveHighlight() {
         const QTextBlock first = document()->findBlockByNumber(firstNumber);
         const QTextBlock last = document()->findBlockByNumber(lastNumber);
         if (first.isValid() && last.isValid())
-            applyVisualBlockFormats(first.position(),
-                                    last.position() + last.length() -
-                                        first.position());
+            scheduleVisualBlockFormats(first.position(),
+                                       last.position() + last.length() -
+                                           first.position());
     }
 }
 
@@ -1409,6 +1513,17 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     }
 
     stopSmoothScroll();
+
+    if (event->matches(QKeySequence::Undo)) {
+        undo();
+        event->accept();
+        return;
+    }
+    if (event->matches(QKeySequence::Redo)) {
+        redo();
+        event->accept();
+        return;
+    }
 
     if (m_completer->popup()->isVisible()) {
         // These keys belong to the popup while it is open.
@@ -2714,7 +2829,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         const QPointF c(cell.left() + cw / 2.0, cell.center().y());
         const qreal r = diameter / 2.0;
 
-        switch ((markerPos / 2) % 3) {
+        switch (listPrefix(block.text()).depth % 3) {
         case 0: // filled disc
             p.setPen(Qt::NoPen);
             p.setBrush(color);
