@@ -73,6 +73,6 @@ QSizeF measure(const QString &body, const QFont &font, bool display = false);
 // display (centred) placement.
 void paint(QPainter &p, const QRectF &rect, const QString &body,
            const QFont &font, const QColor &color,
-           Align align = Align::Inline);
+           Align align = Align::Inline, qreal baselineOffset = -1.0);
 
 } // namespace MathRender

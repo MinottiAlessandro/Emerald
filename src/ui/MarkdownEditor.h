@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QHash>
 #include <QImage>
 #include <QRectF>
 #include <QStringList>
@@ -114,6 +115,11 @@ private:
     QRectF blockViewportRect(const QTextBlock &block) const;
     QList<QRectF> textRangeViewportRects(const QTextBlock &block, int start,
                                          int length) const;
+    QString resolvedImagePath(const QTextBlock &block) const;
+    QSize imageSourceSize(const QString &path) const;
+    qreal imagePreviewContentHeight(const QTextBlock &block) const;
+    QRectF imagePreviewArea(const QTextBlock &block) const;
+    void applyImagePreviewFormats();
     void applyVisualBlockFormats(int position = 0, int charsChanged = -1);
     void scheduleVisualBlockFormats(int position, int charsChanged);
     void smoothScrollBy(qreal pixels, int durationMs = 140);
@@ -282,6 +288,8 @@ private:
     QString m_mascotKind;        // last seen kind, so a kind-only change emits too
     QString m_imageBasePath;     // current note folder for relative image links
     QString m_imageRootPath;     // vault boundary for local image previews
+    mutable QHash<QString, QSize> m_imageSizeCache;
+    mutable QStringList m_imageSizeCacheOrder;
     QTimer *m_quickJumpTimer = nullptr;
     QList<QuickJumpTarget> m_quickJumpTargets;
     QString m_quickJumpPrefix;

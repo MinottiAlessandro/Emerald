@@ -817,7 +817,7 @@ QSizeF measureUncached(const QString &body, const QFont &font, bool display) {
 
 void paintUncached(QPainter &p, const QRectF &rect, const QString &body,
                    const QFont &font, const QColor &color, bool display,
-                   MathRender::Align align) {
+                   MathRender::Align align, qreal baselineOffset) {
     BoxPtr tree = build(body);
     layout(*tree, font, display);
     const double natW = tree->w;
@@ -838,11 +838,19 @@ void paintUncached(QPainter &p, const QRectF &rect, const QString &body,
         // reserved slack falls to the right and reads as ordinary spacing. A
         // formula taller than the line is top-aligned so it stays in the line
         // box rather than overlapping the line above.
-        QFontMetricsF fm(font);
         const double scaledAsc = tree->asc * scale;
         x = rect.left();
-        baseline = scaledAsc > fm.ascent() ? rect.top() + scaledAsc
-                                           : rect.top() + fm.ascent();
+        if (baselineOffset >= 0.0) {
+            const double minBaseline = scaledAsc;
+            const double maxBaseline = rect.height() - tree->desc * scale;
+            baseline = rect.top() +
+                       qBound(minBaseline, double(baselineOffset),
+                              qMax(minBaseline, maxBaseline));
+        } else {
+            QFontMetricsF fm(font);
+            baseline = scaledAsc > fm.ascent() ? rect.top() + scaledAsc
+                                               : rect.top() + fm.ascent();
+        }
     }
     p.save();
     p.setPen(color);
@@ -925,7 +933,8 @@ QSizeF measure(const QString &body, const QFont &font, bool display) {
 }
 
 void paint(QPainter &p, const QRectF &rect, const QString &body,
-           const QFont &font, const QColor &color, Align align) {
+           const QFont &font, const QColor &color, Align align,
+           qreal baselineOffset) {
     EMERALD_PROFILE_SCOPE("MathRender::paint");
     const QSize pixelSize =
         (rect.size() * p.device()->devicePixelRatioF()).toSize();
@@ -937,7 +946,9 @@ void paint(QPainter &p, const QRectF &rect, const QString &body,
                         QLatin1Char(':') + QString::number(pixelSize.width()) +
                         QLatin1Char('x') + QString::number(pixelSize.height()) +
                         QLatin1Char(':') +
-                        QString::number(p.device()->devicePixelRatioF(), 'f', 2);
+                        QString::number(p.device()->devicePixelRatioF(), 'f', 2) +
+                        QLatin1Char(':') +
+                        QString::number(baselineOffset, 'f', 2);
     QPixmap cached;
     if (QPixmapCache::find(key, &cached)) {
         p.drawPixmap(rect.topLeft(), cached);
@@ -949,7 +960,7 @@ void paint(QPainter &p, const QRectF &rect, const QString &body,
     pm.fill(Qt::transparent);
     QPainter cachePainter(&pm);
     paintUncached(cachePainter, QRectF(QPointF(0, 0), rect.size()), body, font,
-                  color, display, align);
+                  color, display, align, baselineOffset);
     cachePainter.end();
     static QHash<QString, int> seen;
     static QStringList seenOrder;

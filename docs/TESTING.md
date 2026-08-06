@@ -77,12 +77,18 @@ move the caret back onto the line, confirm the raw markers reappear.
 
 ## 7. Math (built-in TeX subset)
 - [ ] Inline `$x^2$` renders in place; caret/selection inside shows raw source.
+- [ ] Inline formulas share the surrounding shaped-text baseline; tall fractions do not sag below adjacent text.
 - [ ] Display `$$ … $$` renders; can span multiple lines.
 - [ ] Bare dollars stay literal (`$5 and $12`).
 - [ ] **Math inside inline code stays literal** — `` `$x^2$` `` shows the raw `$x^2$` as code, no formula painted (a bare `$x^2$` still renders). ◆
 - [ ] Fractions `\frac`, roots `\sqrt`, sub/superscripts, big operators with limits (`\sum`, `\int`).
 - [ ] Accents (`\hat`, `\vec`, `\bar`), `\left( … \right)`, matrices (`pmatrix`, `bmatrix`).
 - [ ] A symbol command sample (Greek, arrows) renders.
+
+## 7a. Images
+- [ ] A standalone local image keeps its aspect ratio and grows/shrinks with the editor viewport without exceeding the viewport-height cap.
+- [ ] Moving the caret onto an image line reveals compact editable Markdown source; moving away restores the preview without an undo step.
+- [ ] A missing image shows a bounded fallback card with its target instead of leaving a large blank area.
 
 ## 8. Links & navigation
 - [ ] `[[Note]]` renders, click jumps to the target.

@@ -287,18 +287,10 @@ void MarkdownHighlighter::reserveDisplayHeight(int len, const QString &body) {
 }
 
 void MarkdownHighlighter::reserveImageHeight(int len) {
-    const QFont base = document() ? document()->defaultFont() : QFont();
-    const double lineH = QFontMetricsF(base).lineSpacing();
-    const double targetH = qMax(160.0, lineH * 8.5);
-    const double factor =
-        lineH > 0 ? qBound(1.0, targetH / lineH, 12.0) : 8.5;
-
-    QTextCharFormat hide;
-    hide.setForeground(QColor(0, 0, 0, 0));
-    hide.setFontPointSize(base.pointSizeF() * factor);
-    hide.setFontLetterSpacingType(QFont::PercentageSpacing);
-    hide.setFontLetterSpacing(1);
-    setFormat(0, len, hide);
+    // Image height belongs to MarkdownEditor, which can resolve the safe local
+    // file, inspect its aspect ratio and apply viewport-aware block geometry.
+    // The highlighter only conceals the source span horizontally.
+    setFormat(0, len, conceal());
 }
 
 bool MarkdownHighlighter::caretInMathRegion(const QTextBlock &block,

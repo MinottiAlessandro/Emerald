@@ -1,4 +1,5 @@
 #include "ui/MarkdownEditor.h"
+#include "ui/MathRender.h"
 
 #include "core/Perf.h"
 
@@ -7,12 +8,14 @@
 #include <QEventLoop>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTextStream>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QWheelEvent>
 #include <QtMath>
@@ -111,6 +114,14 @@ QTextCharFormat formatAt(const QTextBlock &block, int position) {
         if (position >= range.start && position < range.start + range.length)
             return range.format;
     return {};
+}
+
+int firstOpaqueRow(const QImage &image) {
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            if (qAlpha(image.pixel(x, y)) != 0)
+                return y;
+    return -1;
 }
 
 void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
@@ -329,6 +340,85 @@ int main(int argc, char **argv) {
                 Qt::ControlModifier);
     check(geometryJump.isEmpty(),
           QStringLiteral("blank trailing space should not activate a nearby link"));
+    editor.resize(250, 220);
+
+    // Image blocks derive their height from real metadata and viewport limits.
+    // The source line collapses back to ordinary text height while it is edited.
+    QTemporaryDir mediaDir;
+    check(mediaDir.isValid(), QStringLiteral("media test directory should exist"));
+    const QString wideImagePath = mediaDir.filePath(QStringLiteral("wide.png"));
+    QImage wideImage(1200, 600, QImage::Format_ARGB32_Premultiplied);
+    wideImage.fill(QColor(0x2b, 0xbf, 0x74));
+    check(wideImage.save(wideImagePath),
+          QStringLiteral("media test image should be writable"));
+    editor.resize(320, 240);
+    editor.setImagePaths(mediaDir.path(), mediaDir.path());
+    const QString imageSource =
+        QStringLiteral("![Wide preview](wide.png)\nafter image");
+    editor.setPlainText(imageSource);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock imageBlock = editor.document()->firstBlock();
+    const qreal compactImageHeight = imageBlock.blockFormat().lineHeight();
+    check(imageBlock.blockFormat().lineHeightType() ==
+              QTextBlockFormat::FixedHeight &&
+              compactImageHeight > 100.0 &&
+              compactImageHeight <= editor.viewport()->height() * 0.62 + 25.0,
+          QStringLiteral("image preview should respect aspect ratio and viewport cap"));
+    editor.resize(520, 600);
+    QApplication::processEvents();
+    const qreal roomyImageHeight = imageBlock.blockFormat().lineHeight();
+    check(roomyImageHeight > compactImageHeight,
+          QStringLiteral("image preview should grow when viewport bounds allow"));
+    QTextCursor editImage(imageBlock);
+    editor.setTextCursor(editImage);
+    QApplication::processEvents();
+    check(imageBlock.blockFormat().lineHeightType() ==
+              QTextBlockFormat::SingleHeight,
+          QStringLiteral("active image source should return to normal text height"));
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    editor.undo(); // skips any internal paragraph-geometry command
+    QApplication::processEvents();
+    check(imageBlock.blockFormat().lineHeightType() ==
+              QTextBlockFormat::FixedHeight &&
+              editor.toPlainText() == imageSource,
+          QStringLiteral("image layout transitions must preserve source and "
+                         "stay invisible to user undo"));
+
+    editor.setPlainText(QStringLiteral("![Missing](missing.png)\nafter"));
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    check(editor.document()->firstBlock().blockFormat().lineHeight() >= 100.0,
+          QStringLiteral("missing images should reserve a readable fallback card"));
+
+    // The explicit inline baseline moves the rendered box with the surrounding
+    // shaped text baseline and participates in the pixmap cache key.
+    QImage baselineHigh(180, 70, QImage::Format_ARGB32_Premultiplied);
+    QImage baselineLow(180, 70, QImage::Format_ARGB32_Premultiplied);
+    baselineHigh.fill(Qt::transparent);
+    baselineLow.fill(Qt::transparent);
+    const QFont inlineMathFont = MathRender::mathFont(editor.font(), false);
+    {
+        QPainter painter(&baselineHigh);
+        MathRender::paint(painter, QRectF(0, 0, 180, 70),
+                          QStringLiteral("x^2"), inlineMathFont, Qt::white,
+                          MathRender::Align::Inline, 25.0);
+    }
+    {
+        QPainter painter(&baselineLow);
+        MathRender::paint(painter, QRectF(0, 0, 180, 70),
+                          QStringLiteral("x^2"), inlineMathFont, Qt::white,
+                          MathRender::Align::Inline, 45.0);
+    }
+    check(firstOpaqueRow(baselineLow) > firstOpaqueRow(baselineHigh),
+          QStringLiteral("inline math should honor the surrounding text baseline"));
+    const QSizeF measuredOnce =
+        MathRender::measure(QStringLiteral("\\frac{a}{b}"), inlineMathFont);
+    const QSizeF measuredAgain =
+        MathRender::measure(QStringLiteral("\\frac{a}{b}"), inlineMathFont);
+    check(measuredOnce == measuredAgain && measuredOnce.height() > 0.0,
+          QStringLiteral("math measurement cache should be stable"));
     editor.resize(250, 220);
 
     // Heading hierarchy affects both glyph size and paragraph rhythm while

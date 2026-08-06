@@ -101,6 +101,11 @@ QPixmap imagePreviewPixmap(const QString &path, QSize logicalMax, qreal dpr) {
     if (!info.isFile() || logicalMax.isEmpty())
         return {};
 
+    // Small resize changes should reuse the same decoded thumbnail instead of
+    // filling QPixmapCache with nearly identical dimensions.
+    logicalMax.setWidth(qMax(8, logicalMax.width() / 8 * 8));
+    logicalMax.setHeight(qMax(8, logicalMax.height() / 8 * 8));
+
     const QSize deviceMax = (QSizeF(logicalMax) * dpr).toSize();
     const QString key =
         QStringLiteral("note-image:%1:%2:%3:%4:%5x%6")
@@ -451,6 +456,9 @@ void MarkdownEditor::setImagePaths(const QString &basePath,
         return;
     m_imageBasePath = basePath;
     m_imageRootPath = vaultRoot;
+    m_imageSizeCache.clear();
+    m_imageSizeCacheOrder.clear();
+    applyImagePreviewFormats();
     viewport()->update();
 }
 
@@ -628,6 +636,17 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                                      : 0.0;
         const qreal codeTop = openingFence ? bodyLineHeight * 0.30 : 0.0;
         const qreal codeBottom = closingFence ? bodyLineHeight * 0.30 : 0.0;
+        const bool imageLine = !codeRegion &&
+                               imageLineRe().match(block.text()).hasMatch();
+        const bool imageActive = !m_readMode &&
+                                 block.blockNumber() >= m_visualSelectionFirst &&
+                                 block.blockNumber() <= m_visualSelectionLast;
+        const bool showImagePreview = imageLine && !imageActive;
+        const qreal imageLineHeight =
+            showImagePreview ? imagePreviewContentHeight(block) + 24.0 : 0.0;
+        const int lineHeightType = showImagePreview
+                                       ? QTextBlockFormat::FixedHeight
+                                       : QTextBlockFormat::SingleHeight;
         const qreal topMargin =
             (level > 0 ? bodyLineHeight * spacing.topLines : 0.0) + quoteTop +
             listTop + codeTop;
@@ -640,6 +659,9 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                                             textIndent + 1.0) ||
                              !qFuzzyCompare(format.rightMargin() + 1.0,
                                             rightMargin + 1.0) ||
+                             !qFuzzyCompare(format.lineHeight() + 1.0,
+                                            imageLineHeight + 1.0) ||
+                             format.lineHeightType() != lineHeightType ||
                              !qFuzzyCompare(format.topMargin() + 1.0,
                                             topMargin + 1.0) ||
                              !qFuzzyCompare(format.bottomMargin() + 1.0,
@@ -655,6 +677,7 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
             format.setLeftMargin(leftMargin);
             format.setTextIndent(textIndent);
             format.setRightMargin(rightMargin);
+            format.setLineHeight(imageLineHeight, lineHeightType);
             format.setTopMargin(topMargin);
             format.setBottomMargin(bottomMargin);
             formatCursor.setPosition(block.position());
@@ -740,6 +763,97 @@ QList<QRectF> MarkdownEditor::textRangeViewportRects(const QTextBlock &block,
                             qAbs(x2 - x1), line.height()));
     }
     return rects;
+}
+
+QString MarkdownEditor::resolvedImagePath(const QTextBlock &block) const {
+    if (!block.isValid() || m_imageBasePath.isEmpty() ||
+        m_imageRootPath.isEmpty())
+        return {};
+    const QString target = imageTargetFromLine(block.text());
+    if (target.isEmpty())
+        return {};
+    return ContentSecurity::resolveLocalImage(target, m_imageBasePath,
+                                              m_imageRootPath);
+}
+
+QSize MarkdownEditor::imageSourceSize(const QString &path) const {
+    const QFileInfo info(path);
+    if (!info.isFile())
+        return {};
+    const QString key = QStringLiteral("%1:%2:%3")
+                            .arg(info.absoluteFilePath())
+                            .arg(info.size())
+                            .arg(info.lastModified().toMSecsSinceEpoch());
+    const auto cached = m_imageSizeCache.constFind(key);
+    if (cached != m_imageSizeCache.constEnd())
+        return cached.value();
+
+    QImageReader reader(info.absoluteFilePath());
+    reader.setAutoTransform(true);
+    const QSize size = reader.size();
+    m_imageSizeCache.insert(key, size);
+    m_imageSizeCacheOrder.append(key);
+    constexpr int MaxImageMetadataEntries = 256;
+    while (m_imageSizeCacheOrder.size() > MaxImageMetadataEntries)
+        m_imageSizeCache.remove(m_imageSizeCacheOrder.takeFirst());
+    return size;
+}
+
+qreal MarkdownEditor::imagePreviewContentHeight(const QTextBlock &block) const {
+    const qreal margin = document()->documentMargin();
+    const qreal maxWidth =
+        qMax(qreal(48), viewport()->width() - margin * 2.0 - 24.0);
+    const qreal maxHeight =
+        qBound(qreal(120), viewport()->height() * 0.62, qreal(520));
+    const QSize source = imageSourceSize(resolvedImagePath(block));
+    if (!source.isValid())
+        return qMin(maxHeight, qreal(96));
+    const QSizeF fitted = QSizeF(source).scaled(QSizeF(maxWidth, maxHeight),
+                                                Qt::KeepAspectRatio);
+    return qBound(qreal(48), fitted.height(), maxHeight);
+}
+
+QRectF MarkdownEditor::imagePreviewArea(const QTextBlock &block) const {
+    const QRectF geo = blockViewportRect(block);
+    const qreal margin = document()->documentMargin() + 12.0;
+    return QRectF(margin, geo.top() + 12.0,
+                  qMax(qreal(0), viewport()->width() - margin * 2.0),
+                  qMax(qreal(0), geo.height() - 24.0));
+}
+
+void MarkdownEditor::applyImagePreviewFormats() {
+    if (m_applyingVisualBlockFormats || !document())
+        return;
+    m_applyingVisualBlockFormats = true;
+    QTextCursor formatCursor = textCursor();
+    bool formatEditOpen = false;
+    for (QTextBlock block = document()->firstBlock(); block.isValid();
+         block = block.next()) {
+        if (!imageLineRe().match(block.text()).hasMatch() ||
+            insideCodeBlock(block))
+            continue;
+        const bool active = !m_readMode &&
+                            block.blockNumber() >= m_visualSelectionFirst &&
+                            block.blockNumber() <= m_visualSelectionLast;
+        const qreal height = active ? 0.0
+                                    : imagePreviewContentHeight(block) + 24.0;
+        const int type = active ? QTextBlockFormat::SingleHeight
+                                : QTextBlockFormat::FixedHeight;
+        QTextBlockFormat format = block.blockFormat();
+        if (qFuzzyCompare(format.lineHeight() + 1.0, height + 1.0) &&
+            format.lineHeightType() == type)
+            continue;
+        if (!formatEditOpen) {
+            formatCursor.joinPreviousEditBlock();
+            formatEditOpen = true;
+        }
+        format.setLineHeight(height, type);
+        formatCursor.setPosition(block.position());
+        formatCursor.setBlockFormat(format);
+    }
+    if (formatEditOpen)
+        formatCursor.endEditBlock();
+    m_applyingVisualBlockFormats = false;
 }
 
 QTextBlock MarkdownEditor::firstVisibleTextBlock() const {
@@ -2618,6 +2732,7 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     const qreal anchorOffset = blockViewportRect(anchor).top();
 
     QTextEdit::resizeEvent(event);
+    applyImagePreviewFormats(); // only media rows depend on viewport dimensions
 
     if (!anchor.isValid() || anchor.blockNumber() <= 0 ||
         !document()->documentLayout())
@@ -2878,30 +2993,31 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 continue;
 
             const QString target = imageTargetFromLine(block.text());
-            if (target.isEmpty() || m_imageBasePath.isEmpty() ||
-                m_imageRootPath.isEmpty())
+            if (target.isEmpty())
                 continue;
-
-            const QString path = ContentSecurity::resolveLocalImage(
-                target, m_imageBasePath, m_imageRootPath);
-
-            const qreal margin = document()->documentMargin();
-            QRectF area(margin, geo.top() + 8,
-                        viewport()->width() - margin * 2, geo.height() - 16);
+            const QString path = resolvedImagePath(block);
+            const QRectF area = imagePreviewArea(block);
             if (area.width() < 24 || area.height() < 24)
                 continue;
 
             const QPixmap pm =
                 imagePreviewPixmap(path, area.size().toSize(), dpr);
             if (pm.isNull()) {
-                const QRectF placeholder =
-                    QRectF(area.center() - QPointF(110, 24), QSizeF(220, 48));
+                const qreal placeholderWidth = qMin(qreal(360), area.width());
+                const QRectF placeholder(
+                    area.center() - QPointF(placeholderWidth / 2.0, 34),
+                    QSizeF(placeholderWidth, 68));
                 imgPainter.setPen(QPen(QColor(0x20, 0x38, 0x2b), 1));
                 imgPainter.setBrush(QColor(0x10, 0x11, 0x13));
                 imgPainter.drawRoundedRect(placeholder, 6, 6);
                 imgPainter.setPen(QColor(0x6f, 0x8e, 0x7e));
-                imgPainter.drawText(placeholder, Qt::AlignCenter,
-                                    tr("Image not found"));
+                const QString label = target.size() > 42
+                                          ? target.left(39) + QStringLiteral("…")
+                                          : target;
+                imgPainter.drawText(
+                    placeholder.adjusted(12, 8, -12, -8),
+                    Qt::AlignCenter | Qt::TextWordWrap,
+                    tr("Image not found\n%1").arg(label));
                 continue;
             }
 
@@ -2910,10 +3026,12 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 area.left() + (area.width() - logicalSize.width()) / 2.0,
                 area.top() + (area.height() - logicalSize.height()) / 2.0);
             const QRectF imageRect(topLeft, logicalSize);
-            imgPainter.setPen(QPen(QColor(0x20, 0x38, 0x2b), 1));
+            imgPainter.setPen(QPen(QColor(0x2b, 0x4a, 0x39), 1));
             imgPainter.setBrush(QColor(0x10, 0x11, 0x13));
             imgPainter.drawRoundedRect(imageRect, 6, 6);
+            imgPainter.setClipRect(imageRect.adjusted(1, 1, -1, -1));
             imgPainter.drawPixmap(topLeft, pm);
+            imgPainter.setClipping(false);
         }
     }
 
@@ -3189,15 +3307,20 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 if (formulaRects.size() != 1)
                     continue;
                 const QRectF rect = formulaRects.first();
-                MathRender::paint(p, rect, sp.body, inlineFont, mathColor);
+                const QTextLine tline =
+                    block.layout()->lineForTextPosition(sp.start);
+                const qreal baselineOffset =
+                    tline.isValid()
+                        ? geo.top() + tline.y() + tline.ascent() - rect.top()
+                        : -1.0;
+                MathRender::paint(p, rect, sp.body, inlineFont, mathColor,
+                                  MathRender::Align::Inline, baselineOffset);
                 if (sp.start < struck.size() && struck[sp.start]) {
                     // Put the strike where the surrounding ~~text~~ has it: at the
                     // line's text baseline minus the font's strikeout offset — not
                     // the middle of the (math-inflated) line box, which sits too
                     // low. Same dim colour as the highlighter's strike so the line
                     // reads as continuous across "text $x^2$".
-                    const QTextLine tline =
-                        block.layout()->lineForTextPosition(sp.start);
                     const QFontMetricsF fmText(font());
                     const qreal y =
                         tline.isValid()
