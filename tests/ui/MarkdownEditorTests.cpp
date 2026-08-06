@@ -18,6 +18,7 @@
 #include <QTextFragment>
 #include <QTextLayout>
 #include <QTextStream>
+#include <QTextTable>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QWheelEvent>
@@ -545,6 +546,10 @@ int main(int argc, char **argv) {
         QStringLiteral("- A list item"),
         QStringLiteral("- [x] A completed task"), QStringLiteral("---"),
         QStringLiteral("![Wide preview](wide.png)"),
+        QStringLiteral("| Name | Value | Formula |"),
+        QStringLiteral("| :--- | ---: | :---: |"),
+        QStringLiteral("| Alpha | 10 | `x|y` |"),
+        QStringLiteral("| Beta | **20** | $n^2$ |"),
         QStringLiteral("```cpp"),
         QStringLiteral("const int answer = 42;"), QStringLiteral("```"),
         QStringLiteral("$$ E = mc^2 $$")};
@@ -577,7 +582,8 @@ int main(int argc, char **argv) {
               !renderedReading.contains(QStringLiteral("[[Target")) &&
               !renderedReading.contains(QStringLiteral("```")) &&
               !renderedReading.contains(QStringLiteral("$x^2$")) &&
-              !renderedReading.contains(QStringLiteral("$$")),
+              !renderedReading.contains(QStringLiteral("$$")) &&
+              !renderedReading.contains(QStringLiteral("| :---")),
           QStringLiteral("the Read Mode document should contain presentation "
                          "text without Markdown source markers"));
     const QTextBlock renderedHeading = editor.document()->firstBlock();
@@ -599,8 +605,13 @@ int main(int argc, char **argv) {
     QTextBlock imageObjectBlock;
     QTextBlock codeObjectBlock;
     QTextCharFormat codeObjectFormat;
+    QTextTable *renderedTable = nullptr;
     for (QTextBlock block = editor.document()->firstBlock(); block.isValid();
          block = block.next()) {
+        if (!renderedTable) {
+            QTextCursor blockCursor(block);
+            renderedTable = blockCursor.currentTable();
+        }
         for (auto fragmentIt = block.begin(); !fragmentIt.atEnd(); ++fragmentIt) {
             const QTextFragment fragment = fragmentIt.fragment();
             if (!fragment.isValid())
@@ -641,6 +652,49 @@ int main(int argc, char **argv) {
               QStringLiteral("const int answer = 42;"),
           QStringLiteral("the code-card object should retain exact copyable "
                          "source without its Markdown fences"));
+    check(renderedTable && renderedTable->rows() == 3 &&
+              renderedTable->columns() == 3 &&
+              renderedTable->format().headerRowCount() == 1,
+          QStringLiteral("Read Mode should turn a Markdown header/separator/body "
+                         "group into one semantic Qt table"));
+    if (renderedTable) {
+        check(renderedTable->cellAt(0, 0)
+                      .firstCursorPosition()
+                      .block()
+                      .text() == QStringLiteral("Name") &&
+                  renderedTable->cellAt(1, 2)
+                          .firstCursorPosition()
+                          .block()
+                          .text() == QStringLiteral("x|y") &&
+                  renderedTable->cellAt(2, 1)
+                          .firstCursorPosition()
+                          .block()
+                          .text() == QStringLiteral("20"),
+              QStringLiteral("semantic table cells should omit pipe/separator "
+                             "syntax and preserve pipes inside code spans"));
+        check(renderedTable->cellAt(0, 0)
+                      .firstCursorPosition()
+                      .blockFormat()
+                      .alignment() == Qt::AlignLeft &&
+                  renderedTable->cellAt(0, 1)
+                          .firstCursorPosition()
+                          .blockFormat()
+                          .alignment() == Qt::AlignRight &&
+                  renderedTable->cellAt(0, 2)
+                          .firstCursorPosition()
+                          .blockFormat()
+                          .alignment() == Qt::AlignCenter,
+              QStringLiteral("separator colons should become per-column table "
+                             "alignment"));
+        QTextCursor headerText =
+            renderedTable->cellAt(0, 0).firstCursorPosition();
+        headerText.movePosition(QTextCursor::NextCharacter,
+                                QTextCursor::KeepAnchor);
+        check(headerText.charFormat().fontWeight() >= QFont::DemiBold &&
+                  renderedTable->format().borderCollapse(),
+              QStringLiteral("semantic table headers should be emphasized and "
+                             "use one collapsed grid"));
+    }
     if (imageObjectBlock.isValid()) {
         settleLayout(editor, imageObjectBlock);
         check(editor.document()->documentLayout()

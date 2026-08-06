@@ -5,6 +5,7 @@
 #include "core/ContentSecurity.h"
 #include "core/MascotSeed.h"
 
+#include <QFontMetricsF>
 #include <QImageReader>
 #include <QRegularExpression>
 #include <QTextBlockFormat>
@@ -12,6 +13,11 @@
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextLength>
+#include <QTextTable>
+#include <QTextTableCell>
+#include <QTextTableCellFormat>
+#include <QTextTableFormat>
 #include <QUrl>
 
 namespace {
@@ -224,6 +230,155 @@ void attachSourceData(QTextBlock block, int sourceBlock, int sourceStart,
     data->sourceLength = sourceLength;
     block.setUserData(data);
 }
+
+bool isPipeTableRow(const QString &text) {
+    const QString trimmed = text.trimmed();
+    return trimmed.size() >= 2 && trimmed.startsWith(QLatin1Char('|')) &&
+           trimmed.endsWith(QLatin1Char('|'));
+}
+
+QStringList splitMarkdownTableRow(const QString &text) {
+    QString row = text.trimmed();
+    if (row.startsWith(QLatin1Char('|')))
+        row.remove(0, 1);
+    if (row.endsWith(QLatin1Char('|')))
+        row.chop(1);
+
+    QStringList cells;
+    QString cell;
+    bool inCode = false;
+    for (int pos = 0; pos < row.size(); ++pos) {
+        const QChar ch = row.at(pos);
+        if (ch == QLatin1Char('\\') && pos + 1 < row.size() &&
+            row.at(pos + 1) == QLatin1Char('|')) {
+            cell += QLatin1Char('|');
+            ++pos;
+            continue;
+        }
+        if (ch == QLatin1Char('`')) {
+            inCode = !inCode;
+            cell += ch;
+            continue;
+        }
+        if (ch == QLatin1Char('|') && !inCode) {
+            cells.append(cell.trimmed());
+            cell.clear();
+            continue;
+        }
+        cell += ch;
+    }
+    cells.append(cell.trimmed());
+    return cells;
+}
+
+bool tableSeparator(const QStringList &cells, QList<Qt::Alignment> *alignments) {
+    if (cells.isEmpty())
+        return false;
+    QList<Qt::Alignment> parsed;
+    static const QRegularExpression separatorRe(
+        QStringLiteral("^:?-{3,}:?$"));
+    static const QRegularExpression whitespaceRe(QStringLiteral("\\s"));
+    for (QString cell : cells) {
+        cell.remove(whitespaceRe);
+        if (!separatorRe.match(cell).hasMatch())
+            return false;
+        const bool left = cell.startsWith(QLatin1Char(':'));
+        const bool right = cell.endsWith(QLatin1Char(':'));
+        parsed.append(left && right ? Qt::AlignCenter
+                                   : right ? Qt::AlignRight : Qt::AlignLeft);
+    }
+    if (alignments)
+        *alignments = parsed;
+    return true;
+}
+
+void insertReadTable(QTextCursor &cursor, const QList<QStringList> &rows,
+                     const QList<int> &sourceRows,
+                     const QList<Qt::Alignment> &alignments,
+                     const QStringList &sourceLines,
+                     const QVector<int> &lineStarts,
+                     const MarkdownReadRenderer::Options &options) {
+    if (rows.isEmpty())
+        return;
+    int columns = alignments.size();
+    for (const QStringList &row : rows)
+        columns = qMax(columns, row.size());
+    columns = qMax(1, columns);
+
+    QTextTableFormat tableFormat;
+    tableFormat.setAlignment(Qt::AlignLeft);
+    tableFormat.setWidth(QTextLength(QTextLength::PercentageLength, 100.0));
+    tableFormat.setCellPadding(8.0);
+    tableFormat.setCellSpacing(0.0);
+    tableFormat.setBorder(1.0);
+    tableFormat.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+    tableFormat.setBorderBrush(QColor(0x31, 0x51, 0x40));
+    tableFormat.setBorderCollapse(true);
+    tableFormat.setTopMargin(7.0);
+    tableFormat.setBottomMargin(9.0);
+    tableFormat.setHeaderRowCount(1);
+    QList<qreal> naturalWidths(columns, 48.0);
+    const QFontMetricsF metrics(options.baseFont);
+    for (const QStringList &row : rows) {
+        for (int column = 0; column < row.size(); ++column) {
+            naturalWidths[column] =
+                qMax(naturalWidths.at(column),
+                     qBound(qreal(48.0),
+                            metrics.horizontalAdvance(row.at(column)) + 18.0,
+                            qreal(240.0)));
+        }
+    }
+    qreal totalNaturalWidth = 0.0;
+    for (const qreal width : naturalWidths)
+        totalNaturalWidth += width;
+    QList<QTextLength> widths;
+    for (int column = 0; column < columns; ++column) {
+        widths.append(QTextLength(QTextLength::PercentageLength,
+                                  naturalWidths.at(column) /
+                                      totalNaturalWidth * 100.0));
+    }
+    tableFormat.setColumnWidthConstraints(widths);
+
+    QTextTable *table = cursor.insertTable(rows.size(), columns, tableFormat);
+    for (int row = 0; row < rows.size(); ++row) {
+        const int sourceRow = sourceRows.at(row);
+        for (int column = 0; column < columns; ++column) {
+            QTextTableCell cell = table->cellAt(row, column);
+            QTextTableCellFormat cellFormat = cell.format().toTableCellFormat();
+            if (row == 0)
+                cellFormat.setBackground(QColor(0x1a, 0x35, 0x27));
+            else if ((row % 2) == 0)
+                cellFormat.setBackground(QColor(0x15, 0x24, 0x1c));
+            else
+                cellFormat.setBackground(QColor(0x11, 0x1d, 0x17));
+            cell.setFormat(cellFormat);
+
+            QTextCursor cellCursor = cell.firstCursorPosition();
+            QTextBlockFormat block = baseBlockFormat(options.lineSpacing);
+            block.setBottomMargin(0.0);
+            block.setAlignment(column < alignments.size()
+                                   ? alignments.at(column)
+                                   : Qt::AlignLeft);
+            cellCursor.setBlockFormat(block);
+
+            QTextCharFormat text;
+            text.setFont(options.baseFont);
+            text.setForeground(row == 0 ? QColor(0xe3, 0xf5, 0xec)
+                                        : QColor(0xc8, 0xe0, 0xd4));
+            if (row == 0)
+                text.setFontWeight(QFont::DemiBold);
+            if (column < rows.at(row).size())
+                insertInline(cellCursor, rows.at(row).at(column), text, options);
+
+            attachSourceData(cell.firstCursorPosition().block(), sourceRow,
+                             lineStarts.at(sourceRow),
+                             sourceLines.at(sourceRow).size());
+        }
+    }
+
+    cursor = table->lastCursorPosition();
+    cursor.movePosition(QTextCursor::NextBlock);
+}
 } // namespace
 
 void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
@@ -267,6 +422,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         "^\\s*!\\[([^]\\n]*)\\]\\((?:<([^>]+)>|([^\\)\\n]+))\\)\\s*$"));
 
     bool firstOutput = true;
+    bool reuseCurrentBlock = false;
     for (int sourceBlock = 0; sourceBlock < lines.size(); ++sourceBlock) {
         const QString line = lines.at(sourceBlock);
         const int lineStart = lineStarts.at(sourceBlock);
@@ -274,6 +430,32 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
 
         if (sourceBlock == 0 && MascotSeed::fromLine(line) != 0)
             continue;
+
+        if (isPipeTableRow(line) && sourceBlock + 1 < lines.size()) {
+            const QStringList header = splitMarkdownTableRow(line);
+            QList<Qt::Alignment> alignments;
+            if (tableSeparator(splitMarkdownTableRow(lines.at(sourceBlock + 1)),
+                               &alignments)) {
+                QList<QStringList> tableRows{header};
+                QList<int> sourceRows{sourceBlock};
+                sourceEndBlock = sourceBlock + 1;
+                for (int blockNumber = sourceBlock + 2;
+                     blockNumber < lines.size() &&
+                     isPipeTableRow(lines.at(blockNumber));
+                     ++blockNumber) {
+                    tableRows.append(
+                        splitMarkdownTableRow(lines.at(blockNumber)));
+                    sourceRows.append(blockNumber);
+                    sourceEndBlock = blockNumber;
+                }
+                insertReadTable(cursor, tableRows, sourceRows, alignments,
+                                lines, lineStarts, options);
+                firstOutput = false;
+                reuseCurrentBlock = true;
+                sourceBlock = sourceEndBlock;
+                continue;
+            }
+        }
 
         QTextBlockFormat block = baseBlockFormat(options.lineSpacing);
         QTextCharFormat text = body;
@@ -430,11 +612,16 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
             }
         }
 
-        if (!firstOutput)
-            cursor.insertBlock(block);
-        else
+        if (!firstOutput) {
+            if (reuseCurrentBlock)
+                cursor.setBlockFormat(block);
+            else
+                cursor.insertBlock(block);
+        } else {
             cursor.setBlockFormat(block);
+        }
         firstOutput = false;
+        reuseCurrentBlock = false;
 
         if (object.objectType() == MarkdownReadObjectRenderer::ObjectType) {
             cursor.insertText(
