@@ -2866,7 +2866,7 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
 // cell. Returns false (Enter behaves normally) for any other line.
 bool MarkdownEditor::handleTableHeaderEnter() {
     QTextCursor cur = textCursor();
-    if (cur.hasSelection())
+    if (cur.hasSelection() || !cur.atBlockEnd())
         return false;
     const QTextBlock block = cur.block();
     if (!isTableRow(block.text()) || isSeparatorRow(block.text()))
@@ -2915,7 +2915,7 @@ bool MarkdownEditor::handleTableHeaderEnter() {
 // by handleTableHeaderEnter, so a one-row table builds itself before this.)
 bool MarkdownEditor::handleTableExitEnter() {
     QTextCursor cur = textCursor();
-    if (cur.hasSelection())
+    if (cur.hasSelection() || !cur.atBlockEnd())
         return false;
     const QTextBlock block = cur.block();
     if (!isTableRow(block.text()))

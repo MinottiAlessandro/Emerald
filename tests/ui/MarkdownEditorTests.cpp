@@ -325,6 +325,38 @@ int main(int argc, char **argv) {
               !editor.document()->isUndoAvailable(),
           QStringLiteral("table preview must preserve source and undo history"));
 
+    // Table convenience actions only own Enter at the end of a row. In the
+    // middle, Enter must behave like ordinary text input and split exactly at
+    // the caret instead of being consumed and relocated to the table's end.
+    editor.setPlainText(QStringLiteral(
+        "| Name | Score |\n| --- | --- |\n| Ada | 10 |"));
+    QTextCursor splitDataRow = editor.document()->find(QStringLiteral("Ada"));
+    splitDataRow.clearSelection();
+    editor.setTextCursor(splitDataRow);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.toPlainText() == QStringLiteral(
+              "| Name | Score |\n| --- | --- |\n| Ada\n | 10 |"),
+          QStringLiteral("Enter inside the last table row should insert at the caret"));
+
+    editor.setPlainText(QStringLiteral("| Name | Score |"));
+    QTextCursor splitHeader = editor.document()->find(QStringLiteral("Name"));
+    splitHeader.clearSelection();
+    editor.setTextCursor(splitHeader);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.toPlainText() == QStringLiteral("| Name\n | Score |"),
+          QStringLiteral("Enter inside a table header should insert at the caret"));
+
+    editor.setPlainText(QStringLiteral("| Name | Score |"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.document()->blockCount() == 3 &&
+              editor.document()->findBlockByNumber(1).text().contains(
+                  QStringLiteral("---")),
+          QStringLiteral("Enter at a header's end should still build the table"));
+
     // Painted interaction affordances and their hit tests share one geometry
     // source. A rendered task checkbox should toggle at the same pixel where it
     // is drawn, even when the raw marker is concealed.
