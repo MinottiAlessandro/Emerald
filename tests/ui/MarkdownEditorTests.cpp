@@ -6,6 +6,8 @@
 #include <QApplication>
 #include <QEventLoop>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -139,6 +141,18 @@ void sendWheel(MarkdownEditor &editor, const QPoint &pixelDelta,
                       Qt::NoScrollPhase, false);
     QApplication::sendEvent(editor.viewport(), &event);
 }
+
+void clickEditor(MarkdownEditor &editor, const QPoint &position,
+                 Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(position),
+                      QPointF(editor.viewport()->mapToGlobal(position)),
+                      Qt::LeftButton, Qt::LeftButton, modifiers);
+    QApplication::sendEvent(editor.viewport(), &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(position),
+                        QPointF(editor.viewport()->mapToGlobal(position)),
+                        Qt::LeftButton, Qt::NoButton, modifiers);
+    QApplication::sendEvent(editor.viewport(), &release);
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -258,6 +272,64 @@ int main(int argc, char **argv) {
     check(editor.toPlainText() == tableSource &&
               !editor.document()->isUndoAvailable(),
           QStringLiteral("table preview must preserve source and undo history"));
+
+    // Painted interaction affordances and their hit tests share one geometry
+    // source. A rendered task checkbox should toggle at the same pixel where it
+    // is drawn, even when the raw marker is concealed.
+    editor.setPlainText(QStringLiteral("- [ ] geometry task\nother line"));
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    QTextCursor taskMarker(editor.document()->firstBlock());
+    const QRect taskCell = editor.cursorRect(taskMarker);
+    clickEditor(editor, QPoint(taskCell.left() + 5, taskCell.center().y()));
+    check(editor.document()->firstBlock().text().startsWith(
+              QStringLiteral("- [x]")),
+          QStringLiteral("task checkbox paint and hit geometry should agree"));
+
+    // Fold hit testing uses the exact block viewport rectangle used to paint its
+    // arrow; clicking the visual gutter therefore folds and unfolds reliably.
+    editor.setPlainText(QStringLiteral("# Fold me\ninside\n# Next"));
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock foldHeading = editor.document()->firstBlock();
+    const QPoint foldPoint(5, editor.cursorRect(QTextCursor(foldHeading)).center().y());
+    clickEditor(editor, foldPoint);
+    check(!editor.document()->findBlockByNumber(1).isVisible(),
+          QStringLiteral("clicking the painted fold gutter should collapse it"));
+    clickEditor(editor, foldPoint);
+    check(editor.document()->findBlockByNumber(1).isVisible(),
+          QStringLiteral("clicking the same fold gutter should expand it"));
+
+    // Link hit testing now uses the same wrapped-range rectangles as Quick Jump.
+    // Clicking blank space after the token must not inherit the nearest cursor.
+    editor.resize(230, 220);
+    const QString geometryLinkSource = QStringLiteral(
+        "enough leading words to wrap [[Geometry Target]]\nother line");
+    editor.setPlainText(geometryLinkSource);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    QString geometryJump;
+    QObject::connect(&editor, &MarkdownEditor::linkClicked,
+                     [&geometryJump](const QString &target) {
+                         geometryJump = target;
+                     });
+    const auto geometryMatch =
+        QRegularExpression(QStringLiteral("\\[\\[([^]]+)\\]\\]"))
+            .match(editor.document()->firstBlock().text());
+    QTextCursor linkText(editor.document()->firstBlock());
+    linkText.setPosition(editor.document()->firstBlock().position() +
+                         geometryMatch.capturedStart(1));
+    const QRect linkCell = editor.cursorRect(linkText);
+    clickEditor(editor, linkCell.center(), Qt::ControlModifier);
+    check(geometryJump == QStringLiteral("Geometry Target"),
+          QStringLiteral("wrapped link geometry should remain clickable"));
+    geometryJump.clear();
+    clickEditor(editor,
+                QPoint(editor.viewport()->width() - 3, linkCell.center().y()),
+                Qt::ControlModifier);
+    check(geometryJump.isEmpty(),
+          QStringLiteral("blank trailing space should not activate a nearby link"));
+    editor.resize(250, 220);
 
     // Heading hierarchy affects both glyph size and paragraph rhythm while
     // remaining a presentation-only property of the plain Markdown document.

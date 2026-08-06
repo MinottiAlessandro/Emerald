@@ -957,20 +957,20 @@ void MarkdownEditor::insertCompletion(const QString &completion) {
     setTextCursor(cursor);
 }
 
-bool MarkdownEditor::posInColumns(const QPoint &pos, const QTextBlock &block,
-                                  int startCol, int endCol) const {
+bool MarkdownEditor::pointInTextRange(const QPoint &pos,
+                                      const QTextBlock &block, int startCol,
+                                      int endCol) const {
     // cursorForPosition snaps a click in the blank area past the end of a line
     // onto the nearest character — for a line that ends with a [[link]] that is
     // the link itself. Confirm the click x actually lies within the token's
     // rendered horizontal span so the clickable area stops at the text. (The
     // concealed brackets collapse to ~0 width, so [start,end] tracks what's
     // visible.)
-    QTextCursor c(block);
-    c.setPosition(block.position() + startCol);
-    const int left = cursorRect(c).left();
-    c.setPosition(block.position() + endCol);
-    const int right = cursorRect(c).left();
-    return pos.x() >= left && pos.x() <= right;
+    const auto rects = textRangeViewportRects(block, startCol,
+                                              qMax(0, endCol - startCol));
+    return std::any_of(rects.cbegin(), rects.cend(), [&pos](const QRectF &rect) {
+        return rect.adjusted(-1.0, 0.0, 1.0, 0.0).contains(pos);
+    });
 }
 
 QString MarkdownEditor::linkAt(const QPoint &pos) const {
@@ -982,7 +982,8 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
     while (it.hasNext()) {
         const auto m = it.next();
         if (column >= m.capturedStart(0) && column <= m.capturedEnd(0) &&
-            posInColumns(pos, block, m.capturedStart(0), m.capturedEnd(0)))
+            pointInTextRange(pos, block, int(m.capturedStart(0)),
+                             int(m.capturedEnd(0))))
             return WikiLink::cleanTarget(m.captured(1));
     }
     return {};
@@ -997,7 +998,8 @@ QString MarkdownEditor::internetLinkAt(const QPoint &pos) const {
     while (it.hasNext()) {
         const auto m = it.next();
         if (column >= m.capturedStart(0) && column <= m.capturedEnd(0) &&
-            posInColumns(pos, block, m.capturedStart(0), m.capturedEnd(0)))
+            pointInTextRange(pos, block, int(m.capturedStart(0)),
+                             int(m.capturedEnd(0))))
             return m.captured(2); // the URL
     }
     return {};
@@ -1051,29 +1053,12 @@ void MarkdownEditor::cancelQuickJump() {
 
 QRectF MarkdownEditor::visibleLinkRect(const QTextBlock &block, int startCol,
                                        int endCol) const {
-    QTextLayout *layout = block.layout();
-    if (!layout || startCol >= endCol)
-        return {};
-
-    const QRectF blockGeo = blockViewportRect(block);
     const QRectF visible(QPointF(0, 0), viewport()->size());
-    for (int i = 0; i < layout->lineCount(); ++i) {
-        const QTextLine line = layout->lineAt(i);
-        const int lineStart = line.textStart();
-        const int lineEnd = lineStart + line.textLength();
-        const int overlapStart = qMax(startCol, lineStart);
-        const int overlapEnd = qMin(endCol, lineEnd);
-        if (overlapStart >= overlapEnd)
-            continue;
-
-        const qreal x1 = line.cursorToX(overlapStart);
-        const qreal x2 = line.cursorToX(overlapEnd);
-        const QRectF rect(blockGeo.left() + qMin(x1, x2),
-                          blockGeo.top() + line.y(), qAbs(x2 - x1),
-                          line.height());
+    const auto rects = textRangeViewportRects(block, startCol,
+                                              qMax(0, endCol - startCol));
+    for (const QRectF &rect : rects)
         if (rect.intersects(visible))
             return rect.intersected(visible);
-    }
     return {};
 }
 
@@ -1253,13 +1238,25 @@ QTextBlock MarkdownEditor::taskCheckboxBlockAt(const QPoint &pos) const {
     const auto m = taskRe().match(block.text());
     if (!m.hasMatch())
         return {};
-    // The checkbox is painted over the dash; accept a click on that column.
-    QTextCursor at(block);
-    at.setPosition(block.position() + m.capturedLength(1)); // dash column
-    const QRectF cell = cursorRect(at);
-    const qreal cw = QFontMetricsF(font()).horizontalAdvance(QLatin1Char(' '));
-    const QRectF hit(cell.left() - cw * 0.5, cell.top(), cw * 2.4, cell.height());
-    return hit.contains(pos) ? block : QTextBlock();
+    return taskCheckboxRect(block).adjusted(-3, -2, 3, 2).contains(pos)
+               ? block
+               : QTextBlock();
+}
+
+QRectF MarkdownEditor::taskCheckboxRect(const QTextBlock &block) const {
+    if (!block.isValid())
+        return {};
+    const auto match = taskRe().match(block.text());
+    if (!match.hasMatch())
+        return {};
+    const auto rects = textRangeViewportRects(
+        block, int(match.capturedLength(1)), 1);
+    if (rects.isEmpty())
+        return {};
+    const QFontMetricsF metrics(font());
+    const qreal size = metrics.ascent() * 0.92;
+    const QRectF cell = rects.first();
+    return QRectF(cell.left(), cell.center().y() - size / 2.0, size, size);
 }
 
 bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
@@ -1277,8 +1274,15 @@ bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
 }
 
 bool MarkdownEditor::isOverFoldControl(const QPoint &pos) const {
-    return pos.x() < document()->documentMargin() &&
-           headingFoldable(cursorForPosition(pos).block());
+    const QTextBlock block = cursorForPosition(pos).block();
+    return headingFoldable(block) && foldControlRect(block).contains(pos);
+}
+
+QRectF MarkdownEditor::foldControlRect(const QTextBlock &block) const {
+    if (!block.isValid())
+        return {};
+    const QRectF geo = blockViewportRect(block);
+    return QRectF(0, geo.top(), document()->documentMargin(), geo.height());
 }
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
@@ -2743,12 +2747,12 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 const int lastPipe = text.lastIndexOf(QLatin1Char('|'));
                 if (firstPipe < 0 || lastPipe <= firstPipe)
                     continue;
-                QTextCursor firstCursor(row);
-                firstCursor.setPosition(row.position() + firstPipe);
-                QTextCursor lastCursor(row);
-                lastCursor.setPosition(row.position() + lastPipe);
-                left = qMin(left, cursorRect(firstCursor).left() - 5.0);
-                right = qMax(right, cursorRect(lastCursor).right() + 5.0);
+                const auto firstRect = textRangeViewportRects(row, firstPipe, 1);
+                const auto lastRect = textRangeViewportRects(row, lastPipe, 1);
+                if (firstRect.isEmpty() || lastRect.isEmpty())
+                    continue;
+                left = qMin(left, firstRect.first().left() - 5.0);
+                right = qMax(right, lastRect.first().right() + 5.0);
             }
             const QRectF firstGeo = blockViewportRect(rows.first());
             const QRectF lastGeo = blockViewportRect(rows.last());
@@ -2784,9 +2788,10 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 for (int pos = 0; pos < row.text().size(); ++pos) {
                     if (row.text().at(pos) != QLatin1Char('|'))
                         continue;
-                    QTextCursor pipe(row);
-                    pipe.setPosition(row.position() + pos);
-                    const qreal x = cursorRect(pipe).center().x();
+                    const auto pipeRects = textRangeViewportRects(row, pos, 1);
+                    if (pipeRects.isEmpty())
+                        continue;
+                    const qreal x = pipeRects.first().center().x();
                     tablePainter.drawLine(QPointF(x, geo.top()),
                                           QPointF(x, geo.bottom()));
                 }
@@ -2969,11 +2974,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
 
         // Task checkbox, drawn over the hidden "- [ ] " markup.
         if (const auto t = taskRe().match(block.text()); t.hasMatch()) {
-            QTextCursor curT(block);
-            curT.setPosition(block.position() + t.capturedLength(1)); // dash col
-            const QRectF cellT = cursorRect(curT);
-            const qreal s = fm.ascent() * 0.92;
-            const QRectF box(cellT.left(), cellT.center().y() - s / 2.0, s, s);
+            const QRectF box = taskCheckboxRect(block);
+            const qreal s = box.width();
             const bool checked = t.captured(2).compare(QStringLiteral("x"),
                                                        Qt::CaseInsensitive) == 0;
             const QColor accent(0x2b, 0xbf, 0x74);
@@ -3181,17 +3183,12 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             for (const auto &sp : MathRender::spans(btext)) {
                 if (sp.start < codeMask.size() && codeMask[sp.start])
                     continue; // inside an inline `code` span — not a formula
-                QTextCursor c0(block);
-                c0.setPosition(block.position() + sp.start);
-                QTextCursor c1(block);
-                c1.setPosition(block.position() + sp.start + sp.length);
-                const QRectF r0 = cursorRect(c0);
-                const QRectF r1 = cursorRect(c1);
-                // Skip a formula that wraps across lines (rare inline).
-                if (r1.top() != r0.top() || r1.left() <= r0.left())
+                const auto formulaRects =
+                    textRangeViewportRects(block, sp.start, sp.length);
+                // A formula cannot be split semantically across visual lines.
+                if (formulaRects.size() != 1)
                     continue;
-                const QRectF rect(r0.left(), r0.top(), r1.left() - r0.left(),
-                                  r0.height());
+                const QRectF rect = formulaRects.first();
                 MathRender::paint(p, rect, sp.body, inlineFont, mathColor);
                 if (sp.start < struck.size() && struck[sp.start]) {
                     // Put the strike where the surrounding ~~text~~ has it: at the
@@ -3267,7 +3264,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         if (geo.bottom() < event->rect().top() || !headingFoldable(block))
             continue;
         QTextCursor hc(block);
-        const qreal y = cursorRect(hc).center().y();
+        const qreal y = foldControlRect(block).center().y();
         const qreal x = 5;
         const bool folded = isFolded(block);
         p.setPen(Qt::NoPen);
@@ -3288,7 +3285,10 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         // so a folded section reads as collapsed even away from the margin.
         if (folded) {
             hc.movePosition(QTextCursor::EndOfBlock);
-            const QRectF end = cursorRect(hc);
+            const auto endRects = textRangeViewportRects(
+                block, qMax(0, block.length() - 2), 1);
+            const QRectF end = endRects.isEmpty() ? cursorRect(hc)
+                                                  : endRects.last();
             const qreal dotR = 1.4;
             const qreal gap = 5.5;
             qreal dx = end.right() + 10;

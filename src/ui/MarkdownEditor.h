@@ -122,10 +122,10 @@ private:
     // The URL of the [text](url) link under `pos`, or empty. Distinct from
     // linkAt (wiki note targets): these open in the system browser.
     QString internetLinkAt(const QPoint &pos) const;
-    // True if `pos` lies within the rendered horizontal span of block columns
-    // [startCol, endCol) — keeps a trailing link's click area on its text.
-    bool posInColumns(const QPoint &pos, const QTextBlock &block, int startCol,
-                      int endCol) const;
+    // True if `pos` lies within any rendered visual-line segment occupied by
+    // block columns [startCol, endCol). Works for wrapped inline ranges.
+    bool pointInTextRange(const QPoint &pos, const QTextBlock &block,
+                          int startCol, int endCol) const;
     // Should a click at `pos` follow a link? True on Ctrl+click, or a plain
     // click on a rendered link that lives off the active (cursor) line.
     bool followsLink(const QPoint &pos, Qt::KeyboardModifiers mods) const;
@@ -176,11 +176,13 @@ private:
     // block. Used both to toggle (on click) and to show a pointer cursor (on
     // hover). The active line is excluded — it shows raw markup.
     QTextBlock taskCheckboxBlockAt(const QPoint &pos) const;
+    QRectF taskCheckboxRect(const QTextBlock &block) const;
     // If pos hits the checkbox of a rendered task line, toggle [ ]<->[x] and
     // return true.
     bool toggleTaskAt(const QPoint &pos);
     // Is `pos` over a foldable heading's fold control (the left margin)?
     bool isOverFoldControl(const QPoint &pos) const;
+    QRectF foldControlRect(const QTextBlock &block) const;
 
     struct CodeBlock {
         QRectF header;   // the top header bar (language tag + copy button)

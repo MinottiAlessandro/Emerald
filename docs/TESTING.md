@@ -86,6 +86,7 @@ move the caret back onto the line, confirm the raw markers reappear.
 
 ## 8. Links & navigation
 - [ ] `[[Note]]` renders, click jumps to the target.
+- [ ] A wrapped link remains clickable only on its rendered text; blank space after it does nothing.
 - [ ] `[[Note]]` to a non-existent note auto-creates it.
 - [ ] With **Settings → New notes in** set to a sub-folder, clicking a
       non-existent `[[Note]]` creates it in that folder (not the vault root).
