@@ -1364,7 +1364,7 @@ void MainWindow::maybeAutoGenerateMascot() {
     const int threshold =
         s.value(QStringLiteral("mascotThreshold"), 100).toInt();
     const int bodyChars =
-        qMax(0, m_editor->document()->characterCount() - 1 -
+        qMax(0, m_editor->sourceDocument()->characterCount() - 1 -
                     m_editor->firstContentPosition());
     if (bodyChars < threshold)
         return;
@@ -2253,7 +2253,7 @@ void MainWindow::openVault(const QString &path) {
     m_loading = true;
     m_editor->clear();
     m_editor->setImagePaths(QString(), QString());
-    m_editor->document()->setModified(false);
+    m_editor->sourceDocument()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);
     m_titleEdit->clear();
@@ -2473,7 +2473,8 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     // Remember where the caret sat in the note we're leaving, so returning to
     // it (e.g. via the backlink history) lands back at the same spot.
     if (!m_currentPath.isEmpty() && m_currentPath != path)
-        m_cursorPositions[m_currentPath] = m_editor->textCursor().position();
+        m_cursorPositions[m_currentPath] =
+            m_editor->sourceTextCursor().position();
     if (saveBeforeOpen)
         saveCurrent();
 
@@ -2483,7 +2484,7 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     const QString body = m_vault->read(path);
     m_editor->setImagePaths(QFileInfo(path).absolutePath(), m_vault->root());
     m_editor->setPlainText(body);
-    m_editor->document()->setModified(false);
+    m_editor->sourceDocument()->setModified(false);
     m_loading = false;
 
     m_currentPath = path;
@@ -2507,12 +2508,13 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     // before falls back to its first line. The minimum position skips a hidden
     // mascot header line so the caret never starts on it. The editor is focused,
     // ready to type, either way.
-    QTextCursor c = m_editor->textCursor();
+    QTextCursor c = m_editor->sourceTextCursor();
     const int minPos = m_editor->firstContentPosition();
     const int last = qMax(minPos, m_cursorPositions.value(path, minPos));
     c.setPosition(qBound(
-        minPos, last, qMax(minPos, m_editor->document()->characterCount() - 1)));
-    m_editor->setTextCursor(c);
+        minPos, last,
+        qMax(minPos, m_editor->sourceDocument()->characterCount() - 1)));
+    m_editor->setSourceTextCursor(c);
     m_editor->setFocus();
     // Bring the restored caret into view, centred. Deferred to the event loop:
     // centring inline runs against the just-loaded document before its layout
@@ -2601,7 +2603,7 @@ void MainWindow::saveCurrent() {
         const QString content = m_editor->toPlainText();
         m_vault->write(note.path, content);
         m_lastSavedFingerprint = contentFingerprint(content);
-        m_editor->document()->setModified(false);
+        m_editor->sourceDocument()->setModified(false);
         m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, content);
         markNoteMetaCurrent(note.path, note.title);
@@ -2615,17 +2617,17 @@ void MainWindow::saveCurrent() {
         notify(tr("Created “%1”").arg(title), 2000);
         return;
     }
-    if (!m_editor->document()->isModified())
+    if (!m_editor->sourceDocument()->isModified())
         return;
     const QString content = m_editor->toPlainText();
     const quint64 fingerprint = contentFingerprint(content);
     if (fingerprint == m_lastSavedFingerprint) {
-        m_editor->document()->setModified(false);
+        m_editor->sourceDocument()->setModified(false);
         return; // nothing new to flush; avoid a self-triggered watcher event
     }
     m_vault->write(m_currentPath, content);
     m_lastSavedFingerprint = fingerprint;
-    m_editor->document()->setModified(false);
+    m_editor->sourceDocument()->setModified(false);
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, content);
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
 }
@@ -2704,9 +2706,9 @@ void MainWindow::syncOpenNoteFromDisk() {
     if (diskFingerprint == m_lastSavedFingerprint)
         return; // our own write, or no real change
 
-    if (m_editor->document()->isModified()) {
+    if (m_editor->sourceDocument()->isModified()) {
         if (contentFingerprint(m_editor->toPlainText()) == m_lastSavedFingerprint) {
-            m_editor->document()->setModified(false);
+            m_editor->sourceDocument()->setModified(false);
         } else {
             notify(tr("Changed on disk — saving will keep your version"), 5000);
             return;
@@ -2714,19 +2716,19 @@ void MainWindow::syncOpenNoteFromDisk() {
     }
 
     // No local edits: reload, keeping the caret roughly where it was.
-    const int caret = m_editor->textCursor().position();
+    const int caret = m_editor->sourceTextCursor().position();
     m_editor->clearFolds(); // reloading replaces the content; drop stale folds
     m_loading = true;
     m_editor->setPlainText(disk);
-    m_editor->document()->setModified(false);
+    m_editor->sourceDocument()->setModified(false);
     m_loading = false;
     m_lastSavedFingerprint = diskFingerprint;
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, disk);
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
 
-    QTextCursor c = m_editor->textCursor();
+    QTextCursor c = m_editor->sourceTextCursor();
     c.setPosition(qMin(caret, int(disk.size())));
-    m_editor->setTextCursor(c);
+    m_editor->setSourceTextCursor(c);
     notify(tr("Reloaded — changed on disk"), 3000);
 }
 
@@ -2861,7 +2863,8 @@ void MainWindow::updateNavActions() {
 // caret) so reopening a note — even after a restart — lands where you left off.
 void MainWindow::saveCursorPositions() {
     if (m_editor && !m_currentPath.isEmpty())
-        m_cursorPositions[m_currentPath] = m_editor->textCursor().position();
+        m_cursorPositions[m_currentPath] =
+            m_editor->sourceTextCursor().position();
     QVariantMap map;
     for (auto it = m_cursorPositions.constBegin();
          it != m_cursorPositions.constEnd(); ++it)
@@ -2932,13 +2935,13 @@ void MainWindow::openBrokenLinkSource(const QString &path, int position,
                                       int length) {
     openNoteByPath(path);
     const int documentEnd =
-        qMax(0, m_editor->document()->characterCount() - 1);
+        qMax(0, m_editor->sourceDocument()->characterCount() - 1);
     const int start = qBound(0, position, documentEnd);
     const int end = qBound(start, position + length, documentEnd);
-    QTextCursor cursor(m_editor->document());
+    QTextCursor cursor(m_editor->sourceDocument());
     cursor.setPosition(start);
     cursor.setPosition(end, QTextCursor::KeepAnchor);
-    m_editor->setTextCursor(cursor);
+    m_editor->setSourceTextCursor(cursor);
     m_editor->centerCursor();
     m_editor->setFocus();
 }
@@ -3402,7 +3405,7 @@ void MainWindow::reconcileAfterDeletion() {
     m_loading = true;
     m_editor->clear();
     m_editor->setImagePaths(QString(), QString());
-    m_editor->document()->setModified(false);
+    m_editor->sourceDocument()->setModified(false);
     m_loading = false;
     m_titleEdit->blockSignals(true);
     m_titleEdit->clear();
@@ -3498,7 +3501,7 @@ void MainWindow::newNoteIn(const QString &dir) {
     m_loading = true;
     m_editor->clear();
     m_editor->setImagePaths(m_pendingNoteDir, m_vault->root());
-    m_editor->document()->setModified(false);
+    m_editor->sourceDocument()->setModified(false);
     m_loading = false;
 
     m_titleEdit->blockSignals(true);

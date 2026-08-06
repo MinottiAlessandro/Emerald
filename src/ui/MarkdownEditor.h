@@ -13,6 +13,7 @@ class MarkdownHighlighter;
 class QCompleter;
 class QFocusEvent;
 class QMimeData;
+class QTextDocument;
 class QStringListModel;
 class QTimer;
 class QVariantAnimation;
@@ -30,8 +31,17 @@ public:
     // formatting before exposing the new document to undo/redo. QTextEdit's
     // reset clears source history, so visual margins must not reintroduce it.
     void setPlainText(const QString &text);
+    void clear();
+    QString toPlainText() const;
     void undo();
     void redo();
+
+    // The Markdown document remains authoritative while Read Mode displays a
+    // separate presentation document. MainWindow uses these accessors for
+    // saving, modified state, and caret restoration across note changes.
+    QTextDocument *sourceDocument() const { return m_sourceDocument; }
+    QTextCursor sourceTextCursor() const;
+    void setSourceTextCursor(const QTextCursor &cursor);
 
     // The note titles offered by [[ autocomplete. Call when the vault changes.
     void setCompletions(const QStringList &titles);
@@ -53,9 +63,9 @@ public:
     void jumpToMatch(const QString &text);
     void centerCursor();
 
-    // Reading-only presentation: prevent edits, hide the caret and keep every
-    // line in rendered live-preview form. Plain Up/Down scroll the viewport
-    // instead of moving the hidden text cursor.
+    // Reading-only presentation: swap the Markdown source for a separate,
+    // syntax-free document, prevent edits, and hide the caret. Plain Up/Down
+    // scroll the viewport instead of moving the hidden text cursor.
     void setReadMode(bool enabled);
     bool readMode() const { return m_readMode; }
     bool smoothScrollActive() const;
@@ -111,6 +121,9 @@ protected:
 
 private:
     void updateActiveHighlight();
+    void rebuildReadDocument(qreal scrollRatio = -1.0);
+    qreal currentScrollRatio() const;
+    void restoreScrollRatio(qreal ratio);
     QTextBlock firstVisibleTextBlock() const;
     QRectF blockViewportRect(const QTextBlock &block) const;
     QList<QRectF> textRangeViewportRects(const QTextBlock &block, int start,
@@ -258,6 +271,11 @@ private:
     void insertCompletion(const QString &completion);
 
     MarkdownHighlighter *m_highlighter = nullptr;
+    QObject *m_documentOwner = nullptr;
+    QTextDocument *m_sourceDocument = nullptr;
+    QTextDocument *m_readDocument = nullptr;
+    QTextCursor m_sourceCursor;
+    bool m_switchingDocuments = false;
     QCompleter *m_completer = nullptr;
     QStringListModel *m_completionModel = nullptr;
 

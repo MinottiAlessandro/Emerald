@@ -1,6 +1,7 @@
 #include "MarkdownEditor.h"
 
 #include "MarkdownHighlighter.h"
+#include "MarkdownReadRenderer.h"
 #include "MathRender.h"
 #include "core/ContentSecurity.h"
 #include "core/MascotSeed.h"
@@ -291,6 +292,15 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // text always wraps
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
+
+    // QTextEdit deletes its internally-owned document when another one is
+    // installed. Reparent the source under a neutral child owner so swapping to
+    // the Read Mode document can never destroy source text or undo history.
+    m_documentOwner = new QObject(this);
+    m_sourceDocument = document();
+    m_sourceDocument->setParent(m_documentOwner);
+    m_readDocument = new QTextDocument(m_documentOwner);
+    m_sourceCursor = QTextCursor(m_sourceDocument);
     // Keep the existing reading-friendly overscroll: one extra viewport lets
     // the final line rise to the top. QTextEdit's range is pixel-addressable,
     // unlike QPlainTextEdit's visual-line range, so it can also be animated.
@@ -356,6 +366,8 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
             &MarkdownEditor::activateQuickJump);
 
     connect(this, &QTextEdit::cursorPositionChanged, this, [this] {
+        if (m_switchingDocuments)
+            return;
         updateActiveHighlight();
         viewport()->update(); // repaint bullets as the active line moves
         updateMascotLineState(); // reveal/hide the header line as the caret moves
@@ -385,11 +397,15 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     // setActiveBlock early-returns when nothing actually changed, so the overlap
     // with cursorPositionChanged costs nothing.
     connect(this, &QTextEdit::selectionChanged, this, [this] {
+        if (m_switchingDocuments)
+            return;
         updateActiveHighlight();
         viewport()->update();
     });
     // Keep folded sections hidden as the document is edited.
     connect(document(), &QTextDocument::contentsChanged, this, [this] {
+        if (m_readMode)
+            return;
         // Some edits move the caret to a new line without emitting
         // cursorPositionChanged — notably Ctrl+Backspace joining two lines. Re-
         // sync the active (revealed) block here too, or the merged line keeps
@@ -403,6 +419,8 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     });
     connect(document(), &QTextDocument::contentsChange, this,
             [this](int position, int charsRemoved, int charsAdded) {
+                if (m_readMode)
+                    return;
                 Q_UNUSED(charsRemoved);
                 scheduleVisualBlockFormats(position, qMax(1, charsAdded));
             });
@@ -419,6 +437,18 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
 }
 
 void MarkdownEditor::setPlainText(const QString &text) {
+    if (m_readMode) {
+        m_sourceDocument->setPlainText(text);
+        m_sourceCursor = QTextCursor(m_sourceDocument);
+        m_sourceDocument->clearUndoRedoStacks();
+        m_sourceDocument->setModified(false);
+        if (m_highlighter)
+            m_highlighter->rehighlight();
+        rebuildReadDocument(0.0);
+        updateMascotLineState();
+        return;
+    }
+
     QTextEdit::setPlainText(text);
     // A document replacement intentionally starts a fresh undo history. Finish
     // the derived block layout synchronously, then remove any paragraph-format
@@ -428,7 +458,45 @@ void MarkdownEditor::setPlainText(const QString &text) {
     document()->setModified(false);
 }
 
+void MarkdownEditor::clear() { setPlainText(QString()); }
+
+QString MarkdownEditor::toPlainText() const {
+    return m_sourceDocument ? m_sourceDocument->toPlainText() : QString();
+}
+
+QTextCursor MarkdownEditor::sourceTextCursor() const {
+    return m_readMode ? m_sourceCursor : textCursor();
+}
+
+void MarkdownEditor::setSourceTextCursor(const QTextCursor &cursor) {
+    if (!m_sourceDocument)
+        return;
+    QTextCursor sourceCursor(m_sourceDocument);
+    sourceCursor.setPosition(
+        qBound(0, cursor.anchor(),
+               qMax(0, m_sourceDocument->characterCount() - 1)));
+    sourceCursor.setPosition(
+        qBound(0, cursor.position(),
+               qMax(0, m_sourceDocument->characterCount() - 1)),
+        QTextCursor::KeepAnchor);
+    m_sourceCursor = sourceCursor;
+    if (!m_readMode) {
+        setTextCursor(sourceCursor);
+    } else if (m_readDocument) {
+        const int sourceBlock =
+            m_sourceDocument->findBlock(sourceCursor.position()).blockNumber();
+        const QTextBlock rendered = MarkdownReadRenderer::blockForSourceBlock(
+            m_readDocument, sourceBlock);
+        if (rendered.isValid()) {
+            QTextCursor readCursor(rendered);
+            setTextCursor(readCursor);
+        }
+    }
+}
+
 void MarkdownEditor::undo() {
+    if (m_readMode)
+        return;
     const QString sourceBefore = toPlainText();
     while (document()->isUndoAvailable()) {
         QTextEdit::undo();
@@ -438,6 +506,8 @@ void MarkdownEditor::undo() {
 }
 
 void MarkdownEditor::redo() {
+    if (m_readMode)
+        return;
     const QString sourceBefore = toPlainText();
     while (document()->isRedoAvailable()) {
         QTextEdit::redo();
@@ -458,16 +528,20 @@ void MarkdownEditor::setImagePaths(const QString &basePath,
     m_imageRootPath = vaultRoot;
     m_imageSizeCache.clear();
     m_imageSizeCacheOrder.clear();
-    applyImagePreviewFormats();
+    if (!m_readMode)
+        applyImagePreviewFormats();
     viewport()->update();
 }
 
 void MarkdownEditor::applyFont(const QFont &font) {
     setFont(font);
-    document()->setDefaultFont(font);
+    m_sourceDocument->setDefaultFont(font);
     if (m_highlighter)
         m_highlighter->setBaseSize(font.pointSizeF());
-    applyLineSpacing(); // extra leading is measured in font line-heights
+    if (m_readMode)
+        rebuildReadDocument(currentScrollRatio());
+    else
+        applyLineSpacing(); // extra leading is measured in font line-heights
 }
 
 void MarkdownEditor::setLineSpacing(int percent) {
@@ -476,10 +550,15 @@ void MarkdownEditor::setLineSpacing(int percent) {
 }
 
 void MarkdownEditor::applyLineSpacing() {
-    applyVisualBlockFormats();
+    if (m_readMode)
+        rebuildReadDocument(currentScrollRatio());
+    else
+        applyVisualBlockFormats();
 }
 
 void MarkdownEditor::scheduleVisualBlockFormats(int position, int charsChanged) {
+    if (m_readMode)
+        return;
     const int start = qMax(0, position);
     const int end = start + qMax(1, charsChanged);
     m_pendingVisualFormatStart = m_pendingVisualFormatStart < 0
@@ -496,6 +575,10 @@ void MarkdownEditor::scheduleVisualBlockFormats(int position, int charsChanged) 
         const int pendingEnd = m_pendingVisualFormatEnd;
         m_pendingVisualFormatStart = -1;
         m_pendingVisualFormatEnd = -1;
+        // The callback may have been queued by the source document immediately
+        // before Read Mode swapped in its presentation document.
+        if (m_readMode)
+            return;
         if (pendingStart >= 0)
             applyVisualBlockFormats(pendingStart,
                                     qMax(1, pendingEnd - pendingStart));
@@ -887,27 +970,89 @@ void MarkdownEditor::setReadMode(bool enabled) {
         return;
 
     stopSmoothScroll();
-    m_readMode = enabled;
-    setReadOnly(enabled);
+    const qreal scrollRatio = currentScrollRatio();
     if (enabled) {
+        m_sourceCursor = textCursor();
         m_editCursorWidth = qMax(1, cursorWidth());
-        setCursorWidth(0);
         if (m_completer)
             m_completer->popup()->hide();
         cancelQuickJump();
-    } else {
-        setCursorWidth(m_editCursorWidth);
-    }
+        m_readMode = true;
+        updateActiveHighlight();
+        if (m_highlighter)
+            m_highlighter->rehighlight();
+        rebuildReadDocument();
 
-    updateActiveHighlight();
-    // setActiveBlock's incremental path normally touches only the old/new
-    // selection. Read Mode uses -1 as an intentional "no active block"
-    // sentinel, so re-run the document once when crossing that boundary.
-    if (m_highlighter)
-        m_highlighter->rehighlight();
-    applyVisualBlockFormats();
-    updateMascotLineState();
+        m_switchingDocuments = true;
+        setDocument(m_readDocument);
+        m_switchingDocuments = false;
+        setReadOnly(true);
+        setCursorWidth(0);
+        setSourceTextCursor(m_sourceCursor);
+        // QTextEdit::setDocument() marks the newly installed document dirty as
+        // part of resetting its control. Presentation is derived state, never
+        // a saveable edit, so normalize that Qt bookkeeping immediately.
+        m_readDocument->setModified(false);
+        restoreScrollRatio(scrollRatio);
+    } else {
+        m_readMode = false;
+        m_switchingDocuments = true;
+        setDocument(m_sourceDocument);
+        setTextCursor(m_sourceCursor);
+        m_switchingDocuments = false;
+        setReadOnly(false);
+        setCursorWidth(m_editCursorWidth);
+
+        updateActiveHighlight();
+        if (m_highlighter)
+            m_highlighter->rehighlight();
+        applyVisualBlockFormats();
+        updateMascotLineState();
+        restoreScrollRatio(scrollRatio);
+        // Release the rendered text promptly; edit mode keeps only the small
+        // empty document shell until Read Mode is entered again.
+        m_readDocument->clear();
+        m_readDocument->setModified(false);
+    }
+    viewport()->setCursor(Qt::IBeamCursor);
     viewport()->update();
+}
+
+qreal MarkdownEditor::currentScrollRatio() const {
+    const int maximum = verticalScrollBar()->maximum();
+    return maximum > 0
+               ? qBound(0.0, qreal(verticalScrollBar()->value()) / maximum, 1.0)
+               : 0.0;
+}
+
+void MarkdownEditor::restoreScrollRatio(qreal ratio) {
+    if (ratio < 0.0)
+        return;
+    ratio = qBound(0.0, ratio, 1.0);
+    QTextDocument *expected = document();
+    const auto restore = [this, ratio, expected] {
+        if (document() != expected)
+            return;
+        verticalScrollBar()->setValue(
+            qRound(ratio * verticalScrollBar()->maximum()));
+        m_smoothScrollTarget = verticalScrollBar()->value();
+    };
+    restore();
+    QTimer::singleShot(0, this, restore);
+}
+
+void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
+    if (!m_readDocument || !m_sourceDocument)
+        return;
+    if (scrollRatio < 0.0 && document() == m_readDocument)
+        scrollRatio = currentScrollRatio();
+    MarkdownReadRenderer::Options options;
+    options.baseFont = font();
+    options.lineSpacing = m_lineSpacing;
+    MarkdownReadRenderer::render(m_readDocument,
+                                 m_sourceDocument->toPlainText(), options);
+    if (document() == m_readDocument)
+        restoreScrollRatio(scrollRatio);
 }
 
 void MarkdownEditor::updateActiveHighlight() {
@@ -920,6 +1065,7 @@ void MarkdownEditor::updateActiveHighlight() {
         m_highlighter->setActiveBlock(-1, -1);
         m_visualSelectionFirst = -1;
         m_visualSelectionLast = -1;
+        return;
     } else {
         const QTextCursor tc = textCursor();
         m_visualSelectionFirst = qMin(
@@ -952,18 +1098,18 @@ void MarkdownEditor::updateActiveHighlight() {
 }
 
 QTextBlock MarkdownEditor::mascotBlock() const {
-    const QTextBlock first = document()->firstBlock();
+    const QTextBlock first = m_sourceDocument->firstBlock();
     return (first.isValid() && MascotSeed::fromLine(first.text()) != 0)
                ? first
                : QTextBlock();
 }
 
 quint64 MarkdownEditor::mascotSeed() const {
-    return MascotSeed::fromLine(document()->firstBlock().text());
+    return MascotSeed::fromLine(m_sourceDocument->firstBlock().text());
 }
 
 QString MarkdownEditor::mascotKind() const {
-    return MascotSeed::kindFromLine(document()->firstBlock().text());
+    return MascotSeed::kindFromLine(m_sourceDocument->firstBlock().text());
 }
 
 int MarkdownEditor::firstContentPosition() const {
@@ -979,7 +1125,7 @@ QString MarkdownEditor::bodyText() const {
 
 void MarkdownEditor::setMascot(quint64 seed, const QString &kind) {
     const QTextBlock mb = mascotBlock();
-    QTextCursor c(document());
+    QTextCursor c(m_sourceDocument);
     c.beginEditBlock();
     if (seed == 0) {
         if (mb.isValid()) { // drop the header line and its trailing newline
@@ -996,6 +1142,8 @@ void MarkdownEditor::setMascot(quint64 seed, const QString &kind) {
         c.insertText(MascotSeed::line(seed, kind) + QLatin1Char('\n'));
     }
     c.endEditBlock();
+    if (m_readMode)
+        rebuildReadDocument(currentScrollRatio());
     updateMascotLineState(); // hide the line + emit mascotSeedChanged
 }
 
@@ -1008,7 +1156,8 @@ void MarkdownEditor::updateMascotLineState() {
         const bool onIt = !m_readMode && textCursor().blockNumber() == 0;
         if (mb.isVisible() != onIt) {
             mb.setVisible(onIt);
-            document()->markContentsDirty(0, document()->characterCount());
+            m_sourceDocument->markContentsDirty(
+                0, m_sourceDocument->characterCount());
             viewport()->update();
         }
     }
@@ -2732,7 +2881,8 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     const qreal anchorOffset = blockViewportRect(anchor).top();
 
     QTextEdit::resizeEvent(event);
-    applyImagePreviewFormats(); // only media rows depend on viewport dimensions
+    if (!m_readMode)
+        applyImagePreviewFormats(); // source media rows depend on viewport width
 
     if (!anchor.isValid() || anchor.blockNumber() <= 0 ||
         !document()->documentLayout())
@@ -2744,6 +2894,12 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
 
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
     EMERALD_PROFILE_SCOPE("MarkdownEditor::paintEvent");
+    if (m_readMode) {
+        // The Read Mode document already contains presentation formats. None of
+        // the source editor's regex-driven overlays may inspect or repaint it.
+        QTextEdit::paintEvent(event);
+        return;
+    }
     // Code-block backgrounds go behind the text: a rounded body with a thin
     // header bar (rounded top corners) in a lighter complementary colour.
     {

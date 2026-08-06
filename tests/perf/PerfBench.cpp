@@ -585,6 +585,14 @@ int main(int argc, char **argv) {
                   editor.render(&p);
               }),
               QStringLiteral("ms"));
+    addMetric(metrics, QStringLiteral("editor_build_read_document"),
+              timeMs([&] {
+                  editor.setReadMode(true);
+                  app.processEvents();
+              }),
+              QStringLiteral("ms"));
+    editor.setReadMode(false);
+    app.processEvents();
     addCurrentRssMetric(QStringLiteral("rss_after_editor_current"));
 
     const QStringList formulas{

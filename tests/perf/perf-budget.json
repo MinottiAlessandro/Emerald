@@ -16,6 +16,7 @@
     "rss_after_search_current": { "max": 300000.0 },
     "editor_set_plain_text": { "max": 200.0 },
     "editor_render_viewport": { "max": 120.0 },
+    "editor_build_read_document": { "max": 120.0 },
     "rss_after_editor_current": { "max": 350000.0 },
     "math_measure_and_paint": { "max": 80.0 },
     "mascot_render_unique_500": { "max": 1500.0 },

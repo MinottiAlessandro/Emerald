@@ -534,18 +534,68 @@ int main(int argc, char **argv) {
 
     // Read Mode removes the caret, rejects editing keys, and turns plain arrow
     // navigation into viewport scrolling without relocating the text cursor.
-    QStringList readingLines;
+    QStringList readingLines{
+        QStringLiteral("# Rendered heading"),
+        QStringLiteral("A **bold** paragraph with [[Target|wiki label]] and "
+                       "[site](https://example.com), plus $x^2$."),
+        QStringLiteral("> A quoted paragraph"),
+        QStringLiteral("- A list item"), QStringLiteral("```cpp"),
+        QStringLiteral("const int answer = 42;"), QStringLiteral("```"),
+        QStringLiteral("$$ E = mc^2 $$")};
     for (int i = 0; i < 80; ++i)
         readingLines << QStringLiteral("Reading line %1").arg(i);
     const QString readingSource = readingLines.join(QLatin1Char('\n'));
     editor.setPlainText(readingSource);
     editor.resize(300, 180);
+    QTextDocument *const sourceDocument = editor.document();
+    QTextCursor readingCursor(sourceDocument);
+    readingCursor.setPosition(readingSource.indexOf(QStringLiteral("bold")));
+    editor.setTextCursor(readingCursor);
+    const int sourceCursorBeforeRead = editor.textCursor().position();
     editor.setReadMode(true);
     QApplication::processEvents();
     check(editor.readMode() && editor.isReadOnly(),
           QStringLiteral("Read Mode should make the editor read-only"));
     check(editor.cursorWidth() == 0,
           QStringLiteral("Read Mode should hide the text caret"));
+    check(editor.sourceDocument() == sourceDocument &&
+              editor.document() != sourceDocument,
+          QStringLiteral("Read Mode should display a separate document while "
+                         "retaining the Markdown source document"));
+    const QString renderedReading = editor.document()->toPlainText();
+    check(renderedReading.contains(QStringLiteral("Rendered heading")) &&
+              renderedReading.contains(QStringLiteral("bold")) &&
+              renderedReading.contains(QStringLiteral("wiki label")) &&
+              renderedReading.contains(QStringLiteral("x^2")) &&
+              renderedReading.contains(QStringLiteral("const int answer")) &&
+              renderedReading.contains(QStringLiteral("E = mc^2")) &&
+              !renderedReading.contains(QStringLiteral("# Rendered")) &&
+              !renderedReading.contains(QStringLiteral("**bold**")) &&
+              !renderedReading.contains(QStringLiteral("[[Target")) &&
+              !renderedReading.contains(QStringLiteral("```")) &&
+              !renderedReading.contains(QStringLiteral("$x^2$")) &&
+              !renderedReading.contains(QStringLiteral("$$")),
+          QStringLiteral("the Read Mode document should contain presentation "
+                         "text without Markdown source markers"));
+    const QTextBlock renderedHeading = editor.document()->firstBlock();
+    QTextCursor renderedHeadingText(renderedHeading);
+    renderedHeadingText.movePosition(QTextCursor::NextCharacter,
+                                     QTextCursor::KeepAnchor);
+    check(renderedHeadingText.charFormat().fontWeight() >= QFont::Bold &&
+              renderedHeadingText.charFormat().fontPointSize() >
+                  editor.font().pointSizeF(),
+          QStringLiteral("the rendered document should retain heading visual "
+                         "hierarchy without source markers"));
+    check(editor.toPlainText() == readingSource &&
+              editor.sourceDocument()->toPlainText() == readingSource,
+          QStringLiteral("Read Mode presentation must not replace the Markdown "
+                         "source"));
+    check(!editor.document()->isUndoRedoEnabled(),
+          QStringLiteral("the Read Mode presentation document should have undo "
+                         "recording disabled"));
+    check(!editor.document()->isModified(),
+          QStringLiteral("installing the Read Mode presentation document should "
+                         "not mark it modified"));
 
     const int cursorBeforeScroll = editor.textCursor().position();
     editor.verticalScrollBar()->setValue(100);
@@ -612,9 +662,69 @@ int main(int argc, char **argv) {
     sendKey(editor, QEvent::KeyPress, Qt::Key_Left, Qt::AltModifier);
     check(navigatedBack,
           QStringLiteral("Read Mode should preserve history navigation"));
+    const int readScrollBeforeExit = editor.verticalScrollBar()->value();
     editor.setReadMode(false);
-    check(!editor.isReadOnly() && editor.cursorWidth() > 0,
-          QStringLiteral("leaving Read Mode should restore editing and caret"));
+    QApplication::processEvents();
+    check(!editor.isReadOnly() && editor.cursorWidth() > 0 &&
+              editor.document() == sourceDocument,
+          QStringLiteral("leaving Read Mode should restore the source document, "
+                         "editing, and caret"));
+    check(editor.textCursor().position() == sourceCursorBeforeRead &&
+              editor.toPlainText() == readingSource,
+          QStringLiteral("leaving Read Mode should restore the exact source "
+                         "cursor and Markdown text"));
+    check(readScrollBeforeExit == 0 || editor.verticalScrollBar()->value() > 0,
+          QStringLiteral("leaving Read Mode should preserve reading progress "
+                         "instead of jumping to the top"));
+
+    // Loading another note while Read Mode remains enabled updates the hidden
+    // source and rebuilds the presentation document, without ever exposing the
+    // source document as the editor's active surface.
+    const QString replacedWhileReading =
+        QStringLiteral("## Rebuilt note\nText with ~~old~~ and `code`.");
+    editor.setReadMode(true);
+    QTextDocument *const renderedBeforeReplace = editor.document();
+    editor.setPlainText(replacedWhileReading);
+    QApplication::processEvents();
+    check(editor.document() == renderedBeforeReplace &&
+              editor.document() != editor.sourceDocument() &&
+              editor.toPlainText() == replacedWhileReading &&
+              editor.document()->toPlainText().contains(
+                  QStringLiteral("Rebuilt note")) &&
+              !editor.document()->toPlainText().contains(QStringLiteral("##")) &&
+              !editor.document()->toPlainText().contains(QStringLiteral("~~")),
+          QStringLiteral("setPlainText in Read Mode should replace source and "
+                         "rebuild the separate presentation document"));
+    editor.setReadMode(false);
+
+    // Swapping documents must not discard the source document's undo stack.
+    editor.setPlainText(QStringLiteral("undo survives"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+            QStringLiteral("x"));
+    check(editor.sourceDocument()->isUndoAvailable(),
+          QStringLiteral("typing should create source undo history before a "
+                         "Read Mode swap"));
+    const int cursorAfterTyping = editor.textCursor().position();
+    editor.setReadMode(true);
+    editor.setReadMode(false);
+    check(editor.textCursor().position() == cursorAfterTyping &&
+              editor.sourceDocument()->isUndoAvailable(),
+          QStringLiteral("a Read Mode round trip should preserve source cursor "
+                         "and undo availability"));
+    editor.undo();
+    check(editor.toPlainText() == QStringLiteral("undo survives"),
+          QStringLiteral("source undo should still work after a Read Mode "
+                         "document swap"));
+
+    // QTextEdit normally owns and deletes its installed document. The source
+    // and rendered documents use a neutral owner specifically so destruction
+    // is also safe while the rendered one is still installed.
+    {
+        MarkdownEditor destroyedInReadMode;
+        destroyedInReadMode.setPlainText(QStringLiteral("# Temporary note"));
+        destroyedInReadMode.setReadMode(true);
+    }
 
     // Quick Jump labels follow the physical QWERTY rows, so the first two
     // visible links are Q and W rather than A and B.
