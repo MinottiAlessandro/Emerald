@@ -333,6 +333,9 @@ QTextCharFormat MarkdownReadObjectRenderer::imageFormat(
     format.setProperty(SourceSizeProperty, sourceSize);
     format.setProperty(FallbackWidthProperty, fallbackWidth);
     format.setProperty(MaxHeightProperty, maxHeight);
+    const QString accessibleLabel =
+        altText.trimmed().isEmpty() ? target : altText.trimmed();
+    format.setToolTip(QObject::tr("Image: %1").arg(accessibleLabel));
     return format;
 }
 
@@ -343,6 +346,7 @@ QTextCharFormat MarkdownReadObjectRenderer::inlineMathFormat(
     format.setObjectType(ObjectType);
     format.setProperty(KindProperty, int(Kind::InlineMath));
     format.setProperty(PayloadProperty, formula);
+    format.setToolTip(QObject::tr("Math: %1").arg(formula));
     return format;
 }
 
@@ -361,6 +365,7 @@ QTextCharFormat MarkdownReadObjectRenderer::ruleFormat(const QFont &baseFont,
     format.setObjectType(ObjectType);
     format.setProperty(KindProperty, int(Kind::Rule));
     format.setProperty(FallbackWidthProperty, fallbackWidth);
+    format.setToolTip(QObject::tr("Horizontal rule"));
     return format;
 }
 
@@ -371,6 +376,8 @@ QTextCharFormat MarkdownReadObjectRenderer::checkboxFormat(const QFont &baseFont
     format.setObjectType(ObjectType);
     format.setProperty(KindProperty, int(Kind::Checkbox));
     format.setProperty(CheckedProperty, checked);
+    format.setToolTip(checked ? QObject::tr("Completed task")
+                              : QObject::tr("Incomplete task"));
     return format;
 }
 
@@ -386,6 +393,8 @@ QTextCharFormat MarkdownReadObjectRenderer::codeBlockFormat(
                                                     : language.trimmed());
     format.setProperty(PayloadProperty, code);
     format.setProperty(FallbackWidthProperty, fallbackWidth);
+    format.setToolTip(QObject::tr("%1 code block").arg(
+        format.stringProperty(LanguageProperty)));
     return format;
 }
 
@@ -400,6 +409,31 @@ QString MarkdownReadObjectRenderer::codeText(const QTextCharFormat &format) {
     return kind(format) == Kind::CodeBlock
                ? format.stringProperty(PayloadProperty)
                : QString();
+}
+
+QString MarkdownReadObjectRenderer::accessibleText(
+    const QTextCharFormat &format) {
+    switch (kind(format)) {
+    case Kind::Image: {
+        QString label = format.stringProperty(LabelProperty).trimmed();
+        if (label.isEmpty())
+            label = format.stringProperty(PayloadProperty);
+        return QObject::tr("Image: %1").arg(label);
+    }
+    case Kind::InlineMath:
+    case Kind::DisplayMath:
+        return format.stringProperty(PayloadProperty);
+    case Kind::Rule:
+        return QString(8, QChar(0x2500));
+    case Kind::Checkbox:
+        return format.boolProperty(CheckedProperty) ? QString(QChar(0x2612))
+                                                    : QString(QChar(0x2610));
+    case Kind::CodeBlock:
+        return format.stringProperty(PayloadProperty);
+    case Kind::None:
+        break;
+    }
+    return {};
 }
 
 QRectF MarkdownReadObjectRenderer::codeCopyButtonRect(

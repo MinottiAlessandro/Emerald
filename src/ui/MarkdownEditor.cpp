@@ -287,6 +287,9 @@ HeadingSpacing headingSpacing(int level) {
 
 MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     setObjectName(QStringLiteral("editor"));
+    setAccessibleName(tr("Note editor"));
+    setAccessibleDescription(
+        tr("Markdown note editor. Text can be selected and edited."));
 
     setFrameStyle(QFrame::NoFrame);
     setAcceptRichText(false);
@@ -373,6 +376,11 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     connect(this, &QTextEdit::cursorPositionChanged, this, [this] {
         if (m_switchingDocuments)
             return;
+        if (m_readMode) {
+            syncSourceCursorFromReadSelection();
+            viewport()->update();
+            return;
+        }
         updateActiveHighlight();
         viewport()->update(); // repaint bullets as the active line moves
         updateMascotLineState(); // reveal/hide the header line as the caret moves
@@ -404,6 +412,11 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     connect(this, &QTextEdit::selectionChanged, this, [this] {
         if (m_switchingDocuments)
             return;
+        if (m_readMode) {
+            syncSourceCursorFromReadSelection();
+            viewport()->update();
+            return;
+        }
         updateActiveHighlight();
         viewport()->update();
     });
@@ -445,6 +458,7 @@ void MarkdownEditor::setPlainText(const QString &text) {
     if (m_readMode) {
         m_sourceDocument->setPlainText(text);
         m_sourceCursor = QTextCursor(m_sourceDocument);
+        m_readCursorChanged = false;
         m_sourceDocument->clearUndoRedoStacks();
         m_sourceDocument->setModified(false);
         if (m_highlighter)
@@ -488,14 +502,13 @@ void MarkdownEditor::setSourceTextCursor(const QTextCursor &cursor) {
     if (!m_readMode) {
         setTextCursor(sourceCursor);
     } else if (m_readDocument) {
-        const int sourceBlock =
-            m_sourceDocument->findBlock(sourceCursor.position()).blockNumber();
-        const QTextBlock rendered = MarkdownReadRenderer::blockForSourceBlock(
-            m_readDocument, sourceBlock);
-        if (rendered.isValid()) {
-            QTextCursor readCursor(rendered);
-            setTextCursor(readCursor);
-        }
+        const QTextCursor readCursor = MarkdownReadRenderer::mapToReadCursor(
+            m_readDocument, sourceCursor);
+        const bool wasSwitching = m_switchingDocuments;
+        m_switchingDocuments = true;
+        setTextCursor(readCursor);
+        m_switchingDocuments = wasSwitching;
+        m_readCursorChanged = false;
     }
 }
 
@@ -519,6 +532,13 @@ void MarkdownEditor::redo() {
         if (toPlainText() != sourceBefore)
             break;
     }
+}
+
+void MarkdownEditor::copy() {
+    if (m_readMode)
+        copyReadSelection();
+    else
+        QTextEdit::copy();
 }
 
 void MarkdownEditor::setCompletions(const QStringList &titles) {
@@ -997,12 +1017,20 @@ void MarkdownEditor::setReadMode(bool enabled) {
         setReadOnly(true);
         setCursorWidth(0);
         setSourceTextCursor(m_sourceCursor);
+        setAccessibleName(tr("Note reader"));
+        setAccessibleDescription(
+            tr("Read-only rendered note. Text can be selected and copied."));
         // QTextEdit::setDocument() marks the newly installed document dirty as
         // part of resetting its control. Presentation is derived state, never
         // a saveable edit, so normalize that Qt bookkeeping immediately.
         m_readDocument->setModified(false);
         restoreScrollRatio(scrollRatio);
     } else {
+        if (m_readCursorChanged) {
+            m_sourceCursor = MarkdownReadRenderer::mapToSourceCursor(
+                m_sourceDocument, textCursor());
+        }
+        m_readCursorChanged = false;
         m_readMode = false;
         m_switchingDocuments = true;
         setDocument(m_sourceDocument);
@@ -1010,6 +1038,9 @@ void MarkdownEditor::setReadMode(bool enabled) {
         m_switchingDocuments = false;
         setReadOnly(false);
         setCursorWidth(m_editCursorWidth);
+        setAccessibleName(tr("Note editor"));
+        setAccessibleDescription(
+            tr("Markdown note editor. Text can be selected and edited."));
 
         updateActiveHighlight();
         if (m_highlighter)
@@ -1054,6 +1085,13 @@ void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
         return;
     if (scrollRatio < 0.0 && document() == m_readDocument)
         scrollRatio = currentScrollRatio();
+    const bool readDocumentInstalled = document() == m_readDocument;
+    const bool cursorWasChanged = m_readCursorChanged;
+    QTextCursor sourceCursor = m_sourceCursor;
+    if (readDocumentInstalled && cursorWasChanged) {
+        sourceCursor = MarkdownReadRenderer::mapToSourceCursor(
+            m_sourceDocument, textCursor());
+    }
     MarkdownReadRenderer::Options options;
     options.baseFont = font();
     options.lineSpacing = m_lineSpacing;
@@ -1062,10 +1100,59 @@ void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
     options.fallbackWidth = qMax(80, viewport()->width());
     options.maxImageHeight =
         qBound(qreal(120), viewport()->height() * 0.62, qreal(520));
+    const bool wasSwitching = m_switchingDocuments;
+    m_switchingDocuments = true;
     MarkdownReadRenderer::render(m_readDocument,
                                  m_sourceDocument->toPlainText(), options);
-    if (document() == m_readDocument)
+    if (readDocumentInstalled) {
+        setTextCursor(MarkdownReadRenderer::mapToReadCursor(
+            m_readDocument, sourceCursor));
+    }
+    m_switchingDocuments = wasSwitching;
+    m_sourceCursor = sourceCursor;
+    m_readCursorChanged = cursorWasChanged;
+    if (readDocumentInstalled)
         restoreScrollRatio(scrollRatio);
+}
+
+void MarkdownEditor::syncSourceCursorFromReadSelection() {
+    if (!m_readMode || !m_readDocument || document() != m_readDocument)
+        return;
+    m_sourceCursor = MarkdownReadRenderer::mapToSourceCursor(
+        m_sourceDocument, textCursor());
+    m_readCursorChanged = true;
+}
+
+QString MarkdownEditor::readSelectionText(
+    const QTextCursor &selection) const {
+    if (!selection.hasSelection() || selection.document() != m_readDocument)
+        return {};
+
+    QString result;
+    result.reserve(selection.selectionEnd() - selection.selectionStart());
+    for (int position = selection.selectionStart();
+         position < selection.selectionEnd(); ++position) {
+        const QChar character = m_readDocument->characterAt(position);
+        if (character == QChar::ObjectReplacementCharacter) {
+            QTextCursor object(m_readDocument);
+            object.setPosition(position);
+            object.movePosition(QTextCursor::NextCharacter,
+                                QTextCursor::KeepAnchor);
+            result += MarkdownReadObjectRenderer::accessibleText(
+                object.charFormat());
+        } else if (character == QChar::ParagraphSeparator) {
+            result += QLatin1Char('\n');
+        } else if (!character.isNull()) {
+            result += character;
+        }
+    }
+    return result;
+}
+
+void MarkdownEditor::copyReadSelection() {
+    const QString text = readSelectionText(textCursor());
+    if (!text.isEmpty())
+        QApplication::clipboard()->setText(text);
 }
 
 QTextCharFormat MarkdownEditor::readObjectFormat(
@@ -1929,6 +2016,11 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     }
 
     if (m_readMode) {
+        if (event->matches(QKeySequence::Copy)) {
+            copy();
+            event->accept();
+            return;
+        }
         const auto mods = event->modifiers() &
                           ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
         if (mods == Qt::AltModifier &&

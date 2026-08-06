@@ -37,6 +37,7 @@ public:
     QString toPlainText() const;
     void undo();
     void redo();
+    void copy();
 
     // The Markdown document remains authoritative while Read Mode displays a
     // separate presentation document. MainWindow uses these accessors for
@@ -124,6 +125,9 @@ protected:
 private:
     void updateActiveHighlight();
     void rebuildReadDocument(qreal scrollRatio = -1.0);
+    void syncSourceCursorFromReadSelection();
+    QString readSelectionText(const QTextCursor &selection) const;
+    void copyReadSelection();
     qreal currentScrollRatio() const;
     void restoreScrollRatio(qreal ratio);
     QTextCharFormat readObjectFormat(const QTextBlock &block) const;
@@ -285,6 +289,7 @@ private:
     QTextCursor m_sourceCursor;
     bool m_switchingDocuments = false;
     bool m_readResizeQueued = false;
+    bool m_readCursorChanged = false;
     QCompleter *m_completer = nullptr;
     QStringListModel *m_completionModel = nullptr;
 

@@ -561,15 +561,22 @@ int main(int argc, char **argv) {
     editor.resize(300, 180);
     QTextDocument *const sourceDocument = editor.document();
     QTextCursor readingCursor(sourceDocument);
-    readingCursor.setPosition(readingSource.indexOf(QStringLiteral("bold")));
+    const int sourceBoldStart =
+        readingSource.indexOf(QStringLiteral("bold"));
+    readingCursor.setPosition(sourceBoldStart + 4);
+    readingCursor.setPosition(sourceBoldStart, QTextCursor::KeepAnchor);
     editor.setTextCursor(readingCursor);
-    const int sourceCursorBeforeRead = editor.textCursor().position();
     editor.setReadMode(true);
     QApplication::processEvents();
     check(editor.readMode() && editor.isReadOnly(),
           QStringLiteral("Read Mode should make the editor read-only"));
     check(editor.cursorWidth() == 0,
           QStringLiteral("Read Mode should hide the text caret"));
+    check(editor.accessibleName() == QStringLiteral("Note reader") &&
+              editor.accessibleDescription().contains(
+                  QStringLiteral("selected and copied")),
+          QStringLiteral("Read Mode should expose a concise assistive name and "
+                         "read-only interaction description"));
     check(editor.sourceDocument() == sourceDocument &&
               editor.document() != sourceDocument,
           QStringLiteral("Read Mode should display a separate document while "
@@ -587,6 +594,13 @@ int main(int argc, char **argv) {
               !renderedReading.contains(QStringLiteral("| :---")),
           QStringLiteral("the Read Mode document should contain presentation "
                          "text without Markdown source markers"));
+    check(editor.textCursor().selectedText() == QStringLiteral("bold") &&
+              editor.sourceTextCursor().selectedText() ==
+                  QStringLiteral("bold") &&
+              editor.textCursor().anchor() > editor.textCursor().position(),
+          QStringLiteral("entering Read Mode should preserve an exact source "
+                         "selection and its direction through stripped "
+                         "emphasis markers"));
     const QTextBlock renderedHeading = editor.document()->firstBlock();
     QTextCursor renderedHeadingText(renderedHeading);
     renderedHeadingText.movePosition(QTextCursor::NextCharacter,
@@ -674,6 +688,11 @@ int main(int argc, char **argv) {
               QStringLiteral("const int answer = 42;"),
           QStringLiteral("the code-card object should retain exact copyable "
                          "source without its Markdown fences"));
+    check(MarkdownReadObjectRenderer::accessibleText(codeObjectFormat) ==
+              QStringLiteral("const int answer = 42;") &&
+              !codeObjectFormat.toolTip().isEmpty(),
+          QStringLiteral("custom Read Mode objects should expose readable text "
+                         "and a descriptive tooltip"));
     check(renderedTable && renderedTable->rows() == 3 &&
               renderedTable->columns() == 3 &&
               renderedTable->format().headerRowCount() == 1,
@@ -716,7 +735,39 @@ int main(int argc, char **argv) {
                   renderedTable->format().borderCollapse(),
               QStringLiteral("semantic table headers should be emphasized and "
                              "use one collapsed grid"));
+
+        QTextCursor tableSelection = editor.document()->find(
+            QStringLiteral("Alpha"));
+        editor.setTextCursor(tableSelection);
+        check(tableSelection.hasSelection() &&
+                  editor.sourceTextCursor().selectedText() ==
+                      QStringLiteral("Alpha"),
+              QStringLiteral("a selection in a semantic table cell should map "
+                             "to the exact wiki-link alias in Markdown source"));
+        QApplication::clipboard()->clear();
+        editor.copy();
+        check(QApplication::clipboard()->text() == QStringLiteral("Alpha"),
+              QStringLiteral("programmatic copy should emit clean table-cell "
+                             "presentation text in Read Mode"));
     }
+
+    // Copy emits presentation text rather than Markdown syntax. A mapped
+    // selection remains exact on the hidden source side and survives reflow.
+    QTextCursor wikiLabelSelection =
+        editor.document()->find(QStringLiteral("wiki label"));
+    editor.setTextCursor(wikiLabelSelection);
+    QApplication::clipboard()->clear();
+    sendKey(editor, QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier,
+            QStringLiteral("c"));
+    check(QApplication::clipboard()->text() == QStringLiteral("wiki label"),
+          QStringLiteral("copying a Read Mode link label should produce clean "
+                         "display text"));
+    const QString mappedWikiLabel =
+        editor.sourceTextCursor().selectedText();
+    check(mappedWikiLabel == QStringLiteral("wiki label"),
+          QStringLiteral("a selected Read Mode link label should retain its "
+                         "exact source mapping (mapped: '%1')")
+              .arg(mappedWikiLabel));
 
     // Read Mode hit testing uses the semantic anchor range, so a plain mouse
     // click follows the displayed label without consulting hidden Markdown.
@@ -783,9 +834,12 @@ int main(int argc, char **argv) {
                          "semantic link"));
     endQuickJump(editor);
 
-    if (renderedTable) {
+    QTextCursor currentTableLink =
+        editor.document()->find(QStringLiteral("Alpha"));
+    QTextTable *currentTable = currentTableLink.currentTable();
+    if (currentTable) {
         const QTextBlock tableLinkBlock =
-            renderedTable->cellAt(1, 0).firstCursorPosition().block();
+            currentTable->cellAt(1, 0).firstCursorPosition().block();
         settleLayout(editor, tableLinkBlock);
         const QRectF tableLinkDocumentRect =
             editor.document()->documentLayout()->blockBoundingRect(
@@ -839,6 +893,23 @@ int main(int argc, char **argv) {
                          "document layout and load vault-local image content"));
 
     if (codeObjectBlock.isValid()) {
+        QTextCursor selectedCodeObject(codeObjectBlock);
+        selectedCodeObject.movePosition(QTextCursor::NextCharacter,
+                                        QTextCursor::KeepAnchor);
+        editor.setTextCursor(selectedCodeObject);
+        QApplication::clipboard()->clear();
+        sendKey(editor, QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier,
+                QStringLiteral("c"));
+        const QString mappedCodeSource =
+            editor.sourceTextCursor().selectedText();
+        check(QApplication::clipboard()->text() ==
+                  QStringLiteral("const int answer = 42;") &&
+                  mappedCodeSource.startsWith(QStringLiteral("```cpp")) &&
+                  mappedCodeSource.endsWith(QStringLiteral("```")),
+              QStringLiteral("copying a selected code card should emit its "
+                             "code while mapping the object to its complete "
+                             "fenced source span"));
+
         settleLayout(editor, codeObjectBlock);
         const QRectF documentCodeRect = editor.document()->documentLayout()
                                             ->blockBoundingRect(codeObjectBlock);
@@ -877,8 +948,15 @@ int main(int argc, char **argv) {
           QStringLiteral("installing the Read Mode presentation document should "
                          "not mark it modified"));
 
-    const int cursorBeforeScroll = editor.textCursor().position();
+    // Restore a collapsed source-driven cursor after the programmatic
+    // off-screen selection checks above. This mirrors a normal note load and
+    // keeps QTextEdit's native selection reveal out of scrolling assertions.
+    QTextCursor stableReadSourceCursor(sourceDocument);
+    stableReadSourceCursor.setPosition(sourceBoldStart);
+    editor.setSourceTextCursor(stableReadSourceCursor);
+    waitForMs(10);
     editor.verticalScrollBar()->setValue(100);
+    const int cursorBeforeScroll = editor.textCursor().position();
     const int scrollBeforeDown = editor.verticalScrollBar()->value();
     sendKey(editor, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
     const int downTarget = editor.smoothScrollTarget();
@@ -889,11 +967,18 @@ int main(int argc, char **argv) {
     const int scrollDuringDown = editor.verticalScrollBar()->value();
     check(scrollDuringDown > scrollBeforeDown && scrollDuringDown < downTarget,
           QStringLiteral("Read Mode Down should animate through an intermediate "
-                         "pixel position"));
+                         "pixel position (before %1, during %2, target %3)")
+              .arg(scrollBeforeDown)
+              .arg(scrollDuringDown)
+              .arg(downTarget));
     waitForMs(100);
     check(editor.verticalScrollBar()->value() == downTarget &&
               !editor.smoothScrollActive(),
-          QStringLiteral("Read Mode Down should finish at its pixel target"));
+          QStringLiteral("Read Mode Down should finish at its pixel target "
+                         "(actual %1, target %2, active %3)")
+              .arg(editor.verticalScrollBar()->value())
+              .arg(downTarget)
+              .arg(editor.smoothScrollActive()));
     check(editor.textCursor().position() == cursorBeforeScroll,
           QStringLiteral("Down should not move the hidden text cursor"));
     const int scrollBeforeUp = editor.verticalScrollBar()->value();
@@ -904,7 +989,11 @@ int main(int argc, char **argv) {
     waitForMs(125);
     check(editor.verticalScrollBar()->value() == upTarget &&
               !editor.smoothScrollActive(),
-          QStringLiteral("Read Mode Up should finish at its pixel target"));
+          QStringLiteral("Read Mode Up should finish at its pixel target "
+                         "(actual %1, target %2, active %3)")
+              .arg(editor.verticalScrollBar()->value())
+              .arg(upTarget)
+              .arg(editor.smoothScrollActive()));
 
     // Conventional wheel notches are animated and accumulate against the
     // pending target, while native high-resolution pixel deltas stay direct so
@@ -923,7 +1012,10 @@ int main(int argc, char **argv) {
     check(editor.verticalScrollBar()->value() == secondWheelTarget &&
               !editor.smoothScrollActive(),
           QStringLiteral("wheel scrolling should settle at the accumulated "
-                         "target"));
+                         "target (actual %1, target %2, active %3)")
+              .arg(editor.verticalScrollBar()->value())
+              .arg(secondWheelTarget)
+              .arg(editor.smoothScrollActive()));
 
     const int beforePixelDelta = editor.verticalScrollBar()->value();
     sendWheel(editor, QPoint(0, -17), {});
@@ -942,6 +1034,18 @@ int main(int argc, char **argv) {
     sendKey(editor, QEvent::KeyPress, Qt::Key_Left, Qt::AltModifier);
     check(navigatedBack,
           QStringLiteral("Read Mode should preserve history navigation"));
+    QTextCursor exitSelection =
+        editor.document()->find(QStringLiteral("wiki label"));
+    editor.setTextCursor(exitSelection);
+    editor.setLineSpacing(101);
+    waitForMs(10);
+    check(editor.textCursor().selectedText() == QStringLiteral("wiki label"),
+          QStringLiteral("rebuilding the rendered document should preserve "
+                         "both sides of a mapped selection"));
+    check(editor.sourceTextCursor().selectedText() ==
+              QStringLiteral("wiki label"),
+          QStringLiteral("the active Read Mode selection should stay synced to "
+                         "the authoritative source cursor"));
     const int readScrollBeforeExit = editor.verticalScrollBar()->value();
     editor.setReadMode(false);
     QApplication::processEvents();
@@ -949,10 +1053,10 @@ int main(int argc, char **argv) {
               editor.document() == sourceDocument,
           QStringLiteral("leaving Read Mode should restore the source document, "
                          "editing, and caret"));
-    check(editor.textCursor().position() == sourceCursorBeforeRead &&
+    check(editor.textCursor().selectedText() == QStringLiteral("wiki label") &&
               editor.toPlainText() == readingSource,
-          QStringLiteral("leaving Read Mode should restore the exact source "
-                         "cursor and Markdown text"));
+          QStringLiteral("leaving Read Mode should restore the mapped source "
+                         "selection and exact Markdown text"));
     check(readScrollBeforeExit == 0 || editor.verticalScrollBar()->value() > 0,
           QStringLiteral("leaving Read Mode should preserve reading progress "
                          "instead of jumping to the top"));

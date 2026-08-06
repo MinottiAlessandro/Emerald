@@ -60,6 +60,9 @@ public:
 
     static Kind kind(const QTextCharFormat &format);
     static QString codeText(const QTextCharFormat &format);
+    // Plain-text alternative used by selection copy and assistive UI for a
+    // custom object that would otherwise appear as U+FFFC.
+    static QString accessibleText(const QTextCharFormat &format);
     static QRectF codeCopyButtonRect(const QRectF &objectRect);
 
 private:
