@@ -274,11 +274,24 @@ if(EMERALD_BUILD_EDITOR_TESTS)
   add_test(NAME emerald_editor_tests COMMAND emerald_editor_tests)
   set_tests_properties(emerald_editor_tests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  add_executable(emerald_search_popup_tests
+    tests/ui/SearchPopupTests.cpp
+    src/core/SearchIndex.h
+    src/ui/SearchPopup.h
+    src/ui/SearchPopup.cpp
+  )
+  target_include_directories(emerald_search_popup_tests PRIVATE src)
+  target_link_libraries(emerald_search_popup_tests PRIVATE Qt6::Widgets)
+  emerald_enable_sanitizers(emerald_search_popup_tests)
+  add_test(NAME emerald_search_popup_tests COMMAND emerald_search_popup_tests)
+  set_tests_properties(emerald_search_popup_tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 # --- Core regression tests -----------------------------------------------
-# QtCore-only tests for persistent application behavior that does not need a
-# widget surface (currently per-vault settings isolation and migration).
+# QtCore-only tests for application behavior that does not need a widget
+# surface: per-vault settings and broken-link discovery.
 option(EMERALD_BUILD_CORE_TESTS "Build core regression tests" OFF)
 if(EMERALD_BUILD_CORE_TESTS)
   enable_testing()
@@ -291,6 +304,21 @@ if(EMERALD_BUILD_CORE_TESTS)
   target_link_libraries(emerald_core_tests PRIVATE Qt6::Core)
   emerald_enable_sanitizers(emerald_core_tests)
   add_test(NAME emerald_core_tests COMMAND emerald_core_tests)
+
+  add_executable(emerald_broken_links_tests
+    tests/core/BrokenLinksTests.cpp
+    src/core/MascotSeed.h
+    src/core/Note.h
+    src/core/Perf.h
+    src/core/Vault.h
+    src/core/Vault.cpp
+    src/core/WikiLink.h
+    src/core/WikiLink.cpp
+  )
+  target_include_directories(emerald_broken_links_tests PRIVATE src)
+  target_link_libraries(emerald_broken_links_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_broken_links_tests)
+  add_test(NAME emerald_broken_links_tests COMMAND emerald_broken_links_tests)
 endif()
 
 # --- Security regression tests -------------------------------------------

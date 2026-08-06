@@ -9,6 +9,17 @@
 // scans the folder, reads/writes files, and resolves link targets to paths.
 class Vault {
 public:
+    struct BrokenLink {
+        enum class State { MissingNote, EmptyNote };
+
+        QString target;
+        QString sourcePath;
+        int sourcePosition = 0;
+        int sourceLength = 0;
+        int line = 0;
+        State state = State::MissingNote;
+    };
+
     explicit Vault(QString rootPath);
 
     QString root() const { return m_root; }
@@ -65,6 +76,11 @@ public:
     // Same rewrite, returning the paths that actually changed so callers can
     // incrementally refresh dependent indexes.
     QStringList updateLinksToPaths(const QString &oldTitle, const QString &newTitle);
+
+    // Find every semantic [[wiki-link]] whose target does not exist or whose
+    // note has no body text. Results retain their exact source location so the
+    // UI can take the user directly to the link that needs attention.
+    QVector<BrokenLink> brokenLinks() const;
 
     static QString titleFromPath(const QString &path);
     // A title usable as a filename (non-empty, no path/illegal characters).

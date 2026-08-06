@@ -109,6 +109,8 @@ private:
     void selectInTree(const QString &path);
     void openSearch();
     void openQuickOpen();
+    void openBrokenLinks();
+    void openBrokenLinkSource(const QString &path, int position, int length);
     void insertTemplate(); // open the template picker (Ctrl+T)
     void insertImage();    // copy/select an image and insert a Markdown link
     void insertImagesFromFiles(const QStringList &paths);

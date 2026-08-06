@@ -89,6 +89,7 @@ it opens or installs a download.
 **Vault & search**
 - **Folder-tree sidebar** with drag-and-drop; right-click to create notes or sub-folders anywhere.
 - **Telescope-style search popup** — ranked results, type to filter, ↑/↓ to move, Enter jumps to the first match.
+- **Broken Links** — `Ctrl+Shift+B` (or **Settings → Vault → Broken links**) opens a filterable report of every `[[wiki-link]]` whose target note is missing or empty. Each result shows its source and line; Enter opens and selects the exact link.
 - **Templates** — point **Settings → Templates folder** at a folder in the vault, then **Insert Template…** (`Ctrl+T`) opens a quick picker of every note under it (sub-folders included) and drops the chosen one in at the caret. Templates can carry `{{date}}`, `{{time}}` and `{{title}}` placeholders — each filled in on insert; `{{date}}`/`{{time}}` take an optional Moment.js-style format after a colon (e.g. `{{date:YYYY/MM/DD}}`, `{{time:HH:mm:ss}}`).
 - **Debounced autosave** plus **external-edit detection** — Emerald reloads notes changed outside the app.
 
@@ -123,6 +124,7 @@ it opens or installs a download.
 | Delete note | `Ctrl+Shift+Backspace` |
 | Find in note | `Ctrl+F` |
 | Search vault | `Ctrl+Shift+F` |
+| Review broken links | `Ctrl+Shift+B` |
 | Settings | `Ctrl+,` |
 | Back / Forward | `Alt+←` / `Alt+→` |
 | Quick Jump to visible link | Hold `Alt`, then type its hint |

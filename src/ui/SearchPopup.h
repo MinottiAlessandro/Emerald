@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QFrame>
+#include <QList>
 #include <QStringList>
 
 class QLineEdit;
 class QListWidget;
+class QHideEvent;
 class SearchIndex;
 
 // A Telescope-style centred search overlay: a text field over a live result
@@ -14,6 +16,13 @@ class SearchIndex;
 class SearchPopup : public QFrame {
     Q_OBJECT
 public:
+    struct BrokenLinkItem {
+        QString label;
+        QString path;
+        int position = 0;
+        int length = 0;
+    };
+
     SearchPopup(const SearchIndex *index, QWidget *parent);
 
     // titlesOnly = a quick "go to note" picker that matches note titles only.
@@ -27,14 +36,20 @@ public:
     // name as you type, and emit templateRequested() for the chosen one.
     void showTemplates(const QStringList &files);
 
+    // A filterable broken-link report. Activating a row opens and selects the
+    // exact [[link]] occurrence in its source note.
+    void showBrokenLinks(const QList<BrokenLinkItem> &items);
+
 signals:
     void openRequested(const QString &path, const QString &query);
     void openVaultRequested(const QString &path);
     void templateRequested(const QString &path);
+    void brokenLinkRequested(const QString &path, int position, int length);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
     void refresh(const QString &text);
@@ -47,6 +62,8 @@ private:
     bool m_titlesOnly = false;
     bool m_vaultMode = false;     // listing vault folders instead of notes
     bool m_templateMode = false;  // listing template files instead of notes
+    bool m_brokenLinkMode = false; // listing broken wiki-link occurrences
     QStringList m_vaultDirs;      // candidate vault folder paths (full)
     QStringList m_templateFiles;  // candidate template file paths (full)
+    QList<BrokenLinkItem> m_brokenLinkItems;
 };

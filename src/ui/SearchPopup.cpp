@@ -3,13 +3,17 @@
 #include "core/SearchIndex.h"
 
 #include <QFileInfo>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace {
 constexpr int kPathRole = Qt::UserRole;
+constexpr int kPositionRole = Qt::UserRole + 1;
+constexpr int kLengthRole = Qt::UserRole + 2;
 constexpr int kWidth = 560;
 }
 
@@ -47,6 +51,7 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
 void SearchPopup::showCentered(bool titlesOnly) {
     m_vaultMode = false;
     m_templateMode = false;
+    m_brokenLinkMode = false;
     m_titlesOnly = titlesOnly;
     m_input->setPlaceholderText(titlesOnly ? tr("Go to note…")
                                            : tr("Search notes…"));
@@ -61,6 +66,7 @@ void SearchPopup::showCentered(bool titlesOnly) {
 void SearchPopup::showVaults(const QStringList &dirs) {
     m_vaultMode = true;
     m_templateMode = false;
+    m_brokenLinkMode = false;
     m_vaultDirs = dirs;
     m_input->setPlaceholderText(tr("Switch vault…"));
     m_input->clear();
@@ -74,10 +80,25 @@ void SearchPopup::showVaults(const QStringList &dirs) {
 void SearchPopup::showTemplates(const QStringList &files) {
     m_vaultMode = false;
     m_templateMode = true;
+    m_brokenLinkMode = false;
     m_templateFiles = files;
     m_input->setPlaceholderText(tr("Insert template…"));
     m_input->clear();
     refresh(QString()); // empty filter lists every template straight away
+    reposition();
+    show();
+    raise();
+    m_input->setFocus();
+}
+
+void SearchPopup::showBrokenLinks(const QList<BrokenLinkItem> &items) {
+    m_vaultMode = false;
+    m_templateMode = false;
+    m_brokenLinkMode = true;
+    m_brokenLinkItems = items;
+    m_input->setPlaceholderText(tr("Filter broken links…"));
+    m_input->clear();
+    refresh(QString());
     reposition();
     show();
     raise();
@@ -96,6 +117,32 @@ void SearchPopup::reposition() {
 
 void SearchPopup::refresh(const QString &text) {
     m_results->clear();
+    if (m_brokenLinkMode) {
+        const QString needle = text.trimmed();
+        for (const BrokenLinkItem &entry : std::as_const(m_brokenLinkItems)) {
+            if (!needle.isEmpty() &&
+                !entry.label.contains(needle, Qt::CaseInsensitive))
+                continue;
+            auto *item = new QListWidgetItem(entry.label, m_results);
+            item->setData(kPathRole, entry.path);
+            item->setData(kPositionRole, entry.position);
+            item->setData(kLengthRole, entry.length);
+        }
+        if (m_brokenLinkItems.isEmpty()) {
+            auto *empty = new QListWidgetItem(tr("No broken links found"),
+                                              m_results);
+            empty->setFlags(Qt::NoItemFlags);
+        } else if (m_results->count() == 0) {
+            auto *empty = new QListWidgetItem(tr("No matching broken links"),
+                                              m_results);
+            empty->setFlags(Qt::NoItemFlags);
+        } else {
+            m_results->setCurrentRow(0);
+        }
+        adjustSize();
+        reposition();
+        return;
+    }
     if (m_templateMode) {
         const QString needle = text.trimmed();
         for (const QString &file : m_templateFiles) {
@@ -152,7 +199,10 @@ void SearchPopup::accept() {
     const QString path = item->data(kPathRole).toString();
     if (path.isEmpty())
         return;
-    if (m_vaultMode)
+    if (m_brokenLinkMode)
+        emit brokenLinkRequested(path, item->data(kPositionRole).toInt(),
+                                 item->data(kLengthRole).toInt());
+    else if (m_vaultMode)
         emit openVaultRequested(path);
     else if (m_templateMode)
         emit templateRequested(path);
@@ -201,4 +251,16 @@ void SearchPopup::keyPressEvent(QKeyEvent *event) {
         return;
     }
     QFrame::keyPressEvent(event);
+}
+
+void SearchPopup::hideEvent(QHideEvent *event) {
+    if (m_brokenLinkMode) {
+        // A report can contain many occurrences. Keep it only for the lifetime
+        // of the visible utility instead of turning it into a second vault-wide
+        // cache beside SearchIndex.
+        m_brokenLinkMode = false;
+        m_brokenLinkItems.clear();
+        m_results->clear();
+    }
+    QFrame::hideEvent(event);
 }

@@ -267,7 +267,10 @@ QString manualText() {
         "jumps to a note — click it once rendered, or Ctrl+click while editing — "
         "and a note that doesn't exist yet is created on the spot. Use "
         "`[[Note|label]]` to show a different label. Renaming a note's title "
-        "rewrites every link that points to it.\n"
+        "rewrites every link that points to it. Hold **Alt** briefly to label "
+        "the links currently on screen, then type a hint to open one without "
+        "the mouse. **Ctrl+Shift+B** opens Broken Links, a filterable report of "
+        "links whose target is missing or empty.\n"
         "\n"
         "## Getting around\n"
         "- **Title** — the first line above the body is the file name (without "
@@ -307,6 +310,7 @@ QString manualText() {
         "- **Ctrl+S** — Save the current file (Emerald has auto-save)\n"
         "- **Ctrl+F** — Perform a file search\n"
         "- **Ctrl+Shift+F** — Perform a Vault search\n"
+        "- **Ctrl+Shift+B** — Review broken links\n"
         "- **Ctrl+P** — Open the file picker\n"
         "- **Ctrl+,** — Open Settings\n"
         "- **Ctrl+Q** — Close Emerald\n"
@@ -1183,6 +1187,8 @@ void MainWindow::buildUi() {
             &MainWindow::openVault);
     connect(m_searchPopup, &SearchPopup::templateRequested, this,
             &MainWindow::onTemplateChosen);
+    connect(m_searchPopup, &SearchPopup::brokenLinkRequested, this,
+            &MainWindow::openBrokenLinkSource);
 
     // In-note find bar, floating at the top-right of the editor.
     m_findBar = new QFrame(m_editor);
@@ -1497,6 +1503,9 @@ void MainWindow::buildActions() {
     auto *search = make(tr("Search Vault…"),
                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F),
                         &MainWindow::openSearch);
+    auto *brokenLinks = make(tr("Broken Links…"),
+                             QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B),
+                             &MainWindow::openBrokenLinks);
     m_genMascotAction = make(tr("Generate Mascot"),
                              QKeySequence(Qt::CTRL | Qt::Key_M),
                              &MainWindow::generateMascot);
@@ -1552,6 +1561,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(findHere);
     m_gearMenu->addAction(search);
+    m_gearMenu->addAction(brokenLinks);
     m_gearMenu->addSeparator();
     m_gearMenu->addMenu(mascotMenu);
     m_gearMenu->addSeparator();
@@ -1848,6 +1858,8 @@ void MainWindow::openSettings() {
     auto *folderBox = new QComboBox(&dlg);
     auto *homeBox = new QComboBox(&dlg);
     auto *templatesBox = new QComboBox(&dlg);
+    auto *brokenLinksButton = new QPushButton(tr("Review…"), &dlg);
+    brokenLinksButton->setToolTip(tr("Shortcut: Ctrl+Shift+B"));
     folderBox->addItem(tr("(Vault root)"), QString());
     homeBox->addItem(tr("(None)"), QString());
     templatesBox->addItem(tr("(None)"), QString());
@@ -1875,6 +1887,7 @@ void MainWindow::openSettings() {
         folderBox->setEnabled(false);
         homeBox->setEnabled(false);
         templatesBox->setEnabled(false);
+        brokenLinksButton->setEnabled(false);
     }
 
     auto *editorForm =
@@ -1885,10 +1898,11 @@ void MainWindow::openSettings() {
     addSettingRow(editorForm, tr("Line spacing"), spacingBox);
 
     auto *vaultForm = addSection(
-        tr("Vault"), tr("Defaults used when creating or opening notes."));
+        tr("Vault"), tr("Defaults and maintenance tools for this vault."));
     addSettingRow(vaultForm, tr("New notes in"), folderBox);
     addSettingRow(vaultForm, tr("Home note"), homeBox);
     addSettingRow(vaultForm, tr("Templates folder"), templatesBox);
+    addSettingRow(vaultForm, tr("Broken links"), brokenLinksButton);
 
     auto *mascotForm = addSection(
         tr("Mascot"), tr("Optional automatic mascot generation for notes."));
@@ -1931,6 +1945,11 @@ void MainWindow::openSettings() {
     const QFont originalFont = m_editor->font();
     const int originalWidth = m_editorColumnWidth;
     const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
+    bool openBrokenLinksAfterSettings = false;
+    connect(brokenLinksButton, &QPushButton::clicked, &dlg, [&] {
+        openBrokenLinksAfterSettings = true;
+        dlg.reject();
+    });
     dlg.setFocus(Qt::OtherFocusReason);
     QTimer::singleShot(0, &dlg,
                        [&dlg] { dlg.setFocus(Qt::OtherFocusReason); });
@@ -1962,6 +1981,8 @@ void MainWindow::openSettings() {
         applyEditorColumnWidth();
         m_editor->setLineSpacing(originalSpacing);
     }
+    if (openBrokenLinksAfterSettings)
+        QTimer::singleShot(0, this, &MainWindow::openBrokenLinks);
 }
 
 void MainWindow::changeFontSize(int delta) {
@@ -2759,6 +2780,50 @@ void MainWindow::openSearch() {
 void MainWindow::openQuickOpen() {
     if (m_vault)
         m_searchPopup->showCentered(true); // titles only
+}
+
+void MainWindow::openBrokenLinks() {
+    if (!m_vault)
+        return;
+
+    // Flush the active buffer and refresh the vault listing so the report is a
+    // snapshot of what the user currently sees, including outside file edits.
+    saveCurrent();
+    rescanVaultIncremental();
+
+    const QVector<Vault::BrokenLink> issues = m_vault->brokenLinks();
+    QList<SearchPopup::BrokenLinkItem> items;
+    items.reserve(issues.size());
+    const QDir root(m_vault->root());
+    for (const Vault::BrokenLink &issue : issues) {
+        const QString status =
+            issue.state == Vault::BrokenLink::State::MissingNote
+                ? tr("Missing note")
+                : tr("Empty note");
+        const QString source = root.relativeFilePath(issue.sourcePath);
+        const QString label =
+            tr("[[%1]]  —  %2\nFrom %3  ·  Line %4")
+                .arg(issue.target, status, source)
+                .arg(issue.line);
+        items.append({label, issue.sourcePath, issue.sourcePosition,
+                      issue.sourceLength});
+    }
+    m_searchPopup->showBrokenLinks(items);
+}
+
+void MainWindow::openBrokenLinkSource(const QString &path, int position,
+                                      int length) {
+    openNoteByPath(path);
+    const int documentEnd =
+        qMax(0, m_editor->document()->characterCount() - 1);
+    const int start = qBound(0, position, documentEnd);
+    const int end = qBound(start, position + length, documentEnd);
+    QTextCursor cursor(m_editor->document());
+    cursor.setPosition(start);
+    cursor.setPosition(end, QTextCursor::KeepAnchor);
+    m_editor->setTextCursor(cursor);
+    m_editor->centerCursor();
+    m_editor->setFocus();
 }
 
 void MainWindow::insertTemplate() {
