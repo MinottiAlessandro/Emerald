@@ -112,6 +112,8 @@ private:
     void updateActiveHighlight();
     QTextBlock firstVisibleTextBlock() const;
     QRectF blockViewportRect(const QTextBlock &block) const;
+    QList<QRectF> textRangeViewportRects(const QTextBlock &block, int start,
+                                         int length) const;
     void applyVisualBlockFormats(int position = 0, int charsChanged = -1);
     void scheduleVisualBlockFormats(int position, int charsChanged);
     void smoothScrollBy(qreal pixels, int durationMs = 140);

@@ -210,6 +210,27 @@ int main(int argc, char **argv) {
     check(editor.toPlainText() == codeSource,
           QStringLiteral("fenced-code layout must not alter source"));
 
+    const QString paddedCodeSource = QStringLiteral(
+        "before\n```cpp\nconst int value = 7;\n```\nafter");
+    editor.setPlainText(paddedCodeSource);
+    editor.moveCursor(QTextCursor::End);
+    const QTextBlock codeOpen = editor.document()->findBlockByNumber(1);
+    const QTextBlock codeBody = editor.document()->findBlockByNumber(2);
+    const QTextBlock codeClose = editor.document()->findBlockByNumber(3);
+    settleLayout(editor, codeClose);
+    check(codeOpen.blockFormat().leftMargin() > 0.0 &&
+              codeBody.blockFormat().leftMargin() ==
+                  codeOpen.blockFormat().leftMargin() &&
+              codeClose.blockFormat().rightMargin() ==
+                  codeOpen.blockFormat().rightMargin(),
+          QStringLiteral("every fenced-code row should share horizontal padding"));
+    check(codeOpen.blockFormat().topMargin() > 0.0 &&
+              codeClose.blockFormat().bottomMargin() > 0.0,
+          QStringLiteral("fenced-code boxes should have outer vertical spacing"));
+    check(editor.toPlainText() == paddedCodeSource &&
+              !editor.document()->isUndoAvailable(),
+          QStringLiteral("code-box padding must preserve source and undo history"));
+
     // Heading hierarchy affects both glyph size and paragraph rhythm while
     // remaining a presentation-only property of the plain Markdown document.
     const QString headingSource = QStringLiteral(
@@ -276,9 +297,12 @@ int main(int argc, char **argv) {
 
     editor.setPlainText(QStringLiteral("```\n> literal quote\n```"));
     const QTextBlock fencedQuote = editor.document()->findBlockByNumber(1);
+    const QTextBlock fencedQuoteOpen = editor.document()->firstBlock();
     settleLayout(editor, fencedQuote);
-    check(qFuzzyIsNull(fencedQuote.blockFormat().leftMargin()),
-          QStringLiteral("quote-looking fenced code should remain unindented"));
+    check(fencedQuote.blockFormat().leftMargin() ==
+              fencedQuoteOpen.blockFormat().leftMargin(),
+          QStringLiteral("quote-looking fenced code should use only uniform "
+                         "code-box padding"));
 
     // Paragraph-only presentation changes must never become separate undo
     // commands. Moving away from a list conceals its marker and can change the

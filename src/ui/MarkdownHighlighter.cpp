@@ -60,7 +60,6 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
 
     m_code.setForeground(QColor("#7ee0b0"));
     applyMono(m_code);
-    m_code.setBackground(QColor("#16241c"));
 
     // No background on the fenced-code formats: the editor already paints the
     // block's dark body as one rounded rect (MarkdownEditor::paintEvent's `full`

@@ -65,6 +65,8 @@ move the caret back onto the line, confirm the raw markers reappear.
 ## 6. Code blocks ★
 - [ ] **Type ```` ``` ````** — the third backtick auto-inserts a closing fence below; caret stays on the opening fence ready for a language tag. ★
 - [ ] Off the active line, a fenced block renders as a code box (language tag + copy button).
+- [ ] Code boxes have padded text, a bordered body, a language pill and clear separation above/below.
+- [ ] Inline code has a rounded background, including when it wraps.
 - [ ] Caret **inside** the block reveals BOTH the opening and closing fences. ★
 - [ ] Copy button copies the block's code.
 - [ ] **Selecting the whole block + something outside** shows the raw source (` ``` `), NOT both the rendered box and raw backticks at once. ★

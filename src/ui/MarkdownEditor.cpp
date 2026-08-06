@@ -543,19 +543,24 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     for (QTextBlock block = first; block.isValid(); block = block.next()) {
         const auto fenceMatch = fenceRe.match(block.text());
         const bool insideFence = inFence;
+        bool openingFence = false;
+        bool closingFence = false;
         if (fenceMatch.hasMatch()) {
             if (!inFence) {
+                openingFence = true;
                 inFence = true;
                 fence = fenceMatch.captured(1);
             } else if (fenceMatch.captured(1) == fence) {
+                closingFence = true;
                 inFence = false;
                 fence.clear();
             }
         }
+        const bool codeRegion = insideFence || openingFence;
 
         const QuotePrefix quote =
-            insideFence ? QuotePrefix{} : quotePrefix(block.text());
-        const ListPrefix list = insideFence || quote.depth > 0
+            codeRegion ? QuotePrefix{} : quotePrefix(block.text());
+        const ListPrefix list = codeRegion || quote.depth > 0
                                     ? ListPrefix{}
                                     : listPrefix(block.text());
         const int contentStart =
@@ -588,16 +593,19 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         }
 
         QTextBlockFormat format = block.blockFormat();
-        const int level = insideFence ? 0 : headingLevel(block.text());
+        const int level = codeRegion ? 0 : headingLevel(block.text());
         const HeadingSpacing spacing = headingSpacing(qMax(1, level));
         const qreal quoteIndent = bodyLineHeight * 1.18;
         const qreal listIndent = bodyLineHeight * 1.05;
         const qreal markerWidth = qMax(qreal(0), prefixWidth - leadingWidth);
+        const qreal codePadding = bodyLineHeight * 0.72;
         const qreal leftMargin =
-            quote.depth > 0
+            codeRegion ? codePadding
+            : quote.depth > 0
                 ? quote.depth * quoteIndent
                 : list.valid() ? list.depth * listIndent + markerWidth : 0.0;
-        const qreal textIndent = -prefixWidth;
+        const qreal rightMargin = codeRegion ? codePadding : 0.0;
+        const qreal textIndent = codeRegion ? 0.0 : -prefixWidth;
         const int previousQuoteDepth =
             block.previous().isValid() ? quotePrefix(block.previous().text()).depth : 0;
         const int nextQuoteDepth =
@@ -618,16 +626,20 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const qreal listBottom = list.valid() && !nextIsList
                                      ? bodyLineHeight * 0.10
                                      : 0.0;
+        const qreal codeTop = openingFence ? bodyLineHeight * 0.30 : 0.0;
+        const qreal codeBottom = closingFence ? bodyLineHeight * 0.30 : 0.0;
         const qreal topMargin =
             (level > 0 ? bodyLineHeight * spacing.topLines : 0.0) + quoteTop +
-            listTop;
+            listTop + codeTop;
         const qreal bottomMargin =
             extra + (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0) +
-            quoteBottom + listBottom;
+            quoteBottom + listBottom + codeBottom;
         const bool changed = !qFuzzyCompare(format.leftMargin() + 1.0,
                                             leftMargin + 1.0) ||
                              !qFuzzyCompare(format.textIndent() + 1.0,
                                             textIndent + 1.0) ||
+                             !qFuzzyCompare(format.rightMargin() + 1.0,
+                                            rightMargin + 1.0) ||
                              !qFuzzyCompare(format.topMargin() + 1.0,
                                             topMargin + 1.0) ||
                              !qFuzzyCompare(format.bottomMargin() + 1.0,
@@ -642,6 +654,7 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
             }
             format.setLeftMargin(leftMargin);
             format.setTextIndent(textIndent);
+            format.setRightMargin(rightMargin);
             format.setTopMargin(topMargin);
             format.setBottomMargin(bottomMargin);
             formatCursor.setPosition(block.position());
@@ -695,6 +708,38 @@ QRectF MarkdownEditor::blockViewportRect(const QTextBlock &block) const {
     rect.translate(-horizontalScrollBar()->value(),
                    -verticalScrollBar()->value());
     return rect;
+}
+
+QList<QRectF> MarkdownEditor::textRangeViewportRects(const QTextBlock &block,
+                                                      int start,
+                                                      int length) const {
+    QList<QRectF> rects;
+    if (!block.isValid() || length <= 0 || !block.layout())
+        return rects;
+    QTextLayout *layout = block.layout();
+    if (layout->lineCount() == 0)
+        return rects;
+
+    QTextCursor origin(block);
+    const QTextLine firstLine = layout->lineAt(0);
+    const QRectF originRect = cursorRect(origin);
+    const qreal xOffset = originRect.left() - firstLine.cursorToX(0);
+    const qreal yOffset = originRect.top() - firstLine.y();
+    const int end = start + length;
+    for (int i = 0; i < layout->lineCount(); ++i) {
+        const QTextLine line = layout->lineAt(i);
+        const int lineStart = line.textStart();
+        const int lineEnd = lineStart + line.textLength();
+        const int from = qMax(start, lineStart);
+        const int to = qMin(end, lineEnd);
+        if (from >= to)
+            continue;
+        const qreal x1 = xOffset + line.cursorToX(from);
+        const qreal x2 = xOffset + line.cursorToX(to);
+        rects.append(QRectF(qMin(x1, x2), yOffset + line.y(),
+                            qAbs(x2 - x1), line.height()));
+    }
+    return rects;
 }
 
 QTextBlock MarkdownEditor::firstVisibleTextBlock() const {
@@ -2064,7 +2109,7 @@ void MarkdownEditor::forEachCodeBlock(
         const qreal s = 16;
         cb.copyBtn = QRectF(cb.header.right() - s - 8,
                             cb.header.center().y() - s / 2, s, s);
-        cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang;
+        cb.language = lang.isEmpty() ? QStringLiteral("Text") : lang.left(32);
         if (includeCode)
             cb.code = code.join(QLatin1Char('\n'));
         // The caret or selection touching the block (see selFirst/selLast above)
@@ -2585,7 +2630,6 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     {
         QPainter bg(viewport());
         bg.setRenderHint(QPainter::Antialiasing);
-        bg.setPen(Qt::NoPen);
         forEachCodeBlock(event->rect(), [&](const CodeBlock &cb) {
             const QRectF full(cb.header.left(), cb.header.top(), cb.header.width(),
                               cb.body.bottom() - cb.header.top());
@@ -2593,7 +2637,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 return;
             if (cb.active) // editing or selected: show the raw ``` source, no box
                 return;
-            bg.setBrush(QColor(0x13, 0x20, 0x1a));
+            bg.setPen(QPen(QColor(0x2a, 0x49, 0x39), 1.0));
+            bg.setBrush(QColor(0x12, 0x1d, 0x18));
             bg.drawRoundedRect(full, 6, 6);
             const qreal r = 6;
             const QRectF h = cb.header;
@@ -2606,6 +2651,9 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             path.lineTo(h.right(), h.bottom());
             path.closeSubpath();
             bg.fillPath(path, QColor(0x1f, 0x47, 0x33));
+            bg.setPen(QPen(QColor(0x2d, 0x5c, 0x43), 1.0));
+            bg.drawLine(QPointF(h.left() + 1, h.bottom()),
+                        QPointF(h.right() - 1, h.bottom()));
         });
     }
 
@@ -2651,6 +2699,40 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 const qreal x = documentMargin + depth * quoteIndent + 3.0;
                 quotePainter.drawLine(QPointF(x, geo.top()),
                                       QPointF(x, geo.bottom()));
+            }
+        }
+    }
+
+    // Inline code keeps real monospace text, with a rounded span painted behind
+    // it instead of per-glyph square backgrounds. Wrapped spans are split into
+    // one rounded segment per visual line.
+    {
+        static const QRegularExpression inlineCodeRe(
+            QStringLiteral("`([^`]+)`"));
+        QPainter codePainter(viewport());
+        codePainter.setRenderHint(QPainter::Antialiasing);
+        codePainter.setPen(QPen(QColor(0x29, 0x46, 0x37), 1.0));
+        codePainter.setBrush(QColor(0x16, 0x24, 0x1c));
+        for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
+             block = block.next()) {
+            if (!block.isVisible() || block.userState() == 1)
+                continue;
+            const QRectF geo = blockViewportRect(block);
+            if (geo.top() > event->rect().bottom())
+                break;
+            if (geo.bottom() < event->rect().top())
+                continue;
+            auto matches = inlineCodeRe.globalMatch(block.text());
+            while (matches.hasNext()) {
+                const auto match = matches.next();
+                const auto rects = textRangeViewportRects(
+                    block, int(match.capturedStart(1)),
+                    int(match.capturedLength(1)));
+                for (QRectF rect : rects) {
+                    rect.adjust(-3.0, 1.0, 3.0, -1.0);
+                    if (rect.width() > 0 && rect.height() > 0)
+                        codePainter.drawRoundedRect(rect, 4, 4);
+                }
             }
         }
     }
@@ -3039,14 +3121,28 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         QFont lf = font();
         lf.setPointSizeF(font().pointSizeF() * 0.85);
         p.setFont(lf);
+        const QFontMetricsF labelMetrics(lf);
+        const qreal labelWidth = qMin(cb.header.width() - 52.0,
+                                      labelMetrics.horizontalAdvance(cb.language) +
+                                          14.0);
+        const QRectF labelRect(cb.header.left() + 8,
+                               cb.header.center().y() -
+                                   labelMetrics.height() * 0.58,
+                               qMax(qreal(24), labelWidth),
+                               labelMetrics.height() * 1.16);
+        p.setPen(QPen(QColor(0x39, 0x79, 0x57), 1.0));
+        p.setBrush(QColor(0x19, 0x37, 0x28));
+        p.drawRoundedRect(labelRect, labelRect.height() / 2.0,
+                          labelRect.height() / 2.0);
         p.setPen(QColor(0x7e, 0xe0, 0xb0));
-        p.drawText(QRectF(cb.header.left() + 12, cb.header.top(),
-                          cb.header.width() - 44, cb.header.height()),
-                   Qt::AlignVCenter | Qt::AlignLeft, cb.language);
+        p.drawText(labelRect, Qt::AlignCenter, cb.language);
         p.setFont(font());
 
         // Two offset rounded rects = a "copy" (stacked pages) glyph.
         const QRectF btn = cb.copyBtn;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x19, 0x37, 0x28));
+        p.drawRoundedRect(btn.adjusted(-3, -2, 3, 2), 4, 4);
         QPen pen(QColor(0x92, 0xb3, 0xa2));
         pen.setWidthF(1.3);
         p.setPen(pen);
