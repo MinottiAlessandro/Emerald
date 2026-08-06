@@ -431,6 +431,14 @@ int main(int argc, char **argv) {
     }
     check(paintedEditModeImage,
           QStringLiteral("edit mode should paint loaded local image content"));
+    editor.verticalScrollBar()->setValue(20);
+    QImage clippedEditImageRender(editor.viewport()->size(),
+                                  QImage::Format_ARGB32_Premultiplied);
+    clippedEditImageRender.fill(Qt::transparent);
+    editor.viewport()->render(&clippedEditImageRender);
+    check(containsPixel(clippedEditImageRender, expectedEditImagePixel),
+          QStringLiteral("a partially clipped edit-mode image should remain visible"));
+    editor.verticalScrollBar()->setValue(0);
     QTextCursor editImage(imageBlock);
     editor.setTextCursor(editImage);
     QApplication::processEvents();

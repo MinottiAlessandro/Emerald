@@ -3397,21 +3397,25 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 continue;
             if (insideCodeBlock(block))
                 continue;
-            const QRectF geo = blockViewportRect(block);
-            if (geo.top() > event->rect().bottom())
-                break;
-            if (geo.bottom() < event->rect().top() ||
-                (block.blockNumber() >= selFirst && block.blockNumber() <= selLast))
+            if (block.blockNumber() >= selFirst &&
+                block.blockNumber() <= selLast)
                 continue;
 
             const QString target = imageTargetFromLine(block.text());
             if (target.isEmpty())
                 continue;
-            const QString path = resolvedImagePath(block);
             const QRectF area = imagePreviewArea(block);
+            // The concealed Markdown glyph has a tiny block bounding rect;
+            // visibility must be tested against the full fixed-height preview
+            // area or the image vanishes as soon as that glyph leaves screen.
+            if (area.top() > event->rect().bottom())
+                break;
+            if (area.bottom() < event->rect().top())
+                continue;
             if (area.width() < 24 || area.height() < 24)
                 continue;
 
+            const QString path = resolvedImagePath(block);
             const QPixmap pm =
                 imagePreviewPixmap(path, area.size().toSize(), dpr);
             if (pm.isNull()) {
