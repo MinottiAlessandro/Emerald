@@ -2,6 +2,7 @@
 
 #include "core/Perf.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QEventLoop>
 #include <QKeyEvent>
@@ -11,6 +12,7 @@
 #include <QTextLayout>
 #include <QTextStream>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QtMath>
 
 Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf.tests")
@@ -27,11 +29,16 @@ void check(bool condition, const QString &message) {
 
 void settleLayout(MarkdownEditor &editor, const QTextBlock &block) {
     QApplication::processEvents();
-    // Querying the block geometry forces QPlainTextDocumentLayout's lazy block
-    // layout even when the editor is not currently painting this particular
-    // line.
+    // Querying the block geometry forces the document's lazy layout even when
+    // the editor is not currently painting this particular paragraph.
     editor.document()->documentLayout()->blockBoundingRect(block);
     QApplication::processEvents();
+}
+
+void waitForMs(int milliseconds) {
+    QEventLoop loop;
+    QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+    loop.exec();
 }
 
 void checkWrappedBlock(const QTextBlock &block, int contentStart,
@@ -103,9 +110,7 @@ void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
 }
 
 void waitForQuickJump() {
-    QEventLoop loop;
-    QTimer::singleShot(350, &loop, &QEventLoop::quit);
-    loop.exec();
+    waitForMs(350);
 }
 
 void beginQuickJump(MarkdownEditor &editor) {
@@ -115,6 +120,15 @@ void beginQuickJump(MarkdownEditor &editor) {
 
 void endQuickJump(MarkdownEditor &editor) {
     sendKey(editor, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
+}
+
+void sendWheel(MarkdownEditor &editor, const QPoint &pixelDelta,
+               const QPoint &angleDelta) {
+    const QPointF local(editor.viewport()->rect().center());
+    QWheelEvent event(local, editor.viewport()->mapToGlobal(local.toPoint()),
+                      pixelDelta, angleDelta, Qt::NoButton, Qt::NoModifier,
+                      Qt::NoScrollPhase, false);
+    QApplication::sendEvent(editor.viewport(), &event);
 }
 } // namespace
 
@@ -169,6 +183,26 @@ int main(int argc, char **argv) {
     check(editor.toPlainText() == codeSource,
           QStringLiteral("fenced-code layout must not alter source"));
 
+    // Paragraph-only presentation changes must never become separate undo
+    // commands. Moving away from a list conceals its marker and can change the
+    // measured hanging indent, but Ctrl+Z should still address source edits.
+    const QString undoSource = QStringLiteral("- list item\nplain line");
+    editor.setPlainText(undoSource);
+    editor.document()->setModified(false);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    check(!editor.document()->isUndoAvailable(),
+          QStringLiteral("visual list formatting should not enter undo history"));
+    check(!editor.document()->isModified(),
+          QStringLiteral("visual list formatting should not mark source dirty"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+            QStringLiteral("x"));
+    check(editor.toPlainText() == undoSource + QLatin1Char('x'),
+          QStringLiteral("typing should still edit plain Markdown source"));
+    editor.undo();
+    check(editor.toPlainText() == undoSource,
+          QStringLiteral("one undo should revert one source edit"));
+
     // Read Mode removes the caret, rejects editing keys, and turns plain arrow
     // navigation into viewport scrolling without relocating the text cursor.
     QStringList readingLines;
@@ -185,17 +219,59 @@ int main(int argc, char **argv) {
           QStringLiteral("Read Mode should hide the text caret"));
 
     const int cursorBeforeScroll = editor.textCursor().position();
-    editor.verticalScrollBar()->setValue(2);
+    editor.verticalScrollBar()->setValue(100);
     const int scrollBeforeDown = editor.verticalScrollBar()->value();
     sendKey(editor, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
-    check(editor.verticalScrollBar()->value() > scrollBeforeDown,
-          QStringLiteral("Down should scroll the page in Read Mode"));
+    const int downTarget = editor.smoothScrollTarget();
+    check(editor.smoothScrollActive() && downTarget > scrollBeforeDown,
+          QStringLiteral("Down should begin a smooth downward scroll in Read "
+                         "Mode"));
+    waitForMs(35);
+    const int scrollDuringDown = editor.verticalScrollBar()->value();
+    check(scrollDuringDown > scrollBeforeDown && scrollDuringDown < downTarget,
+          QStringLiteral("Read Mode Down should animate through an intermediate "
+                         "pixel position"));
+    waitForMs(100);
+    check(editor.verticalScrollBar()->value() == downTarget &&
+              !editor.smoothScrollActive(),
+          QStringLiteral("Read Mode Down should finish at its pixel target"));
     check(editor.textCursor().position() == cursorBeforeScroll,
           QStringLiteral("Down should not move the hidden text cursor"));
     const int scrollBeforeUp = editor.verticalScrollBar()->value();
     sendKey(editor, QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
-    check(editor.verticalScrollBar()->value() < scrollBeforeUp,
-          QStringLiteral("Up should scroll the page in Read Mode"));
+    const int upTarget = editor.smoothScrollTarget();
+    check(editor.smoothScrollActive() && upTarget < scrollBeforeUp,
+          QStringLiteral("Up should begin a smooth upward scroll in Read Mode"));
+    waitForMs(125);
+    check(editor.verticalScrollBar()->value() == upTarget &&
+              !editor.smoothScrollActive(),
+          QStringLiteral("Read Mode Up should finish at its pixel target"));
+
+    // Conventional wheel notches are animated and accumulate against the
+    // pending target, while native high-resolution pixel deltas stay direct so
+    // platform trackpad momentum is not animated a second time.
+    editor.verticalScrollBar()->setValue(100);
+    sendWheel(editor, {}, QPoint(0, -120));
+    const int firstWheelTarget = editor.smoothScrollTarget();
+    check(editor.smoothScrollActive() && firstWheelTarget > 100,
+          QStringLiteral("a wheel notch should start smooth pixel scrolling"));
+    sendWheel(editor, {}, QPoint(0, -120));
+    const int secondWheelTarget = editor.smoothScrollTarget();
+    check(secondWheelTarget > firstWheelTarget,
+          QStringLiteral("repeated wheel notches should extend the pending "
+                         "scroll target"));
+    waitForMs(170);
+    check(editor.verticalScrollBar()->value() == secondWheelTarget &&
+              !editor.smoothScrollActive(),
+          QStringLiteral("wheel scrolling should settle at the accumulated "
+                         "target"));
+
+    const int beforePixelDelta = editor.verticalScrollBar()->value();
+    sendWheel(editor, QPoint(0, -17), {});
+    check(editor.verticalScrollBar()->value() == beforePixelDelta + 17 &&
+              !editor.smoothScrollActive(),
+          QStringLiteral("native trackpad deltas should remain direct and "
+                         "pixel exact"));
 
     sendKey(editor, QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
             QStringLiteral("a"));

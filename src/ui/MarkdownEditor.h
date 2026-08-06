@@ -2,9 +2,9 @@
 
 #include <QList>
 #include <QImage>
-#include <QPlainTextEdit>
 #include <QRectF>
 #include <QStringList>
+#include <QTextEdit>
 #include <QTextBlock>
 #include <functional>
 
@@ -12,14 +12,15 @@ class MarkdownHighlighter;
 class QCompleter;
 class QFocusEvent;
 class QMimeData;
-class QPlainTextDocumentLayout;
 class QStringListModel;
 class QTimer;
+class QVariantAnimation;
+class QWheelEvent;
 
 // The writing surface: a plain-text editor wired to the live-preview
 // highlighter, with a centered reading measure, Ctrl-click navigation for
 // [[wiki-links]], and a completion popup that fires while typing inside [[ ]].
-class MarkdownEditor : public QPlainTextEdit {
+class MarkdownEditor : public QTextEdit {
     Q_OBJECT
 public:
     explicit MarkdownEditor(QWidget *parent = nullptr);
@@ -42,12 +43,15 @@ public:
 
     // Select and scroll to the first occurrence of `text` (case-insensitive).
     void jumpToMatch(const QString &text);
+    void centerCursor();
 
     // Reading-only presentation: prevent edits, hide the caret and keep every
     // line in rendered live-preview form. Plain Up/Down scroll the viewport
     // instead of moving the hidden text cursor.
     void setReadMode(bool enabled);
     bool readMode() const { return m_readMode; }
+    bool smoothScrollActive() const;
+    int smoothScrollTarget() const { return m_smoothScrollTarget; }
 
     // The note's mascot seed, stored as a hidden header line at the top of the
     // document (see MascotSeed). 0 when the note has no mascot.
@@ -85,6 +89,7 @@ signals:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
@@ -98,6 +103,11 @@ protected:
 
 private:
     void updateActiveHighlight();
+    QTextBlock firstVisibleTextBlock() const;
+    QRectF blockViewportRect(const QTextBlock &block) const;
+    void applyVisualBlockFormats(int position = 0, int charsChanged = -1);
+    void smoothScrollBy(qreal pixels, int durationMs = 140);
+    void stopSmoothScroll();
     QString linkAt(const QPoint &pos) const;
     // The URL of the [text](url) link under `pos`, or empty. Distinct from
     // linkAt (wiki note targets): these open in the system browser.
@@ -245,8 +255,11 @@ private:
     bool m_applyingFolds = false; // guard against re-entrant relayout
 
     int m_lastCursorBlock = 0;   // to detect leaving a table
+    int m_visualSelectionFirst = 0;
+    int m_visualSelectionLast = 0;
     bool m_prettifying = false;  // guard against re-entrant table reformatting
     bool m_adjustingScroll = false; // guard the over-scroll range extension
+    bool m_applyingVisualBlockFormats = false;
     bool m_readMode = false;        // navigation-only, fully rendered document
     int m_editCursorWidth = 1;      // restored when leaving Read Mode
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
@@ -260,7 +273,7 @@ private:
     bool m_quickJumpAltHeld = false;
     bool m_quickJumpArmed = false;
     bool m_quickJumpActive = false;
-    // The spacing-aware document layout (owned by the document). Held as the
-    // base type; applyLineSpacing() downcasts to set the per-row padding.
-    QPlainTextDocumentLayout *m_spacedLayout = nullptr;
+    QVariantAnimation *m_smoothScroll = nullptr;
+    int m_smoothScrollTarget = 0;
+    bool m_settingAnimatedScrollValue = false;
 };

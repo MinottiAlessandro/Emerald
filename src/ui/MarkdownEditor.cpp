@@ -8,6 +8,7 @@
 #include "core/WikiLink.h"
 
 #include <QAbstractItemView>
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QClipboard>
 #include <QCompleter>
@@ -23,16 +24,19 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPlainTextDocumentLayout>
 #include <QPixmapCache>
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QStyleHints>
 #include <QStringListModel>
 #include <QTextBlock>
+#include <QTextBlockFormat>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTimer>
+#include <QVariantAnimation>
+#include <QWheelEvent>
 #include <QtMath>
 #include <QUrl>
 #include <algorithm>
@@ -213,132 +217,20 @@ int listContentStart(const QString &text) {
     return match.hasMatch() ? match.capturedEnd() : -1;
 }
 
-// QPlainTextEdit's layout ignores block-format line height and margins. This
-// layout therefore handles the two visual adjustments Emerald needs directly:
-// extra leading below each block and a hanging indent on wrapped list items.
-// Neither adjustment inserts whitespace into the Markdown source.
-class SpacedTextLayout : public QPlainTextDocumentLayout {
-public:
-    explicit SpacedTextLayout(QTextDocument *doc)
-        : QPlainTextDocumentLayout(doc) {}
-    void setExtraLeading(qreal px) { m_extra = qMax(qreal(0), px); }
-    QRectF blockBoundingRect(const QTextBlock &block) const override {
-        QRectF r = QPlainTextDocumentLayout::blockBoundingRect(block);
-        if (applyListHangingIndent(block))
-            r = QPlainTextDocumentLayout::blockBoundingRect(block);
-        // A folded-away block lays out at zero height; it must not reclaim space
-        // through the row padding, or collapsed sections leave a phantom gap.
-        if (m_extra > 0.0 && block.isVisible())
-            r.setHeight(r.height() + m_extra);
-        return r;
-    }
-
-private:
-    bool applyListHangingIndent(const QTextBlock &block) const {
-        if (!block.isValid() || !block.isVisible())
-            return false;
-
-        QTextLayout *layout = block.layout();
-        if (!layout || layout->lineCount() < 2)
-            return false;
-
-        const QTextLine first = layout->lineAt(0);
-        const qreal originX = first.x();
-        const qreal availableWidth = first.width();
-        if (availableWidth <= 1.0)
-            return false;
-
-        // Fenced-code contents are verbatim even when they happen to begin
-        // with list-looking text. The highlighter assigns StateCode (1) to the
-        // opening fence and its body; requiring the previous block to share the
-        // state excludes the opening fence itself.
-        const bool inCode = block.userState() == 1 &&
-                            block.previous().isValid() &&
-                            block.previous().userState() == 1;
-        const int contentStart = inCode ? -1 : listContentStart(block.text());
-
-        qreal hangingIndent = 0.0;
-        const int firstEnd = first.textStart() + first.textLength();
-        if (contentStart > first.textStart() && contentStart <= firstEnd) {
-            hangingIndent = first.cursorToX(contentStart) - originX;
-            // At extremely narrow widths the marker itself may fill the row.
-            // Keep Qt's normal wrapping in that case rather than creating a
-            // zero- or negative-width continuation line.
-            if (hangingIndent <= 0.0 || hangingIndent >= availableWidth - 1.0)
-                hangingIndent = 0.0;
-        }
-
-        const qreal continuationX = originX + hangingIndent;
-        const qreal continuationWidth = availableWidth - hangingIndent;
-        bool needsRelayout = false;
-        for (int i = 1; i < layout->lineCount(); ++i) {
-            const QTextLine line = layout->lineAt(i);
-            if (qAbs(line.x() - continuationX) > 0.01 ||
-                qAbs(line.width() - continuationWidth) > 0.01) {
-                needsRelayout = true;
-                break;
-            }
-        }
-        if (!needsRelayout)
-            return false;
-
-        const int oldLineCount = layout->lineCount();
-        qreal height = 0.0;
-        int lineIndex = 0;
-        layout->beginLayout();
-        for (;;) {
-            QTextLine line = layout->createLine();
-            if (!line.isValid())
-                break;
-            const qreal indent = lineIndex == 0 ? 0.0 : hangingIndent;
-            line.setLeadingIncluded(true);
-            line.setLineWidth(availableWidth - indent);
-            line.setPosition(QPointF(originX + indent, height));
-            height += line.height();
-            if (line.leading() < 0.0)
-                height += qCeil(line.leading());
-            ++lineIndex;
-        }
-        layout->endLayout();
-        const_cast<QTextBlock &>(block).setLineCount(layout->lineCount());
-
-        auto *self = const_cast<SpacedTextLayout *>(this);
-        Q_EMIT self->updateBlock(block);
-        if (oldLineCount != layout->lineCount())
-            Q_EMIT self->documentSizeChanged(documentSize());
-        return true;
-    }
-
-    qreal m_extra = 0.0;
-};
 }
 
-MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
+MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     setObjectName(QStringLiteral("editor"));
 
-    // Swap in the spacing-aware layout before anything touches document().
-    // QPlainTextEdit keeps any QPlainTextDocumentLayout it's handed, so the
-    // subclass survives setDocument and drives the row spacing (see below).
-    auto *doc = new QTextDocument(this);
-    auto *spaced = new SpacedTextLayout(doc);
-    doc->setDocumentLayout(spaced);
-    setDocument(doc);
-    m_spacedLayout = spaced;
-
     setFrameStyle(QFrame::NoFrame);
-    setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    setAcceptRichText(false);
+    setLineWrapMode(QTextEdit::WidgetWidth);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // text always wraps
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
-    // Caret navigation scrolls one line at a time at the viewport edges:
-    // centering (setCenterOnScroll) would instead lurch the view half a page
-    // whenever the caret crossed an edge. We still want the over-scroll that
-    // lets the last line rise to the top of the screen — the *other* thing
-    // centerOnScroll gave us — so re-create just that by extending the vertical
-    // scroll range one page past the document's end. (The base maximum equals
-    // lastLine - pageStep, so max + pageStep - 1 lets the top of the viewport
-    // reach the final line.)
-    setCenterOnScroll(false);
+    // Keep the existing reading-friendly overscroll: one extra viewport lets
+    // the final line rise to the top. QTextEdit's range is pixel-addressable,
+    // unlike QPlainTextEdit's visual-line range, so it can also be animated.
     connect(verticalScrollBar(), &QAbstractSlider::rangeChanged, this,
             [this](int, int max) {
                 if (m_adjustingScroll || max <= 0)
@@ -347,6 +239,28 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
                 verticalScrollBar()->setMaximum(
                     max + verticalScrollBar()->pageStep() - 1);
                 m_adjustingScroll = false;
+            });
+
+    m_smoothScroll = new QVariantAnimation(this);
+    m_smoothScroll->setEasingCurve(QEasingCurve::OutCubic);
+    connect(m_smoothScroll, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant &value) {
+                m_settingAnimatedScrollValue = true;
+                verticalScrollBar()->setValue(qRound(value.toReal()));
+                m_settingAnimatedScrollValue = false;
+            });
+    connect(m_smoothScroll, &QVariantAnimation::finished, this, [this] {
+        m_smoothScrollTarget = verticalScrollBar()->value();
+    });
+    connect(verticalScrollBar(), &QAbstractSlider::sliderPressed, this,
+            &MarkdownEditor::stopSmoothScroll);
+    connect(verticalScrollBar(), &QAbstractSlider::valueChanged, this,
+            [this](int value) {
+                if (m_settingAnimatedScrollValue)
+                    return;
+                if (m_smoothScroll->state() == QAbstractAnimation::Running)
+                    m_smoothScroll->stop();
+                m_smoothScrollTarget = value;
             });
 
     // Default to the platform's UI monospace face (the CSS "ui-monospace"
@@ -378,7 +292,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     connect(m_quickJumpTimer, &QTimer::timeout, this,
             &MarkdownEditor::activateQuickJump);
 
-    connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+    connect(this, &QTextEdit::cursorPositionChanged, this, [this] {
         updateActiveHighlight();
         viewport()->update(); // repaint bullets as the active line moves
         updateMascotLineState(); // reveal/hide the header line as the caret moves
@@ -407,7 +321,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
     // highlighter's active span on selection changes too, not just caret moves.
     // setActiveBlock early-returns when nothing actually changed, so the overlap
     // with cursorPositionChanged costs nothing.
-    connect(this, &QPlainTextEdit::selectionChanged, this, [this] {
+    connect(this, &QTextEdit::selectionChanged, this, [this] {
         updateActiveHighlight();
         viewport()->update();
     });
@@ -424,6 +338,11 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
             reapplyFolds();
         updateMascotLineState(); // keep the header hidden and the seed in sync
     });
+    connect(document(), &QTextDocument::contentsChange, this,
+            [this](int position, int charsRemoved, int charsAdded) {
+                Q_UNUSED(charsRemoved);
+                applyVisualBlockFormats(position, qMax(1, charsAdded));
+            });
 
     m_completionModel = new QStringListModel(this);
     m_completer = new QCompleter(m_completionModel, this);
@@ -463,16 +382,156 @@ void MarkdownEditor::setLineSpacing(int percent) {
 }
 
 void MarkdownEditor::applyLineSpacing() {
-    if (!m_spacedLayout)
+    applyVisualBlockFormats();
+}
+
+void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
+    if (m_applyingVisualBlockFormats || !document())
         return;
-    // Turn the percentage into pixels of padding per row: 100% adds nothing,
-    // 200% adds a whole extra line height below each block.
-    const qreal lineHeight = QFontMetricsF(font()).lineSpacing();
-    static_cast<SpacedTextLayout *>(m_spacedLayout)
-        ->setExtraLeading(lineHeight * (m_lineSpacing - 100) / 100.0);
-    // The layout adds the padding on demand from blockBoundingRect; nudge the
-    // view to re-run geometry and repaint with the new spacing.
-    document()->markContentsDirty(0, document()->characterCount());
+
+    QTextBlock first = charsChanged < 0
+                           ? document()->firstBlock()
+                           : document()->findBlock(qMax(0, position));
+    if (!first.isValid())
+        return;
+    const int endPosition =
+        charsChanged < 0
+            ? qMax(0, document()->characterCount() - 1)
+            : qMin(qMax(0, document()->characterCount() - 1),
+                   position + qMax(1, charsChanged));
+    const QTextBlock last = document()->findBlock(endPosition);
+
+    static const QRegularExpression fenceRe(
+        QStringLiteral("^\\s*(```|~~~)"));
+    bool inFence = false;
+    QString fence;
+    for (QTextBlock block = document()->firstBlock();
+         block.isValid() && block != first; block = block.next()) {
+        const auto match = fenceRe.match(block.text());
+        if (!match.hasMatch())
+            continue;
+        if (!inFence) {
+            inFence = true;
+            fence = match.captured(1);
+        } else if (match.captured(1) == fence) {
+            inFence = false;
+            fence.clear();
+        }
+    }
+
+    m_applyingVisualBlockFormats = true;
+    const qreal extra = QFontMetricsF(font()).lineSpacing() *
+                        (m_lineSpacing - 100) / 100.0;
+    const qreal available =
+        qMax(qreal(0), viewport()->width() - document()->documentMargin() * 2);
+    for (QTextBlock block = first; block.isValid(); block = block.next()) {
+        const auto fenceMatch = fenceRe.match(block.text());
+        const bool insideFence = inFence;
+        if (fenceMatch.hasMatch()) {
+            if (!inFence) {
+                inFence = true;
+                fence = fenceMatch.captured(1);
+            } else if (fenceMatch.captured(1) == fence) {
+                inFence = false;
+                fence.clear();
+            }
+        }
+
+        const int contentStart = insideFence ? -1 : listContentStart(block.text());
+        qreal indent = 0.0;
+        if (contentStart > 0) {
+            // MarkdownHighlighter changes the advance of concealed markers
+            // (notably the custom-painted task checkbox). Measure the prefix
+            // from the actual shaped line so wrapped text starts where the
+            // rendered content starts, whether this block is active or not.
+            document()->documentLayout()->blockBoundingRect(block);
+            QTextLayout *layout = block.layout();
+            if (layout && layout->lineCount() > 0) {
+                const QTextLine firstLine = layout->lineAt(0);
+                const int firstEnd = firstLine.textStart() +
+                                     firstLine.textLength();
+                if (contentStart > firstLine.textStart() &&
+                    contentStart <= firstEnd) {
+                    indent = firstLine.cursorToX(contentStart) -
+                             firstLine.x();
+                }
+            }
+            if (indent <= 0.0 || indent >= available - 1.0)
+                indent = 0.0;
+        }
+
+        QTextBlockFormat format = block.blockFormat();
+        const bool changed = !qFuzzyCompare(format.leftMargin() + 1.0,
+                                            indent + 1.0) ||
+                             !qFuzzyCompare(format.textIndent() + 1.0,
+                                            -indent + 1.0) ||
+                             !qFuzzyCompare(format.bottomMargin() + 1.0,
+                                            extra + 1.0);
+        if (changed) {
+            format.setLeftMargin(indent);
+            format.setTextIndent(-indent);
+            format.setBottomMargin(extra);
+            QTextCursor cursor(block);
+            cursor.setBlockFormat(format);
+        }
+        if (block == last)
+            break;
+    }
+    m_applyingVisualBlockFormats = false;
+    viewport()->update();
+}
+
+bool MarkdownEditor::smoothScrollActive() const {
+    return m_smoothScroll &&
+           m_smoothScroll->state() == QAbstractAnimation::Running;
+}
+
+void MarkdownEditor::stopSmoothScroll() {
+    if (m_smoothScroll &&
+        m_smoothScroll->state() == QAbstractAnimation::Running)
+        m_smoothScroll->stop();
+    m_smoothScrollTarget = verticalScrollBar()->value();
+}
+
+void MarkdownEditor::smoothScrollBy(qreal pixels, int durationMs) {
+    QScrollBar *bar = verticalScrollBar();
+    if (!bar || qFuzzyIsNull(pixels))
+        return;
+
+    const int base = smoothScrollActive() ? m_smoothScrollTarget : bar->value();
+    m_smoothScrollTarget =
+        qBound(bar->minimum(), qRound(base + pixels), bar->maximum());
+    if (m_smoothScrollTarget == bar->value()) {
+        stopSmoothScroll();
+        return;
+    }
+
+    m_smoothScroll->stop();
+    m_smoothScroll->setDuration(qBound(80, durationMs, 220));
+    m_smoothScroll->setStartValue(bar->value());
+    m_smoothScroll->setEndValue(m_smoothScrollTarget);
+    m_smoothScroll->start();
+}
+
+QRectF MarkdownEditor::blockViewportRect(const QTextBlock &block) const {
+    if (!block.isValid() || !document() || !document()->documentLayout())
+        return {};
+    QRectF rect = document()->documentLayout()->blockBoundingRect(block);
+    rect.translate(-horizontalScrollBar()->value(),
+                   -verticalScrollBar()->value());
+    return rect;
+}
+
+QTextBlock MarkdownEditor::firstVisibleTextBlock() const {
+    QTextBlock block = cursorForPosition(QPoint(0, 0)).block();
+    if (!block.isValid())
+        block = document()->firstBlock();
+    while (block.previous().isValid() && block.previous().isVisible() &&
+           blockViewportRect(block.previous()).bottom() > 0)
+        block = block.previous();
+    while (block.isValid() && !block.isVisible())
+        block = block.next();
+    return block;
 }
 
 void MarkdownEditor::jumpToMatch(const QString &text) {
@@ -483,10 +542,17 @@ void MarkdownEditor::jumpToMatch(const QString &text) {
         centerCursor(); // land it mid-view so there's context around the match
 }
 
+void MarkdownEditor::centerCursor() {
+    stopSmoothScroll();
+    const int delta = cursorRect().center().y() - viewport()->height() / 2;
+    verticalScrollBar()->setValue(verticalScrollBar()->value() + delta);
+}
+
 void MarkdownEditor::setReadMode(bool enabled) {
     if (m_readMode == enabled)
         return;
 
+    stopSmoothScroll();
     m_readMode = enabled;
     setReadOnly(enabled);
     if (enabled) {
@@ -505,6 +571,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
     // sentinel, so re-run the document once when crossing that boundary.
     if (m_highlighter)
         m_highlighter->rehighlight();
+    applyVisualBlockFormats();
     updateMascotLineState();
     viewport()->update();
 }
@@ -512,14 +579,42 @@ void MarkdownEditor::setReadMode(bool enabled) {
 void MarkdownEditor::updateActiveHighlight() {
     if (!m_highlighter)
         return;
+    const int oldFirst = m_visualSelectionFirst;
+    const int oldLast = m_visualSelectionLast;
     if (m_readMode) {
         // No active editing line: conceal Markdown source markers everywhere.
         m_highlighter->setActiveBlock(-1, -1);
-        return;
+        m_visualSelectionFirst = -1;
+        m_visualSelectionLast = -1;
+    } else {
+        const QTextCursor tc = textCursor();
+        m_visualSelectionFirst = qMin(
+            tc.blockNumber(), document()->findBlock(tc.anchor()).blockNumber());
+        m_visualSelectionLast = qMax(
+            tc.blockNumber(), document()->findBlock(tc.anchor()).blockNumber());
+        m_highlighter->setActiveBlock(tc.blockNumber(),
+                                      document()->findBlock(tc.anchor())
+                                          .blockNumber());
     }
-    const QTextCursor tc = textCursor();
-    m_highlighter->setActiveBlock(
-        tc.blockNumber(), document()->findBlock(tc.anchor()).blockNumber());
+
+    // Revealing or concealing list markup changes the rendered width of its
+    // prefix. Refresh just the union of the previous and current selection
+    // spans so hanging indents follow the highlighter without scanning a large
+    // note on every caret move.
+    int firstNumber = m_visualSelectionFirst;
+    int lastNumber = m_visualSelectionLast;
+    if (oldFirst >= 0) {
+        firstNumber = firstNumber < 0 ? oldFirst : qMin(firstNumber, oldFirst);
+        lastNumber = qMax(lastNumber, oldLast);
+    }
+    if (firstNumber >= 0) {
+        const QTextBlock first = document()->findBlockByNumber(firstNumber);
+        const QTextBlock last = document()->findBlockByNumber(lastNumber);
+        if (first.isValid() && last.isValid())
+            applyVisualBlockFormats(first.position(),
+                                    last.position() + last.length() -
+                                        first.position());
+    }
 }
 
 QTextBlock MarkdownEditor::mascotBlock() const {
@@ -740,8 +835,7 @@ QRectF MarkdownEditor::visibleLinkRect(const QTextBlock &block, int startCol,
     if (!layout || startCol >= endCol)
         return {};
 
-    const QRectF blockGeo =
-        blockBoundingGeometry(block).translated(contentOffset());
+    const QRectF blockGeo = blockViewportRect(block);
     const QRectF visible(QPointF(0, 0), viewport()->size());
     for (int i = 0; i < layout->lineCount(); ++i) {
         const QTextLine line = layout->lineAt(i);
@@ -774,12 +868,11 @@ void MarkdownEditor::refreshQuickJumpTargets() {
 
     QList<QuickJumpTarget> targets;
     const QRectF viewportRect(QPointF(0, 0), viewport()->size());
-    for (QTextBlock block = firstVisibleBlock(); block.isValid();
+    for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
          block = block.next()) {
         if (!block.isVisible() || insideCodeBlock(block))
             continue;
-        const QRectF blockGeo =
-            blockBoundingGeometry(block).translated(contentOffset());
+        const QRectF blockGeo = blockViewportRect(block);
         if (blockGeo.top() > viewportRect.bottom())
             break;
         if (blockGeo.bottom() < viewportRect.top())
@@ -969,6 +1062,7 @@ bool MarkdownEditor::isOverFoldControl(const QPoint &pos) const {
 }
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
+    stopSmoothScroll();
     if (m_quickJumpArmed || m_quickJumpActive)
         cancelQuickJump();
     if (event->button() == Qt::BackButton) {
@@ -1003,7 +1097,7 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         }
         return;
     }
-    QPlainTextEdit::mousePressEvent(event);
+    QTextEdit::mousePressEvent(event);
 }
 
 void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
@@ -1014,7 +1108,40 @@ void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
                            (!m_readMode && taskCheckboxBlockAt(p).isValid()) ||
                            isOverFoldControl(p) || isOverCopyButton(p);
     viewport()->setCursor(clickable ? Qt::PointingHandCursor : Qt::IBeamCursor);
-    QPlainTextEdit::mouseMoveEvent(event);
+    QTextEdit::mouseMoveEvent(event);
+}
+
+void MarkdownEditor::wheelEvent(QWheelEvent *event) {
+    const auto mods = event->modifiers();
+    if (mods & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
+        stopSmoothScroll();
+        QTextEdit::wheelEvent(event);
+        return;
+    }
+
+    // High-resolution trackpads already provide platform-tuned pixel deltas
+    // and momentum. Apply those directly instead of adding a second animation.
+    const QPoint pixelDelta = event->pixelDelta();
+    if (!pixelDelta.isNull()) {
+        stopSmoothScroll();
+        verticalScrollBar()->setValue(verticalScrollBar()->value() -
+                                      pixelDelta.y());
+        m_smoothScrollTarget = verticalScrollBar()->value();
+        event->accept();
+        return;
+    }
+
+    const int angle = event->angleDelta().y();
+    if (angle != 0) {
+        const int wheelLines = qMax(1, QGuiApplication::styleHints()
+                                           ->wheelScrollLines());
+        const qreal linePixels = QFontMetricsF(font()).lineSpacing();
+        smoothScrollBy(-qreal(angle) / 120.0 * wheelLines * linePixels);
+        event->accept();
+        return;
+    }
+
+    QTextEdit::wheelEvent(event);
 }
 
 bool MarkdownEditor::continueList() {
@@ -1197,18 +1324,20 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         }
         if (mods == Qt::NoModifier &&
             (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
-            verticalScrollBar()->triggerAction(
-                event->key() == Qt::Key_Up
-                    ? QAbstractSlider::SliderSingleStepSub
-                    : QAbstractSlider::SliderSingleStepAdd);
+            const qreal delta = QFontMetricsF(font()).lineSpacing() *
+                                (event->key() == Qt::Key_Up ? -1.0 : 1.0);
+            smoothScrollBy(delta, 105);
             event->accept();
             return;
         }
+        stopSmoothScroll();
         // The base read-only handler retains selection/copy and standard page
         // navigation without reaching Emerald's editing-only shortcuts below.
-        QPlainTextEdit::keyPressEvent(event);
+        QTextEdit::keyPressEvent(event);
         return;
     }
+
+    stopSmoothScroll();
 
     if (m_completer->popup()->isVisible()) {
         // These keys belong to the popup while it is open.
@@ -1422,7 +1551,7 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
-    QPlainTextEdit::keyPressEvent(event);
+    QTextEdit::keyPressEvent(event);
     updateCompletionPopup();
 }
 
@@ -1433,13 +1562,13 @@ void MarkdownEditor::keyReleaseEvent(QKeyEvent *event) {
         event->accept();
         return;
     }
-    QPlainTextEdit::keyReleaseEvent(event);
+    QTextEdit::keyReleaseEvent(event);
 }
 
 void MarkdownEditor::focusOutEvent(QFocusEvent *event) {
     m_quickJumpAltHeld = false;
     cancelQuickJump();
-    QPlainTextEdit::focusOutEvent(event);
+    QTextEdit::focusOutEvent(event);
 }
 
 bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const {
@@ -1448,7 +1577,7 @@ bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const {
     if (source && (source->hasImage() ||
                    !imageFilePathsFromMimeData(source).isEmpty()))
         return true;
-    return QPlainTextEdit::canInsertFromMimeData(source);
+    return QTextEdit::canInsertFromMimeData(source);
 }
 
 void MarkdownEditor::insertFromMimeData(const QMimeData *source) {
@@ -1468,7 +1597,7 @@ void MarkdownEditor::insertFromMimeData(const QMimeData *source) {
             }
         }
     }
-    QPlainTextEdit::insertFromMimeData(source);
+    QTextEdit::insertFromMimeData(source);
 }
 
 // Wrap the selection in `marker` (e.g. ** or *), or unwrap if it's already
@@ -1725,7 +1854,7 @@ void MarkdownEditor::forEachCodeBlock(
     const QTextCursor tc = textCursor();
     const int selFirst = document()->findBlock(tc.selectionStart()).blockNumber();
     const int selLast = document()->findBlock(tc.selectionEnd()).blockNumber();
-    QTextBlock start = firstVisibleBlock();
+    QTextBlock start = firstVisibleTextBlock();
     if (!start.isValid())
         return;
     // If the viewport starts inside a fenced region, walk back to its opening
@@ -1761,7 +1890,7 @@ void MarkdownEditor::forEachCodeBlock(
 
     for (QTextBlock b = start; b.isValid(); b = b.next()) {
         const bool isCode = b.userState() == 1; // MarkdownHighlighter::StateCode
-        const QRectF geo = blockBoundingGeometry(b).translated(contentOffset());
+        const QRectF geo = blockViewportRect(b);
         if (geo.top() > clip.bottom()) {
             if (inCode)
                 emitRegion(geo.top(), b.blockNumber());
@@ -1784,9 +1913,7 @@ void MarkdownEditor::forEachCodeBlock(
         }
     }
     if (inCode)
-        emitRegion(blockBoundingGeometry(document()->lastBlock())
-                       .translated(contentOffset())
-                       .bottom(),
+        emitRegion(blockViewportRect(document()->lastBlock()).bottom(),
                    document()->lastBlock().blockNumber());
 }
 
@@ -2249,33 +2376,20 @@ void MarkdownEditor::moveToTableCell(const QTextBlock &block, int cellIdx) {
 
 void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     EMERALD_PROFILE_SCOPE("MarkdownEditor::resizeEvent");
-    // Remember which block tops the viewport before the base relayout. The
-    // document can scroll past its end (see the over-scroll range set up in the
-    // constructor), and a width change rewraps every line; left alone, the
-    // preserved scrollbar value would point at unrelated content and the view
-    // would lurch (most noticeably near the end of the file).
-    const int anchor = firstVisibleBlock().blockNumber();
+    stopSmoothScroll();
+    // Preserve the document block and its fractional pixel offset at the top
+    // while QTextEdit reflows to the new width.
+    const QTextBlock anchor = firstVisibleTextBlock();
+    const qreal anchorOffset = blockViewportRect(anchor).top();
 
-    QPlainTextEdit::resizeEvent(event);
+    QTextEdit::resizeEvent(event);
 
-    auto *layout =
-        qobject_cast<QPlainTextDocumentLayout *>(document()->documentLayout());
-    if (!layout || anchor <= 0)
+    if (!anchor.isValid() || anchor.blockNumber() <= 0 ||
+        !document()->documentLayout())
         return;
-
-    // The vertical scrollbar counts wrapped lines, so pinning the anchor back
-    // to the top means summing the wrapped lines above it. QPlainTextEdit lays
-    // out blocks lazily; force each block's layout first or an untouched block
-    // reports zero lines and we undercount (which scrolls to the very top).
-    int line = 0;
-    for (QTextBlock b = document()->firstBlock();
-         b.isValid() && b.blockNumber() < anchor; b = b.next()) {
-        if (!b.isVisible())
-            continue;
-        layout->blockBoundingRect(b); // forces layout of this block
-        line += b.layout()->lineCount();
-    }
-    verticalScrollBar()->setValue(line);
+    const qreal documentTop =
+        document()->documentLayout()->blockBoundingRect(anchor).top();
+    verticalScrollBar()->setValue(qRound(documentTop - anchorOffset));
 }
 
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
@@ -2309,7 +2423,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         });
     }
 
-    QPlainTextEdit::paintEvent(event);
+    QTextEdit::paintEvent(event);
 
     // Standalone Markdown images are stored as plain text but rendered as a
     // local preview whenever the caret/selection is not on that line.
@@ -2329,14 +2443,13 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         QPainter imgPainter(viewport());
         imgPainter.setRenderHint(QPainter::Antialiasing);
         const qreal dpr = devicePixelRatioF();
-        for (QTextBlock block = firstVisibleBlock(); block.isValid();
+        for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
              block = block.next()) {
             if (!block.isVisible())
                 continue;
             if (insideCodeBlock(block))
                 continue;
-            const QRectF geo =
-                blockBoundingGeometry(block).translated(contentOffset());
+            const QRectF geo = blockViewportRect(block);
             if (geo.top() > event->rect().bottom())
                 break;
             if (geo.bottom() < event->rect().top() ||
@@ -2408,7 +2521,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     p.setRenderHint(QPainter::Antialiasing);
     const QColor color(0x6d, 0x8e, 0x7c);
 
-    for (QTextBlock block = firstVisibleBlock(); block.isValid();
+    for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
          block = block.next()) {
         // Folded-away lines collapse onto their heading; skip them or their
         // bullet/checkbox/rule glyphs would pile up just under the title.
@@ -2417,7 +2530,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         // Inside a code block the text is verbatim — no bullets/rules/checkboxes.
         if (insideCodeBlock(block))
             continue;
-        const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
+        const QRectF geo = blockViewportRect(block);
         if (geo.top() > event->rect().bottom())
             break;
         if (geo.bottom() < event->rect().top() ||
@@ -2533,7 +2646,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         QRectF regionGeo;
         QStringList body;
         int openNum = 0;
-        QTextBlock start = firstVisibleBlock();
+        QTextBlock start = firstVisibleTextBlock();
         if (start.isValid()) {
             if (start.previous().isValid() && start.previous().userState() == 2) {
                 start = start.previous();
@@ -2544,8 +2657,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
         for (QTextBlock b = start; b.isValid(); b = b.next()) {
             const bool mathy = b.userState() == 2; // StateMath: open / middle
-            const QRectF geo =
-                blockBoundingGeometry(b).translated(contentOffset());
+            const QRectF geo = blockViewportRect(b);
             auto flush = [&](int closeNum) {
                 const bool busy = selLast >= openNum && selFirst <= closeNum;
                 if (!busy && !body.isEmpty() &&
@@ -2584,12 +2696,11 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             }
         }
 
-        for (QTextBlock block = firstVisibleBlock(); block.isValid();
+        for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
              block = block.next()) {
             if (!block.isVisible())
                 continue;
-            const QRectF geo =
-                blockBoundingGeometry(block).translated(contentOffset());
+            const QRectF geo = blockViewportRect(block);
             if (geo.top() > event->rect().bottom())
                 break;
             const int bn = block.blockNumber();
@@ -2713,9 +2824,9 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     });
 
     // Fold arrows in the left margin next to foldable headings.
-    for (QTextBlock block = firstVisibleBlock(); block.isValid();
+    for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
          block = block.next()) {
-        const QRectF geo = blockBoundingGeometry(block).translated(contentOffset());
+        const QRectF geo = blockViewportRect(block);
         if (geo.top() > event->rect().bottom())
             break;
         // A heading hidden inside an enclosing fold (e.g. a collapsed child under

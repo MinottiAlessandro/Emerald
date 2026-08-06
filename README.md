@@ -104,6 +104,7 @@ it opens or installs a download.
 **Polish**
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
 - **Adjustable editor font** (family + size, persisted) and **line spacing**; heading sizes scale with the font.
+- **Smooth-scrolling prototype** — mouse-wheel steps ease between pixel positions; high-resolution trackpad deltas remain native and direct, and Read Mode's ↑/↓ movement uses the same pixel-based viewport.
 - **Self-updating** — **Check for Updates…** pulls the latest release from GitHub and installs in place on macOS and Linux AppImage builds.
 - **Dark theme**, embedded in the binary.
 
@@ -188,7 +189,7 @@ core/   no GUI, unit-testable (depends only on QtCore)
   Note             { path, title }
 ui/     Qt Widgets
   MainWindow       folder tree + title + editor; autosave, history, rename
-  MarkdownEditor   QPlainTextEdit + clickable links, [[ autocomplete, lists, folding
+  MarkdownEditor   QTextEdit + pixel scrolling, clickable links, [[ autocomplete, lists, folding
   MarkdownHighlighter   inline live preview (conceals markers off the active line)
   SearchPopup      centered Telescope-style search overlay
 ```

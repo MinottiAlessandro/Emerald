@@ -129,7 +129,17 @@ move the caret back onto the line, confirm the raw markers reappear.
       files to either vault.
 - [ ] **Read Mode** (`Ctrl+E` or **Settings → Vault → Read mode**) removes the
       caret and renders the current line like the rest of the note. Plain ↑/↓
-      scroll the page without moving a text cursor. ◆
+      smoothly scroll the page by one visual line without moving a text cursor. ◆
+- [ ] **Smooth mouse-wheel scrolling** — each ordinary wheel notch eases to its
+      target without visible line-sized jumps. Spin several notches quickly and
+      confirm they accumulate into one continuous movement rather than restarting
+      from the original position. ◆
+- [ ] **Trackpad scrolling** — slow two-finger movement follows the fingers at
+      pixel precision, and native momentum continues naturally after release;
+      there should be no extra easing or delayed tail added by Emerald. Test on
+      at least one Linux setup and macOS if available. ◆
+- [ ] Start a smooth wheel movement, then click in the note or drag the scrollbar.
+      The animation stops immediately and does not pull the page away afterward.
 - [ ] While Read Mode is on, typing, title edits, task toggles, templates,
       images, mascots, new/renamed/moved/deleted notes and folders, and clicking
       a missing `[[link]]` cannot change the vault. Links, search, folding,
