@@ -90,6 +90,7 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] External link `[text](https://…)` renders, opens in the system browser.
 - [ ] **Insert link** (`Ctrl+K`) — wraps selection as `[sel]()` (caret in parens) or inserts `[]()` (caret in brackets). ★
 - [ ] **Back / Forward** (`Alt+←` / `Alt+→`), mouse side buttons, and sidebar arrows all navigate history.
+- [ ] **Quick Jump** — hold `Alt` briefly and confirm every visible wiki/external link receives a hint in `QWERTYUIOPASDFGHJKLZXCVBNM` order. Keep holding `Alt`, type a hint, and confirm that link opens. With more than 26 visible links, confirm all hints become fixed-width two-key sequences. Releasing `Alt`, pressing Escape, or changing focus dismisses them. ◆
 
 ## 9. Search
 - [ ] **Find in note** (`Ctrl+F`).
@@ -175,6 +176,7 @@ Verify each fires and that menu items show their shortcut label.
 | Search vault                       | `Ctrl+Shift+F`                 | [ ] |
 | Settings                           | `Ctrl+,`                       | [ ] |
 | Back / Forward                     | `Alt+←` / `Alt+→`              | [ ] |
+| Quick Jump to visible link         | Hold `Alt`, then type hint     | [ ] |
 | Bold / Italic                      | `Ctrl+B` / `Ctrl+I`            | [ ] |
 | Insert link                        | `Ctrl+K`                       | [ ] |
 | Heading 1–6 (press again to clear) | `Ctrl+1` … `Ctrl+6`            | [ ] |

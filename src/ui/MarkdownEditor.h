@@ -10,9 +10,11 @@
 
 class MarkdownHighlighter;
 class QCompleter;
+class QFocusEvent;
 class QMimeData;
 class QPlainTextDocumentLayout;
 class QStringListModel;
+class QTimer;
 
 // The writing surface: a plain-text editor wired to the live-preview
 // highlighter, with a centered reading measure, Ctrl-click navigation for
@@ -78,6 +80,8 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
     bool canInsertFromMimeData(const QMimeData *source) const override;
     void insertFromMimeData(const QMimeData *source) override;
     // Draws real bullet glyphs over the (hidden) dash of list items.
@@ -98,6 +102,25 @@ private:
     // Should a click at `pos` follow a link? True on Ctrl+click, or a plain
     // click on a rendered link that lives off the active (cursor) line.
     bool followsLink(const QPoint &pos, Qt::KeyboardModifiers mods) const;
+
+    // Keyboard-only link navigation. Holding Alt briefly labels every visible
+    // link; while Alt remains held, typing its QWERTY-ordered hint opens it.
+    enum class QuickJumpKind { Wiki, External };
+    struct QuickJumpTarget {
+        QString hint;
+        QString destination;
+        QRectF linkRect;
+        QRectF badgeRect;
+        QuickJumpKind kind = QuickJumpKind::Wiki;
+    };
+    void armQuickJump();
+    void activateQuickJump();
+    void cancelQuickJump();
+    bool handleQuickJumpKey(QKeyEvent *event);
+    void refreshQuickJumpTargets();
+    void openQuickJumpTarget(const QuickJumpTarget &target);
+    QRectF visibleLinkRect(const QTextBlock &block, int startCol,
+                           int endCol) const;
     // On Enter in a list item or blockquote, continue it: append a fresh marker
     // at the line end, or split mid-item so the text after the caret moves onto
     // a new marked item. An empty item clears itself (ends the list). Returns
@@ -222,6 +245,12 @@ private:
     QString m_mascotKind;        // last seen kind, so a kind-only change emits too
     QString m_imageBasePath;     // current note folder for relative image links
     QString m_imageRootPath;     // vault boundary for local image previews
+    QTimer *m_quickJumpTimer = nullptr;
+    QList<QuickJumpTarget> m_quickJumpTargets;
+    QString m_quickJumpPrefix;
+    bool m_quickJumpAltHeld = false;
+    bool m_quickJumpArmed = false;
+    bool m_quickJumpActive = false;
     // The spacing-aware document layout (owned by the document). Held as the
     // base type; applyLineSpacing() downcasts to set the per-row padding.
     QPlainTextDocumentLayout *m_spacedLayout = nullptr;

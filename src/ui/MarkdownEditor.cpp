@@ -14,6 +14,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QFileInfo>
+#include <QFocusEvent>
 #include <QFont>
 #include <QFontMetricsF>
 #include <QImageReader>
@@ -31,9 +32,11 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
+#include <QTimer>
 #include <QtMath>
 #include <QUrl>
 #include <algorithm>
+#include <utility>
 
 namespace {
 // A task line: capture(1) = indent, capture(2) = the [ ] / [x] status char.
@@ -48,6 +51,29 @@ const QRegularExpression &mdLinkRe() {
     static const QRegularExpression re(
         QStringLiteral("\\[([^\\]\\[]+)\\]\\(([^)\\s]+)\\)"));
     return re;
+}
+
+// Hint labels follow the physical rows of a QWERTY keyboard rather than
+// alphabetical order, keeping the most convenient keys spatially grouped.
+constexpr auto QuickJumpKeys = "QWERTYUIOPASDFGHJKLZXCVBNM";
+constexpr int QuickJumpKeyCount = 26;
+constexpr int QuickJumpHoldMs = 250;
+
+QString quickJumpHint(int index, int width) {
+    QString hint(width, QLatin1Char('Q'));
+    for (int pos = width - 1; pos >= 0; --pos) {
+        hint[pos] = QLatin1Char(QuickJumpKeys[index % QuickJumpKeyCount]);
+        index /= QuickJumpKeyCount;
+    }
+    return hint;
+}
+
+QFont quickJumpFont(const QFont &base) {
+    QFont result(base);
+    result.setBold(true);
+    if (base.pointSizeF() > 0)
+        result.setPointSizeF(qMax(8.0, base.pointSizeF() * 0.78));
+    return result;
 }
 
 const QRegularExpression &imageLineRe() {
@@ -346,6 +372,12 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QPlainTextEdit(parent) {
 
     m_highlighter = new MarkdownHighlighter(document());
 
+    m_quickJumpTimer = new QTimer(this);
+    m_quickJumpTimer->setSingleShot(true);
+    m_quickJumpTimer->setInterval(QuickJumpHoldMs);
+    connect(m_quickJumpTimer, &QTimer::timeout, this,
+            &MarkdownEditor::activateQuickJump);
+
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
         const QTextCursor tc = textCursor();
         m_highlighter->setActiveBlock(
@@ -642,6 +674,233 @@ bool MarkdownEditor::followsLink(const QPoint &pos,
     return cursorForPosition(pos).blockNumber() != textCursor().blockNumber();
 }
 
+void MarkdownEditor::armQuickJump() {
+    m_quickJumpAltHeld = true;
+    m_quickJumpArmed = true;
+    m_quickJumpActive = false;
+    m_quickJumpPrefix.clear();
+    m_quickJumpTargets.clear();
+    m_quickJumpTimer->start();
+}
+
+void MarkdownEditor::activateQuickJump() {
+    if (!m_quickJumpAltHeld || !m_quickJumpArmed || !hasFocus())
+        return;
+
+    m_quickJumpArmed = false;
+    refreshQuickJumpTargets();
+    m_quickJumpActive = !m_quickJumpTargets.isEmpty();
+    viewport()->update();
+}
+
+void MarkdownEditor::cancelQuickJump() {
+    m_quickJumpTimer->stop();
+    m_quickJumpArmed = false;
+    m_quickJumpActive = false;
+    m_quickJumpPrefix.clear();
+    m_quickJumpTargets.clear();
+    viewport()->update();
+}
+
+QRectF MarkdownEditor::visibleLinkRect(const QTextBlock &block, int startCol,
+                                       int endCol) const {
+    QTextLayout *layout = block.layout();
+    if (!layout || startCol >= endCol)
+        return {};
+
+    const QRectF blockGeo =
+        blockBoundingGeometry(block).translated(contentOffset());
+    const QRectF visible(QPointF(0, 0), viewport()->size());
+    for (int i = 0; i < layout->lineCount(); ++i) {
+        const QTextLine line = layout->lineAt(i);
+        const int lineStart = line.textStart();
+        const int lineEnd = lineStart + line.textLength();
+        const int overlapStart = qMax(startCol, lineStart);
+        const int overlapEnd = qMin(endCol, lineEnd);
+        if (overlapStart >= overlapEnd)
+            continue;
+
+        const qreal x1 = line.cursorToX(overlapStart);
+        const qreal x2 = line.cursorToX(overlapEnd);
+        const QRectF rect(blockGeo.left() + qMin(x1, x2),
+                          blockGeo.top() + line.y(), qAbs(x2 - x1),
+                          line.height());
+        if (rect.intersects(visible))
+            return rect.intersected(visible);
+    }
+    return {};
+}
+
+void MarkdownEditor::refreshQuickJumpTargets() {
+    struct Candidate {
+        int sourceStart = 0;
+        int displayStart = 0;
+        int displayEnd = 0;
+        QString destination;
+        QuickJumpKind kind = QuickJumpKind::Wiki;
+    };
+
+    QList<QuickJumpTarget> targets;
+    const QRectF viewportRect(QPointF(0, 0), viewport()->size());
+    for (QTextBlock block = firstVisibleBlock(); block.isValid();
+         block = block.next()) {
+        if (!block.isVisible() || insideCodeBlock(block))
+            continue;
+        const QRectF blockGeo =
+            blockBoundingGeometry(block).translated(contentOffset());
+        if (blockGeo.top() > viewportRect.bottom())
+            break;
+        if (blockGeo.bottom() < viewportRect.top())
+            continue;
+
+        const QString text = block.text();
+        QList<QPair<int, int>> codeSpans;
+        static const QRegularExpression inlineCodeRe(
+            QStringLiteral("`[^`]+`"));
+        auto codeIt = inlineCodeRe.globalMatch(text);
+        while (codeIt.hasNext()) {
+            const auto match = codeIt.next();
+            codeSpans.append({match.capturedStart(), match.capturedEnd()});
+        }
+        const auto overlapsCode = [&codeSpans](int start, int end) {
+            return std::any_of(codeSpans.cbegin(), codeSpans.cend(),
+                               [start, end](const auto &span) {
+                                   return start < span.second && end > span.first;
+                               });
+        };
+
+        QList<Candidate> candidates;
+        auto wikiIt = WikiLink::pattern().globalMatch(text);
+        while (wikiIt.hasNext()) {
+            const auto match = wikiIt.next();
+            if (overlapsCode(match.capturedStart(), match.capturedEnd()))
+                continue;
+            const QString inner = match.captured(1);
+            const int pipe = inner.indexOf(QLatin1Char('|'));
+            const int displayStart = match.capturedStart(1) +
+                                     (pipe >= 0 ? pipe + 1 : 0);
+            candidates.append({int(match.capturedStart()), displayStart,
+                               int(match.capturedEnd(1)),
+                               WikiLink::cleanTarget(inner),
+                               QuickJumpKind::Wiki});
+        }
+
+        auto mdIt = mdLinkRe().globalMatch(text);
+        while (mdIt.hasNext()) {
+            const auto match = mdIt.next();
+            const int start = match.capturedStart();
+            if ((start > 0 && text.at(start - 1) == QLatin1Char('!')) ||
+                overlapsCode(start, match.capturedEnd()))
+                continue;
+            candidates.append({start, int(match.capturedStart(1)),
+                               int(match.capturedEnd(1)), match.captured(2),
+                               QuickJumpKind::External});
+        }
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const Candidate &left, const Candidate &right) {
+                      return left.sourceStart < right.sourceStart;
+                  });
+        for (const Candidate &candidate : candidates) {
+            if (candidate.destination.isEmpty())
+                continue;
+            const QRectF linkRect = visibleLinkRect(
+                block, candidate.displayStart, candidate.displayEnd);
+            if (linkRect.isEmpty())
+                continue;
+            QuickJumpTarget target;
+            target.destination = candidate.destination;
+            target.linkRect = linkRect;
+            target.kind = candidate.kind;
+            targets.append(target);
+        }
+    }
+
+    int width = 1;
+    qsizetype capacity = QuickJumpKeyCount;
+    while (targets.size() > capacity) {
+        ++width;
+        capacity *= QuickJumpKeyCount;
+    }
+
+    const QFontMetricsF metrics(quickJumpFont(font()));
+    for (int i = 0; i < targets.size(); ++i) {
+        QuickJumpTarget &target = targets[i];
+        target.hint = quickJumpHint(i, width);
+        const qreal badgeWidth =
+            qMax(16.0, metrics.horizontalAdvance(target.hint) + 8.0);
+        const qreal badgeHeight = qMax(16.0, metrics.height() + 4.0);
+        qreal x = target.linkRect.right() + 4.0;
+        if (x + badgeWidth > viewportRect.right() - 2.0)
+            x = target.linkRect.left() - badgeWidth - 4.0;
+        x = qBound(2.0, x,
+                   qMax(2.0, viewportRect.right() - badgeWidth - 2.0));
+        const qreal y = qBound(
+            2.0, target.linkRect.center().y() - badgeHeight / 2.0,
+            qMax(2.0, viewportRect.bottom() - badgeHeight - 2.0));
+        target.badgeRect = QRectF(x, y, badgeWidth, badgeHeight);
+    }
+    m_quickJumpTargets = std::move(targets);
+}
+
+void MarkdownEditor::openQuickJumpTarget(const QuickJumpTarget &target) {
+    const QString destination = target.destination;
+    const QuickJumpKind kind = target.kind;
+    cancelQuickJump();
+    if (kind == QuickJumpKind::Wiki) {
+        emit linkClicked(destination);
+        return;
+    }
+
+    const QUrl safeUrl = ContentSecurity::externalUrl(destination);
+    if (safeUrl.isValid())
+        QDesktopServices::openUrl(safeUrl);
+    else
+        emit noticeRequested(tr("Blocked unsafe link"));
+}
+
+bool MarkdownEditor::handleQuickJumpKey(QKeyEvent *event) {
+    if (!m_quickJumpActive)
+        return false;
+
+    if (event->key() == Qt::Key_Escape) {
+        cancelQuickJump();
+        return true;
+    }
+
+    // Existing Alt+arrow editing and history shortcuts keep precedence.
+    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down ||
+        event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
+        cancelQuickJump();
+        return false;
+    }
+
+    const int keyIndex = event->key() - Qt::Key_A;
+    if (keyIndex < 0 || keyIndex >= 26) {
+        cancelQuickJump();
+        return false;
+    }
+
+    const QChar pressed = QLatin1Char(char('A' + keyIndex));
+    m_quickJumpPrefix.append(pressed);
+    for (const QuickJumpTarget &target : std::as_const(m_quickJumpTargets)) {
+        if (target.hint == m_quickJumpPrefix) {
+            openQuickJumpTarget(target);
+            return true;
+        }
+    }
+
+    const bool hasMatch = std::any_of(
+        m_quickJumpTargets.cbegin(), m_quickJumpTargets.cend(),
+        [this](const QuickJumpTarget &target) {
+            return target.hint.startsWith(m_quickJumpPrefix);
+        });
+    if (!hasMatch)
+        m_quickJumpPrefix.clear();
+    viewport()->update();
+    return true;
+}
+
 QTextBlock MarkdownEditor::taskCheckboxBlockAt(const QPoint &pos) const {
     const QTextBlock block = cursorForPosition(pos).block();
     if (block.blockNumber() == textCursor().blockNumber())
@@ -678,6 +937,8 @@ bool MarkdownEditor::isOverFoldControl(const QPoint &pos) const {
 }
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
+    if (m_quickJumpArmed || m_quickJumpActive)
+        cancelQuickJump();
     if (event->button() == Qt::BackButton) {
         emit navigateBack();
         return;
@@ -867,6 +1128,27 @@ bool MarkdownEditor::indentSelection(bool deeper) {
 }
 
 void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Alt &&
+        !(event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier))) {
+        // Modifier keys normally do not repeat, but ignoring a platform-issued
+        // repeat keeps a long hold from accidentally cancelling an active mode.
+        if (!event->isAutoRepeat() && !m_quickJumpAltHeld)
+            armQuickJump();
+        event->accept();
+        return;
+    }
+
+    if (m_quickJumpArmed && !m_quickJumpActive) {
+        // A chord started before the hold threshold: this is an existing Alt
+        // shortcut or an Option-produced character, so do not enter jump mode.
+        m_quickJumpTimer->stop();
+        m_quickJumpArmed = false;
+    }
+    if (handleQuickJumpKey(event)) {
+        event->accept();
+        return;
+    }
+
     if (m_completer->popup()->isVisible()) {
         // These keys belong to the popup while it is open.
         switch (event->key()) {
@@ -1081,6 +1363,22 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
 
     QPlainTextEdit::keyPressEvent(event);
     updateCompletionPopup();
+}
+
+void MarkdownEditor::keyReleaseEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Alt) {
+        m_quickJumpAltHeld = false;
+        cancelQuickJump();
+        event->accept();
+        return;
+    }
+    QPlainTextEdit::keyReleaseEvent(event);
+}
+
+void MarkdownEditor::focusOutEvent(QFocusEvent *event) {
+    m_quickJumpAltHeld = false;
+    cancelQuickJump();
+    QPlainTextEdit::focusOutEvent(event);
 }
 
 bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const {
@@ -2380,5 +2678,23 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             for (int i = 0; i < 3; ++i, dx += gap)
                 p.drawEllipse(QPointF(dx, end.center().y()), dotR, dotR);
         }
+    }
+
+    if (m_quickJumpActive) {
+        // Scrolling while Alt is held changes the visible target set. Rebuild
+        // only for this transient overlay so normal painting stays allocation-
+        // free and hints always remain attached to what is actually on screen.
+        refreshQuickJumpTargets();
+        const QFont oldFont = p.font();
+        p.setFont(quickJumpFont(font()));
+        p.setPen(QPen(QColor(0x0b, 0x24, 0x18), 1));
+        for (const QuickJumpTarget &target : std::as_const(m_quickJumpTargets)) {
+            if (!target.hint.startsWith(m_quickJumpPrefix))
+                continue;
+            p.setBrush(QColor(0x39, 0xd9, 0x83));
+            p.drawRoundedRect(target.badgeRect, 4, 4);
+            p.drawText(target.badgeRect, Qt::AlignCenter, target.hint);
+        }
+        p.setFont(oldFont);
     }
 }

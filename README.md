@@ -81,7 +81,7 @@ it opens or installs a download.
 - **Accents** (`\hat \bar \vec \tilde \dot \ddot \widehat \overline`), **grown delimiters** `\left( … \right]`, **`\text` / `\textbf` / `\operatorname`**, **matrices** (`pmatrix` `bmatrix` `vmatrix` …), ~150 symbol commands (Greek, operators, relations, arrows), and full Unicode (emoji, CJK).
 
 **Links & navigation**
-- `[[Note]]` links are clickable (plain click once rendered, Ctrl+click on the line you're editing) and auto-create their target. `[[Note|alias]]` shows just the alias. Typing `[[` pops a fuzzy autocomplete of existing titles.
+- `[[Note]]` links are clickable (plain click once rendered, Ctrl+click on the line you're editing) and auto-create their target. `[[Note|alias]]` shows just the alias. Typing `[[` pops a fuzzy autocomplete of existing titles. Hold `Alt` for a moment to label every visible link, then type its QWERTY-ordered hint to open it without the mouse.
 - **External links** — `[text](https://…)` renders as a clickable link (the `](url)` melts away, leaving just the text) and opens in your browser.
 - **Title = filename** — the note's title is the first line above the body; editing it renames the file and rewrites every inbound `[[link]]`.
 - **Back / forward history** like a browser (`Alt+←` / `Alt+→`, mouse side buttons, or the sidebar arrows).
@@ -125,6 +125,7 @@ it opens or installs a download.
 | Search vault | `Ctrl+Shift+F` |
 | Settings | `Ctrl+,` |
 | Back / Forward | `Alt+←` / `Alt+→` |
+| Quick Jump to visible link | Hold `Alt`, then type its hint |
 | Bold / Italic | `Ctrl+B` / `Ctrl+I` |
 | Insert link | `Ctrl+K` |
 | Heading level 1–6 (press again to clear) | `Ctrl+1` … `Ctrl+6` |

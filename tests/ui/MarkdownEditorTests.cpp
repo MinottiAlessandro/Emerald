@@ -3,10 +3,13 @@
 #include "core/Perf.h"
 
 #include <QApplication>
+#include <QEventLoop>
+#include <QKeyEvent>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTextStream>
+#include <QTimer>
 #include <QtMath>
 
 Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf.tests")
@@ -90,6 +93,28 @@ void checkListCase(MarkdownEditor &editor, const QString &line,
                       description + QStringLiteral(" after resize"));
     editor.resize(250, 220);
 }
+
+void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
+             Qt::KeyboardModifiers modifiers,
+             const QString &text = QString()) {
+    QKeyEvent event(type, key, modifiers, text);
+    QApplication::sendEvent(&editor, &event);
+}
+
+void waitForQuickJump() {
+    QEventLoop loop;
+    QTimer::singleShot(350, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
+void beginQuickJump(MarkdownEditor &editor) {
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+    waitForQuickJump();
+}
+
+void endQuickJump(MarkdownEditor &editor) {
+    sendKey(editor, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -142,6 +167,101 @@ int main(int argc, char **argv) {
     }
     check(editor.toPlainText() == codeSource,
           QStringLiteral("fenced-code layout must not alter source"));
+
+    // Quick Jump labels follow the physical QWERTY rows, so the first two
+    // visible links are Q and W rather than A and B.
+    editor.resize(700, 700);
+    editor.activateWindow();
+    editor.setFocus();
+    QString jumpedTo;
+    QObject::connect(&editor, &MarkdownEditor::linkClicked,
+                     [&jumpedTo](const QString &target) { jumpedTo = target; });
+    editor.setPlainText(QStringLiteral("[[First]] then [[Second]]"));
+    QApplication::processEvents();
+
+    beginQuickJump(editor);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+            QStringLiteral("q"));
+    check(jumpedTo == QStringLiteral("First"),
+          QStringLiteral("Quick Jump Q should open the first visible link"));
+    endQuickJump(editor);
+
+    jumpedTo.clear();
+    beginQuickJump(editor);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_W, Qt::AltModifier,
+            QStringLiteral("w"));
+    check(jumpedTo == QStringLiteral("Second"),
+          QStringLiteral("Quick Jump W should open the second visible link"));
+    endQuickJump(editor);
+
+    // Code-looking links and Markdown images are not navigable targets; an
+    // external target after them still participates in the same ordering.
+    QString notice;
+    QObject::connect(&editor, &MarkdownEditor::noticeRequested,
+                     [&notice](const QString &text) { notice = text; });
+    editor.setPlainText(QStringLiteral(
+        "`[[Code]]` ![image](missing.png) [[Real]] "
+        "[unsafe](javascript:bad)"));
+    QApplication::processEvents();
+
+    jumpedTo.clear();
+    beginQuickJump(editor);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+            QStringLiteral("q"));
+    check(jumpedTo == QStringLiteral("Real"),
+          QStringLiteral("Quick Jump should skip inline code and images"));
+    endQuickJump(editor);
+
+    notice.clear();
+    beginQuickJump(editor);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_W, Qt::AltModifier,
+            QStringLiteral("w"));
+    check(notice == QStringLiteral("Blocked unsafe link"),
+          QStringLiteral("Quick Jump should route external links through URL "
+                         "security"));
+    endQuickJump(editor);
+
+    // More than 26 visible links switch the whole overlay to fixed-width
+    // hints. The first is QQ; index 26 rolls over to WQ in the same key order.
+    QStringList manyLinks;
+    for (int i = 1; i <= 27; ++i)
+        manyLinks << QStringLiteral("[[Note %1]]").arg(i);
+    editor.setPlainText(manyLinks.join(QLatin1Char('\n')));
+    QApplication::processEvents();
+
+    jumpedTo.clear();
+    beginQuickJump(editor);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+            QStringLiteral("q"));
+    check(jumpedTo.isEmpty(),
+          QStringLiteral("a fixed-width Quick Jump hint should wait for key two"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+            QStringLiteral("q"));
+    check(jumpedTo == QStringLiteral("Note 1"),
+          QStringLiteral("Quick Jump QQ should open the first of 27 links"));
+    endQuickJump(editor);
+
+    jumpedTo.clear();
+    beginQuickJump(editor);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_W, Qt::AltModifier,
+            QStringLiteral("w"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+            QStringLiteral("q"));
+    check(jumpedTo == QStringLiteral("Note 27"),
+          QStringLiteral("Quick Jump WQ should open link 27"));
+    endQuickJump(editor);
+
+    // A key pressed before the hold delay cancels Quick Jump and remains an
+    // ordinary existing Alt shortcut.
+    editor.setPlainText(QStringLiteral("one\ntwo"));
+    QTextCursor firstLine(editor.document()->firstBlock());
+    editor.setTextCursor(firstLine);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Down, Qt::AltModifier);
+    endQuickJump(editor);
+    check(editor.toPlainText() == QStringLiteral("two\none"),
+          QStringLiteral("Alt+Down should still move a line without entering "
+                         "Quick Jump"));
 
     if (failures == 0)
         QTextStream(stdout) << "All Markdown editor regression tests passed.\n";
