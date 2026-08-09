@@ -19,6 +19,16 @@ class MarkdownHighlighter : public QSyntaxHighlighter {
 public:
     explicit MarkdownHighlighter(QTextDocument *document);
 
+    // Number of source characters that remain visible after Emerald's inline
+    // preview rules are applied. Table alignment uses this instead of the raw
+    // QString length so concealed emphasis markers, wiki-link targets, and URL
+    // tails do not make a rendered cell wider than its visible contents.
+    static int inlinePreviewColumnCount(const QString &text);
+
+    // Source positions of the pipes that actually delimit table cells. Pipes
+    // inside inline constructs (notably [[target|alias]]) stay part of the cell.
+    static QList<int> tablePipePositions(const QString &text);
+
     // The block (paragraph) currently holding the cursor (and, when text is
     // selected, the anchor's block — pass it so a math formula spanning the
     // selection reveals its raw source instead of rendering under the
@@ -57,7 +67,22 @@ private:
         SDone = 16
     };
 
+    struct EmphasisAnalysis {
+        QList<int> mask;
+        QList<bool> delimiters;
+    };
+
+    static EmphasisAnalysis analyzeEmphasis(const QString &text,
+                                             const QList<bool> &consumed,
+                                             int seedStyle = 0,
+                                             int seedStart = 0,
+                                             int seedEnd = 0);
+
     QTextCharFormat conceal() const; // tiny + transparent
+    // Merge an inline style over the current block's base style. This is used
+    // for table rows, whose monospace/header formatting must survive when a
+    // link, emphasis span, or inline-code span overlays part of the cell.
+    QTextCharFormat inlineFormat(const QTextCharFormat &overlay) const;
     void applyInline(const QRegularExpression &re, const QString &text,
                      QList<bool> &consumed, const QTextCharFormat &contentFmt,
                      bool reveal);
@@ -142,6 +167,9 @@ private:
     QTextCharFormat m_marker; // dimmed markers, shown on the active line
     QTextCharFormat m_mascot; // a recognised mascot seed line (first line only)
     QTextCharFormat m_math;   // inline $…$ formula body
+
+    QTextCharFormat m_inlineBase;
+    bool m_hasInlineBase = false;
 
     QRegularExpression m_reHeading;
     QRegularExpression m_reFence;

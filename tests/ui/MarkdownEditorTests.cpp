@@ -1,4 +1,5 @@
 #include "ui/MarkdownEditor.h"
+#include "ui/MarkdownHighlighter.h"
 
 #include "core/Perf.h"
 
@@ -56,6 +57,25 @@ void checkWrappedBlock(const QTextBlock &block, int contentStart,
                                            "retain the right margin")
                                 .arg(i));
     }
+}
+
+QTextCharFormat highlighterFormatAt(const QTextBlock &block, int offset) {
+    if (!block.layout())
+        return {};
+    for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (offset >= range.start && offset < range.start + range.length)
+            return range.format;
+    return {};
+}
+
+bool sameInlineVisual(const QTextCharFormat &left,
+                      const QTextCharFormat &right) {
+    return left.foreground() == right.foreground() &&
+           left.background() == right.background() &&
+           left.fontWeight() == right.fontWeight() &&
+           left.fontItalic() == right.fontItalic() &&
+           left.fontStrikeOut() == right.fontStrikeOut() &&
+           left.fontUnderline() == right.fontUnderline();
 }
 
 void checkListCase(MarkdownEditor &editor, const QString &line,
@@ -150,6 +170,113 @@ int main(int argc, char **argv) {
             check(qAbs(plainLayout->lineAt(i).x() - originX) < 0.1,
                   QStringLiteral("ordinary paragraph should remain flush left"));
     }
+
+    // Table cells use the same inline-preview rules as ordinary prose. Their
+    // auto-alignment measures rendered content rather than Markdown source, and
+    // the alias pipe in [[target|alias]] is not mistaken for a column boundary.
+    check(MarkdownHighlighter::inlinePreviewColumnCount(
+              QStringLiteral("**Bold**")) == 4,
+          QStringLiteral("table width should ignore emphasis delimiters"));
+    check(MarkdownHighlighter::inlinePreviewColumnCount(
+              QStringLiteral("[[A very long target|Alias]]")) == 5,
+          QStringLiteral("table width should measure a wiki-link alias only"));
+    check(MarkdownHighlighter::inlinePreviewColumnCount(QStringLiteral(
+              "[Web](https://example.com/a/very/long/path)")) == 3,
+          QStringLiteral("table width should ignore an internet-link URL"));
+
+    const QString rawTable = QStringLiteral(
+        "| Column | Link |\n"
+        "| --- | --- |\n"
+        "| **x** | [[A very long target|y]] |\n"
+        "after table");
+    editor.setPlainText(rawTable);
+    QTextCursor inTable(editor.document()->findBlockByNumber(2));
+    inTable.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(inTable);
+    QTextCursor afterTable(editor.document()->findBlockByNumber(3));
+    editor.setTextCursor(afterTable); // leaving the table triggers prettification
+    QApplication::processEvents();
+    check(editor.toPlainText() == QStringLiteral(
+              "| Column | Link |\n"
+              "| ------ | ---- |\n"
+              "| **x**      | [[A very long target|y]]    |\n"
+              "after table"),
+          QStringLiteral("table alignment should use rendered cell widths and "
+                         "preserve wiki-link aliases"));
+    check(MarkdownHighlighter::tablePipePositions(
+              QStringLiteral("| **x** | [[A very long target|y]] |"))
+                  .size() == 3,
+          QStringLiteral("a wiki-link alias pipe should stay inside its cell"));
+
+    const QString inlineTable = QStringLiteral(
+        "| Bold | Italic | Strike | Mark | Code | Note | Web |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| **Bold** | *Italic* | ~~Strike~~ | ==Mark== | `Code` | "
+        "[[Target|Alias]] | [Web](https://example.com) |\n"
+        "after table\n"
+        "**Bold** *Italic* ~~Strike~~ ==Mark== `Code` [[Target|Alias]] "
+        "[Web](https://example.com)");
+    editor.setPlainText(inlineTable);
+    QTextCursor inactive(editor.document()->findBlockByNumber(3));
+    editor.setTextCursor(inactive);
+    const QTextBlock data = editor.document()->findBlockByNumber(2);
+    const QTextBlock ordinary = editor.document()->findBlockByNumber(4);
+    settleLayout(editor, data);
+    settleLayout(editor, ordinary);
+    const QString dataText = data.text();
+    const QString ordinaryText = ordinary.text();
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Bold")))
+                  .fontWeight() >= QFont::Bold,
+          QStringLiteral("bold should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Italic")))
+              .fontItalic(),
+          QStringLiteral("italic should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Strike")))
+              .fontStrikeOut(),
+          QStringLiteral("strikethrough should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Mark")))
+              .background()
+              .style() != Qt::NoBrush,
+          QStringLiteral("highlight should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Code")))
+              .background()
+              .style() != Qt::NoBrush,
+          QStringLiteral("inline code should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Alias")))
+              .fontUnderline(),
+          QStringLiteral("wiki links should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.lastIndexOf(QStringLiteral("Web")))
+              .fontUnderline(),
+          QStringLiteral("internet links should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("**")))
+              .foreground()
+              .color()
+              .alpha() == 0,
+          QStringLiteral("inactive table markup should be concealed"));
+    for (const QString &sample : {QStringLiteral("Bold"),
+                                  QStringLiteral("Italic"),
+                                  QStringLiteral("Strike"),
+                                  QStringLiteral("Mark"),
+                                  QStringLiteral("Code"),
+                                  QStringLiteral("Alias"),
+                                  QStringLiteral("Web")}) {
+        check(sameInlineVisual(
+                  highlighterFormatAt(data, dataText.indexOf(sample)),
+                  highlighterFormatAt(ordinary, ordinaryText.indexOf(sample))),
+              QStringLiteral("%1 should have the same visual style inside and "
+                             "outside a table")
+                  .arg(sample));
+    }
+    const QString formattedInlineTable = editor.toPlainText();
+    check(formattedInlineTable.contains(QStringLiteral("**Bold**")) &&
+              formattedInlineTable.contains(QStringLiteral("*Italic*")) &&
+              formattedInlineTable.contains(QStringLiteral("~~Strike~~")) &&
+              formattedInlineTable.contains(QStringLiteral("==Mark==")) &&
+              formattedInlineTable.contains(QStringLiteral("`Code`")) &&
+              formattedInlineTable.contains(QStringLiteral("[[Target|Alias]]")) &&
+              formattedInlineTable.contains(
+                  QStringLiteral("[Web](https://example.com)")),
+          QStringLiteral("table auto-formatting should preserve inline markup"));
 
     const QString codeSource = QStringLiteral(
         "```\n- list-looking code that is deliberately long enough to wrap "
