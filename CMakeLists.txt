@@ -92,6 +92,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/MascotCatalog.cpp
   src/ui/MarkdownHighlighter.h
   src/ui/MarkdownHighlighter.cpp
+  src/ui/MarkdownStyle.h
   src/ui/MathRender.h
   src/ui/MathRender.cpp
   src/ui/SearchPopup.h
@@ -243,6 +244,7 @@ if(EMERALD_BUILD_PERF_TESTS)
     src/ui/MarkdownReadObjectRenderer.cpp
     src/ui/MarkdownHighlighter.h
     src/ui/MarkdownHighlighter.cpp
+    src/ui/MarkdownStyle.h
     src/ui/MathRender.h
     src/ui/MathRender.cpp
     src/ui/Mascot.h
@@ -282,6 +284,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/ui/MarkdownReadObjectRenderer.cpp
     src/ui/MarkdownHighlighter.h
     src/ui/MarkdownHighlighter.cpp
+    src/ui/MarkdownStyle.h
     src/ui/MathRender.h
     src/ui/MathRender.cpp
   )

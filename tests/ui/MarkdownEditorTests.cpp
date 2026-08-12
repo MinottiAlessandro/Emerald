@@ -912,7 +912,8 @@ int main(int argc, char **argv) {
     QStringList readingLines{
         QStringLiteral("# Rendered heading"),
         QStringLiteral("A **bold** paragraph with [[Target|wiki label]] and "
-                       "[site](https://example.com), plus $x^2$."),
+                       "[site](https://example.com), plus ==marked== and "
+                       "$x^2$."),
         QStringLiteral("> A quoted paragraph"),
         QStringLiteral("- A list item"),
         QStringLiteral("- [x] A completed task"), QStringLiteral("---"),
@@ -936,6 +937,13 @@ int main(int argc, char **argv) {
     readingCursor.setPosition(sourceBoldStart + 4);
     readingCursor.setPosition(sourceBoldStart, QTextCursor::KeepAnchor);
     editor.setTextCursor(readingCursor);
+    const QTextBlock sourceInlineBlock =
+        sourceDocument->findBlock(sourceBoldStart);
+    settleLayout(editor, sourceInlineBlock);
+    const int sourceHighlightOffset =
+        sourceInlineBlock.text().indexOf(QStringLiteral("marked"));
+    const QTextCharFormat editHighlight =
+        highlighterFormatAt(sourceInlineBlock, sourceHighlightOffset);
     editor.setReadMode(true);
     QApplication::processEvents();
     check(editor.readMode() && editor.isReadOnly(),
@@ -980,6 +988,17 @@ int main(int argc, char **argv) {
                   editor.font().pointSizeF(),
           QStringLiteral("the rendered document should retain heading visual "
                          "hierarchy without source markers"));
+    QTextCursor renderedHighlight =
+        editor.document()->find(QStringLiteral("marked"));
+    renderedHighlight.setPosition(renderedHighlight.selectionStart());
+    renderedHighlight.movePosition(QTextCursor::NextCharacter,
+                                   QTextCursor::KeepAnchor);
+    check(renderedHighlight.charFormat().background() ==
+                  editHighlight.background() &&
+              renderedHighlight.charFormat().foreground() ==
+                  editHighlight.foreground(),
+          QStringLiteral("Read Mode highlights should use the same foreground "
+                         "and background colors as Edit Mode"));
 
     bool sawImageObject = false;
     bool sawInlineMathObject = false;

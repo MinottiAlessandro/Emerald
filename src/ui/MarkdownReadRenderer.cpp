@@ -2,6 +2,7 @@
 
 #include "MathRender.h"
 #include "MarkdownReadObjectRenderer.h"
+#include "MarkdownStyle.h"
 #include "core/ContentSecurity.h"
 #include "core/MascotSeed.h"
 #include "core/WikiLink.h"
@@ -227,8 +228,10 @@ void insertInline(QTextCursor &cursor, const QString &text,
                 else if (pairedStyle == Strike)
                     format.setFontStrikeOut(true);
                 else {
-                    format.setBackground(QColor(0x55, 0x66, 0x22));
-                    format.setForeground(QColor(0xe7, 0xf2, 0xc5));
+                    format.setBackground(
+                        MarkdownStyle::highlightBackground());
+                    format.setForeground(
+                        MarkdownStyle::highlightForeground());
                 }
                 insertInline(cursor, text.mid(pos + 2, end - pos - 2), format,
                              options, sourceOffset + pos + 2, ranges);

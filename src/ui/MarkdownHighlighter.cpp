@@ -1,5 +1,7 @@
 #include "MarkdownHighlighter.h"
 
+#include "MarkdownStyle.h"
+
 #include "MathRender.h"
 #include "core/MascotSeed.h"
 #include "core/WikiLink.h"
@@ -96,8 +98,8 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_strike.setForeground(QColor("#5e7d6d"));
     m_strike.setFontStrikeOut(true);
 
-    m_highlight.setForeground(QColor("#101814"));
-    m_highlight.setBackground(QColor("#7ee0a8"));
+    m_highlight.setForeground(MarkdownStyle::highlightForeground());
+    m_highlight.setBackground(MarkdownStyle::highlightBackground());
 
     m_link.setForeground(QColor("#2bbf74"));
     m_link.setFontUnderline(true);
