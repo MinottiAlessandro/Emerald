@@ -1,4 +1,5 @@
 #include "ui/MarkdownEditor.h"
+#include "ui/MarkdownHighlighter.h"
 #include "ui/MarkdownReadObjectRenderer.h"
 #include "ui/MarkdownReadRenderer.h"
 #include "ui/MathRender.h"
@@ -73,6 +74,25 @@ void checkWrappedBlock(const QTextBlock &block, int contentStart,
                                            "retain the right margin")
                                 .arg(i));
     }
+}
+
+QTextCharFormat highlighterFormatAt(const QTextBlock &block, int offset) {
+    if (!block.layout())
+        return {};
+    for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (offset >= range.start && offset < range.start + range.length)
+            return range.format;
+    return {};
+}
+
+bool sameInlineVisual(const QTextCharFormat &left,
+                      const QTextCharFormat &right) {
+    return left.foreground() == right.foreground() &&
+           left.background() == right.background() &&
+           left.fontWeight() == right.fontWeight() &&
+           left.fontItalic() == right.fontItalic() &&
+           left.fontStrikeOut() == right.fontStrikeOut() &&
+           left.fontUnderline() == right.fontUnderline();
 }
 
 void checkListCase(MarkdownEditor &editor, const QString &line,
@@ -160,6 +180,14 @@ void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
              const QString &text = QString()) {
     QKeyEvent event(type, key, modifiers, text);
     QApplication::sendEvent(&editor, &event);
+}
+
+void sendMousePress(MarkdownEditor &editor, const QPoint &position,
+                    Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QMouseEvent event(QEvent::MouseButtonPress, QPointF(position),
+                      QPointF(editor.viewport()->mapToGlobal(position)),
+                      Qt::LeftButton, Qt::LeftButton, modifiers);
+    QApplication::sendEvent(editor.viewport(), &event);
 }
 
 void waitForQuickJump() {
@@ -256,6 +284,113 @@ int main(int argc, char **argv) {
             check(qAbs(plainLayout->lineAt(i).x() - originX) < 0.1,
                   QStringLiteral("ordinary paragraph should remain flush left"));
     }
+
+    // Table cells use the same inline-preview rules as ordinary prose. Their
+    // auto-alignment measures rendered content rather than Markdown source, and
+    // the alias pipe in [[target|alias]] is not mistaken for a column boundary.
+    check(MarkdownHighlighter::inlinePreviewColumnCount(
+              QStringLiteral("**Bold**")) == 4,
+          QStringLiteral("table width should ignore emphasis delimiters"));
+    check(MarkdownHighlighter::inlinePreviewColumnCount(
+              QStringLiteral("[[A very long target|Alias]]")) == 5,
+          QStringLiteral("table width should measure a wiki-link alias only"));
+    check(MarkdownHighlighter::inlinePreviewColumnCount(QStringLiteral(
+              "[Web](https://example.com/a/very/long/path)")) == 3,
+          QStringLiteral("table width should ignore an internet-link URL"));
+
+    const QString rawTable = QStringLiteral(
+        "| Column | Link |\n"
+        "| --- | --- |\n"
+        "| **x** | [[A very long target|y]] |\n"
+        "after table");
+    editor.setPlainText(rawTable);
+    QTextCursor inTable(editor.document()->findBlockByNumber(2));
+    inTable.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(inTable);
+    QTextCursor afterTable(editor.document()->findBlockByNumber(3));
+    editor.setTextCursor(afterTable); // leaving the table triggers prettification
+    QApplication::processEvents();
+    check(editor.toPlainText() == QStringLiteral(
+              "| Column | Link |\n"
+              "| ------ | ---- |\n"
+              "| **x**      | [[A very long target|y]]    |\n"
+              "after table"),
+          QStringLiteral("table alignment should use rendered cell widths and "
+                         "preserve wiki-link aliases"));
+    check(MarkdownHighlighter::tablePipePositions(
+              QStringLiteral("| **x** | [[A very long target|y]] |"))
+                  .size() == 3,
+          QStringLiteral("a wiki-link alias pipe should stay inside its cell"));
+
+    const QString inlineTable = QStringLiteral(
+        "| Bold | Italic | Strike | Mark | Code | Note | Web |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| **Bold** | *Italic* | ~~Strike~~ | ==Mark== | `Code` | "
+        "[[Target|Alias]] | [Web](https://example.com) |\n"
+        "after table\n"
+        "**Bold** *Italic* ~~Strike~~ ==Mark== `Code` [[Target|Alias]] "
+        "[Web](https://example.com)");
+    editor.setPlainText(inlineTable);
+    QTextCursor inactive(editor.document()->findBlockByNumber(3));
+    editor.setTextCursor(inactive);
+    const QTextBlock data = editor.document()->findBlockByNumber(2);
+    const QTextBlock ordinary = editor.document()->findBlockByNumber(4);
+    settleLayout(editor, data);
+    settleLayout(editor, ordinary);
+    const QString dataText = data.text();
+    const QString ordinaryText = ordinary.text();
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Bold")))
+                  .fontWeight() >= QFont::Bold,
+          QStringLiteral("bold should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Italic")))
+              .fontItalic(),
+          QStringLiteral("italic should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Strike")))
+              .fontStrikeOut(),
+          QStringLiteral("strikethrough should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Mark")))
+              .background()
+              .style() != Qt::NoBrush,
+          QStringLiteral("highlight should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Code")))
+              .foreground()
+              .color() == QColor(QStringLiteral("#7ee0b0")),
+          QStringLiteral("inline code should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("Alias")))
+              .fontUnderline(),
+          QStringLiteral("wiki links should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.lastIndexOf(QStringLiteral("Web")))
+              .fontUnderline(),
+          QStringLiteral("internet links should render inside a table cell"));
+    check(highlighterFormatAt(data, dataText.indexOf(QStringLiteral("**")))
+              .foreground()
+              .color()
+              .alpha() == 0,
+          QStringLiteral("inactive table markup should be concealed"));
+    for (const QString &sample : {QStringLiteral("Bold"),
+                                  QStringLiteral("Italic"),
+                                  QStringLiteral("Strike"),
+                                  QStringLiteral("Mark"),
+                                  QStringLiteral("Code"),
+                                  QStringLiteral("Alias"),
+                                  QStringLiteral("Web")}) {
+        check(sameInlineVisual(
+                  highlighterFormatAt(data, dataText.indexOf(sample)),
+                  highlighterFormatAt(ordinary, ordinaryText.indexOf(sample))),
+              QStringLiteral("%1 should have the same visual style inside and "
+                             "outside a table")
+                  .arg(sample));
+    }
+    const QString formattedInlineTable = editor.toPlainText();
+    check(formattedInlineTable.contains(QStringLiteral("**Bold**")) &&
+              formattedInlineTable.contains(QStringLiteral("*Italic*")) &&
+              formattedInlineTable.contains(QStringLiteral("~~Strike~~")) &&
+              formattedInlineTable.contains(QStringLiteral("==Mark==")) &&
+              formattedInlineTable.contains(QStringLiteral("`Code`")) &&
+              formattedInlineTable.contains(QStringLiteral("[[Target|Alias]]")) &&
+              formattedInlineTable.contains(
+                  QStringLiteral("[Web](https://example.com)")),
+          QStringLiteral("table auto-formatting should preserve inline markup"));
 
     const QString codeSource = QStringLiteral(
         "```\n- list-looking code that is deliberately long enough to wrap "
@@ -1440,6 +1575,67 @@ int main(int argc, char **argv) {
     QString jumpedTo;
     QObject::connect(&editor, &MarkdownEditor::linkClicked,
                      [&jumpedTo](const QString &target) { jumpedTo = target; });
+
+    // A rendered wiki link can occupy several visual lines while remaining one
+    // QTextBlock. Every visible segment should have its own clickable x range.
+    editor.resize(180, 240);
+    const QString wrappedTarget(47, QLatin1Char('W'));
+    editor.setPlainText(QStringLiteral("[[") + wrappedTarget +
+                        QStringLiteral("]]\nplain trailing line"));
+    QTextCursor trailing(editor.document()->findBlockByNumber(1));
+    editor.setTextCursor(trailing); // render (conceal) the link on block zero
+    const QTextBlock wrappedBlock = editor.document()->firstBlock();
+    settleLayout(editor, wrappedBlock);
+    QTextLayout *wrappedLayout = wrappedBlock.layout();
+    check(wrappedLayout && wrappedLayout->lineCount() >= 3,
+          QStringLiteral("the wrapped-link fixture should span visual lines"));
+    if (wrappedLayout && wrappedLayout->lineCount() >= 2) {
+        const int displayStart = 2;
+        const int displayEnd = displayStart + wrappedTarget.size();
+        QTextCursor sourceStart(wrappedBlock);
+        sourceStart.setPosition(wrappedBlock.position());
+        QTextCursor sourceEnd(wrappedBlock);
+        sourceEnd.setPosition(wrappedBlock.position() + wrappedBlock.length() - 1);
+        const int legacyLeft = editor.cursorRect(sourceStart).left();
+        const int legacyRight = editor.cursorRect(sourceEnd).left();
+        bool exercisesWrappedRange = false;
+        for (int i = 0; i < wrappedLayout->lineCount(); ++i) {
+            const QTextLine line = wrappedLayout->lineAt(i);
+            const int overlapStart = qMax(displayStart, line.textStart());
+            const int overlapEnd =
+                qMin(displayEnd, line.textStart() + line.textLength());
+            if (overlapStart >= overlapEnd)
+                continue;
+
+            // Click the final visible character on each segment; this catches
+            // the old whole-token x range, which ended at the short final line.
+            const int column = overlapEnd - 1;
+            QTextCursor before(wrappedBlock);
+            before.setPosition(wrappedBlock.position() + column);
+            QTextCursor after(wrappedBlock);
+            after.setPosition(wrappedBlock.position() + column + 1);
+            const QRect beforeRect = editor.cursorRect(before);
+            const QRect afterRect = editor.cursorRect(after);
+            const QPoint click((beforeRect.left() + afterRect.left()) / 2,
+                               beforeRect.center().y());
+            exercisesWrappedRange =
+                exercisesWrappedRange || click.x() < legacyLeft ||
+                click.x() > legacyRight;
+
+            jumpedTo.clear();
+            editor.setTextCursor(trailing);
+            sendMousePress(editor, click);
+            check(jumpedTo == wrappedTarget,
+                  QStringLiteral("wrapped wiki-link visual line %1 should be "
+                                 "clickable")
+                      .arg(i));
+        }
+        check(exercisesWrappedRange,
+              QStringLiteral("the fixture should exercise a wrapped segment "
+                             "outside the old whole-token x range"));
+    }
+
+    editor.resize(700, 700);
     editor.setPlainText(QStringLiteral("[[First]] then [[Second]]"));
     QApplication::processEvents();
 

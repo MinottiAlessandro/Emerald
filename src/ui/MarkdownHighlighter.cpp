@@ -22,6 +22,17 @@ bool isPipeTableRow(const QTextBlock &block) {
            trimmed.endsWith(QLatin1Char('|'));
 }
 
+const QRegularExpression &inlineCodeRe() {
+    static const QRegularExpression re(QStringLiteral("`([^`]+)`"));
+    return re;
+}
+
+const QRegularExpression &internetLinkRe() {
+    static const QRegularExpression re(
+        QStringLiteral("\\[([^\\]\\[]+)\\]\\(([^)\\s]+)\\)"));
+    return re;
+}
+
 double headingScale(int level) {
     switch (level) {
     case 1:  return 2.0;
@@ -133,11 +144,10 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
         QStringLiteral("^(\\s*[-*+]\\s+\\[)([ xX])(\\]\\s+)(.*)$"));
     m_reList       = QRegularExpression(
         QStringLiteral("^(\\s*)([-*+]|\\d+[.)])(\\s+)"));
-    m_reCode       = QRegularExpression(QStringLiteral("`([^`]+)`"));
+    m_reCode       = inlineCodeRe();
     m_reTableSep =
         QRegularExpression(QStringLiteral("^\\s*\\|?[\\s:|-]*-[\\s:|-]*\\|?\\s*$"));
-    m_reLink =
-        QRegularExpression(QStringLiteral("\\[([^\\]\\[]+)\\]\\(([^)\\s]+)\\)"));
+    m_reLink = internetLinkRe();
 }
 
 void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
@@ -304,6 +314,227 @@ QTextCharFormat MarkdownHighlighter::conceal() const {
     return f;
 }
 
+QTextCharFormat
+MarkdownHighlighter::inlineFormat(const QTextCharFormat &overlay) const {
+    if (!m_hasInlineBase)
+        return overlay;
+    QTextCharFormat combined = m_inlineBase;
+    combined.merge(overlay);
+    return combined;
+}
+
+MarkdownHighlighter::EmphasisAnalysis MarkdownHighlighter::analyzeEmphasis(
+    const QString &text, const QList<bool> &consumed, int seedStyle,
+    int seedStart, int seedEnd) {
+    const int n = text.size();
+    EmphasisAnalysis result{QList<int>(n, 0), QList<bool>(n, false)};
+
+    // Seed a pre-existing style over a range (a done task's strikethrough) so
+    // emphasis inside it stacks rather than overwrites.
+    if (seedStyle)
+        for (int i = qMax(0, seedStart); i < seedEnd && i < n; ++i)
+            result.mask[i] |= seedStyle;
+
+    auto addStyle = [&](int s, int e, int style) {
+        for (int i = qMax(0, s); i < e && i < n; ++i)
+            result.mask[i] |= style;
+    };
+    auto markDelim = [&](int s, int e) {
+        for (int i = qMax(0, s); i < e && i < n; ++i)
+            result.delimiters[i] = true;
+    };
+
+    // Two-character delimiters (== highlight, ~~ strike): simple open/close
+    // toggles. Different kinds can nest because each pass only adds flags.
+    auto pairTwoChar = [&](QChar c, int style) {
+        int open = -1;
+        for (int i = 0; i + 1 < n;) {
+            if (!consumed[i] && !consumed[i + 1] && text[i] == c &&
+                text[i + 1] == c) {
+                if (open < 0) {
+                    open = i;
+                } else {
+                    addStyle(open + 2, i, style);
+                    markDelim(open, open + 2);
+                    markDelim(i, i + 2);
+                    open = -1;
+                }
+                i += 2;
+            } else {
+                ++i;
+            }
+        }
+    };
+    pairTwoChar(QLatin1Char('='), SHighlight);
+    pairTwoChar(QLatin1Char('~'), SStrike);
+
+    // Asterisk / underscore runs. A run of length L offers L/2 bold units and
+    // L%2 italic units; each kind pairs on its own stack. Underscores obey the
+    // intraword rule so snake_case remains literal.
+    struct Open {
+        int contentStart;
+        int delimStart;
+        int delimEnd;
+    };
+    auto matchRuns = [&](QChar c, bool wordRule) {
+        QList<Open> boldStack, italStack;
+        for (int i = 0; i < n;) {
+            if (consumed[i] || text[i] != c) {
+                ++i;
+                continue;
+            }
+            int j = i;
+            while (j < n && text[j] == c && !consumed[j])
+                ++j;
+            const int len = j - i;
+            const QChar before = i > 0 ? text[i - 1] : QLatin1Char(' ');
+            const QChar after = j < n ? text[j] : QLatin1Char(' ');
+            const bool canOpen = !wordRule || !before.isLetterOrNumber();
+            const bool canClose = !wordRule || !after.isLetterOrNumber();
+            int bold = len / 2, ital = len % 2;
+            if (canClose) {
+                while (bold > 0 && !boldStack.isEmpty()) {
+                    const Open o = boldStack.takeLast();
+                    addStyle(o.contentStart, i, SBold);
+                    markDelim(o.delimStart, o.delimEnd);
+                    markDelim(i, j);
+                    --bold;
+                }
+                while (ital > 0 && !italStack.isEmpty()) {
+                    const Open o = italStack.takeLast();
+                    addStyle(o.contentStart, i, SItalic);
+                    markDelim(o.delimStart, o.delimEnd);
+                    markDelim(i, j);
+                    --ital;
+                }
+            }
+            if (canOpen) {
+                for (int k = 0; k < bold; ++k)
+                    boldStack.append({j, i, j});
+                for (int k = 0; k < ital; ++k)
+                    italStack.append({j, i, j});
+            }
+            i = j;
+        }
+    };
+    matchRuns(QLatin1Char('*'), false);
+    matchRuns(QLatin1Char('_'), true);
+    return result;
+}
+
+int MarkdownHighlighter::inlinePreviewColumnCount(const QString &text) {
+    QList<bool> consumed(text.size(), false);
+    QList<bool> hidden(text.size(), false);
+
+    auto available = [&](int start, int end) {
+        if (start < 0 || end > text.size() || start >= end)
+            return false;
+        for (int i = start; i < end; ++i)
+            if (consumed[i])
+                return false;
+        return true;
+    };
+    auto consume = [&](int start, int end) {
+        for (int i = qMax(0, start); i < end && i < text.size(); ++i)
+            consumed[i] = true;
+    };
+    auto hide = [&](int start, int end) {
+        for (int i = qMax(0, start); i < end && i < text.size(); ++i)
+            hidden[i] = true;
+    };
+
+    // Keep this order in lock-step with highlightBlock's exclusive inline
+    // passes: code, math, internet links, wiki links, then emphasis.
+    auto codeIt = inlineCodeRe().globalMatch(text);
+    while (codeIt.hasNext()) {
+        const auto match = codeIt.next();
+        const int start = match.capturedStart(0), end = match.capturedEnd(0);
+        if (!available(start, end))
+            continue;
+        hide(start, match.capturedStart(1));
+        hide(match.capturedEnd(1), end);
+        consume(start, end);
+    }
+
+    auto mathIt = MathRender::pattern().globalMatch(text);
+    while (mathIt.hasNext()) {
+        const auto match = mathIt.next();
+        const int start = match.capturedStart(0), end = match.capturedEnd(0);
+        if (!available(start, end))
+            continue;
+        hide(start, match.capturedStart(1));
+        hide(match.capturedEnd(1), end);
+        consume(start, end);
+    }
+
+    auto internetIt = internetLinkRe().globalMatch(text);
+    while (internetIt.hasNext()) {
+        const auto match = internetIt.next();
+        const int start = match.capturedStart(0), end = match.capturedEnd(0);
+        if (!available(start, end))
+            continue;
+        hide(start, match.capturedStart(1));
+        hide(match.capturedEnd(1), end);
+        consume(start, end);
+    }
+
+    auto wikiIt = WikiLink::pattern().globalMatch(text);
+    while (wikiIt.hasNext()) {
+        const auto match = wikiIt.next();
+        const int start = match.capturedStart(0), end = match.capturedEnd(0);
+        if (!available(start, end))
+            continue;
+        const int innerStart = match.capturedStart(1);
+        const int innerEnd = match.capturedEnd(1);
+        const int pipe = match.captured(1).indexOf(QLatin1Char('|'));
+        const int displayStart = pipe >= 0 ? innerStart + pipe + 1 : innerStart;
+        hide(start, displayStart);
+        hide(innerEnd, end);
+        consume(start, end);
+    }
+
+    const EmphasisAnalysis emphasis = analyzeEmphasis(text, consumed);
+    for (int i = 0; i < emphasis.delimiters.size(); ++i)
+        if (emphasis.delimiters[i])
+            hidden[i] = true;
+
+    int columns = 0;
+    for (bool isHidden : hidden)
+        if (!isHidden)
+            ++columns;
+    return columns;
+}
+
+QList<int> MarkdownHighlighter::tablePipePositions(const QString &text) {
+    QList<bool> protectedSpan(text.size(), false);
+    auto protectMatches = [&](const QRegularExpression &pattern) {
+        auto it = pattern.globalMatch(text);
+        while (it.hasNext()) {
+            const auto match = it.next();
+            for (int i = match.capturedStart(0);
+                 i < match.capturedEnd(0) && i < protectedSpan.size(); ++i)
+                if (i >= 0)
+                    protectedSpan[i] = true;
+        }
+    };
+    protectMatches(inlineCodeRe());
+    protectMatches(MathRender::pattern());
+    protectMatches(internetLinkRe());
+    protectMatches(WikiLink::pattern());
+
+    QList<int> pipes;
+    for (int i = 0; i < text.size(); ++i) {
+        if (text[i] != QLatin1Char('|') || protectedSpan[i])
+            continue;
+        int slashes = 0;
+        for (int j = i - 1; j >= 0 && text[j] == QLatin1Char('\\'); --j)
+            ++slashes;
+        if ((slashes % 2) == 0)
+            pipes.append(i);
+    }
+    return pipes;
+}
+
 void MarkdownHighlighter::reserveDisplayHeight(int len, const QString &body) {
     const QFont base = document() ? document()->defaultFont() : QFont();
     const QFont f = MathRender::mathFont(base, true);
@@ -410,7 +641,7 @@ bool MarkdownHighlighter::caretInCodeRegion(const QTextBlock &block,
 
 void MarkdownHighlighter::markup(int start, int len, QList<bool> &consumed,
                                  bool reveal) {
-    setFormat(start, len, reveal ? m_marker : conceal());
+    setFormat(start, len, reveal ? inlineFormat(m_marker) : conceal());
     for (int i = start; i < start + len && i < consumed.size(); ++i)
         consumed[i] = true;
 }
@@ -437,9 +668,11 @@ void MarkdownHighlighter::applyInline(const QRegularExpression &re,
 
         const int contentStart = m.capturedStart(1);
         const int contentEnd = m.capturedEnd(1);
-        setFormat(contentStart, contentEnd - contentStart, contentFmt);
+        setFormat(contentStart, contentEnd - contentStart,
+                  inlineFormat(contentFmt));
 
-        const QTextCharFormat markerFmt = reveal ? m_marker : conceal();
+        const QTextCharFormat markerFmt =
+            reveal ? inlineFormat(m_marker) : conceal();
         setFormat(start, contentStart - start, markerFmt);
         setFormat(contentEnd, end - contentEnd, markerFmt);
 
@@ -449,7 +682,7 @@ void MarkdownHighlighter::applyInline(const QRegularExpression &re,
 }
 
 QTextCharFormat MarkdownHighlighter::emphasisFormat(int mask) const {
-    QTextCharFormat f;
+    QTextCharFormat f = m_hasInlineBase ? m_inlineBase : QTextCharFormat();
     if (mask & SBold)
         f.setFontWeight(QFont::Bold);
     if (mask & SItalic)
@@ -477,106 +710,16 @@ void MarkdownHighlighter::applyEmphasis(const QString &text,
                                         int seedStyle, int seedStart,
                                         int seedEnd) {
     const int n = text.size();
-    QList<int> mask(n, 0);     // accumulated InlineStyle flags per character
-    QList<bool> delim(n, false); // delimiter chars to conceal/dim
-
-    // Seed a pre-existing style over a range (a done task's strikethrough) so
-    // emphasis inside it stacks rather than overwrites.
-    if (seedStyle)
-        for (int i = qMax(0, seedStart); i < seedEnd && i < n; ++i)
-            mask[i] |= seedStyle;
-
-    auto addStyle = [&](int s, int e, int style) {
-        for (int i = qMax(0, s); i < e && i < n; ++i)
-            mask[i] |= style;
-    };
-    auto markDelim = [&](int s, int e) {
-        for (int i = qMax(0, s); i < e && i < n; ++i)
-            delim[i] = true;
-    };
-
-    // Two-char delimiters (== highlight, ~~ strike): simple open/close toggle.
-    // Same-type nesting isn't supported (rare); different types nest freely
-    // because every pass only *adds* to the mask.
-    auto pairTwoChar = [&](QChar c, int style) {
-        int open = -1;
-        for (int i = 0; i + 1 < n;) {
-            if (!consumed[i] && !consumed[i + 1] && text[i] == c &&
-                text[i + 1] == c) {
-                if (open < 0) {
-                    open = i;
-                } else {
-                    addStyle(open + 2, i, style);
-                    markDelim(open, open + 2);
-                    markDelim(i, i + 2);
-                    open = -1;
-                }
-                i += 2;
-            } else {
-                ++i;
-            }
-        }
-    };
-    pairTwoChar(QLatin1Char('='), SHighlight);
-    pairTwoChar(QLatin1Char('~'), SStrike);
-
-    // Asterisk / underscore runs. A run of length L offers L/2 "strong" (bold)
-    // units and L%2 "emphasis" (italic) units; each kind pairs on its own stack.
-    // Underscore obeys the intraword rule (no emphasis inside a word, so
-    // snake_case stays literal). Markers conceal only once a pair completes.
-    struct Open {
-        int contentStart;
-        int delimStart;
-        int delimEnd;
-    };
-    auto matchRuns = [&](QChar c, bool wordRule) {
-        QList<Open> boldStack, italStack;
-        for (int i = 0; i < n;) {
-            if (consumed[i] || text[i] != c) {
-                ++i;
-                continue;
-            }
-            int j = i;
-            while (j < n && text[j] == c && !consumed[j])
-                ++j;
-            const int len = j - i;
-            const QChar before = i > 0 ? text[i - 1] : QLatin1Char(' ');
-            const QChar after = j < n ? text[j] : QLatin1Char(' ');
-            const bool canOpen = !wordRule || !before.isLetterOrNumber();
-            const bool canClose = !wordRule || !after.isLetterOrNumber();
-            int bold = len / 2, ital = len % 2;
-            if (canClose) {
-                while (bold > 0 && !boldStack.isEmpty()) {
-                    const Open o = boldStack.takeLast();
-                    addStyle(o.contentStart, i, SBold);
-                    markDelim(o.delimStart, o.delimEnd);
-                    markDelim(i, j);
-                    --bold;
-                }
-                while (ital > 0 && !italStack.isEmpty()) {
-                    const Open o = italStack.takeLast();
-                    addStyle(o.contentStart, i, SItalic);
-                    markDelim(o.delimStart, o.delimEnd);
-                    markDelim(i, j);
-                    --ital;
-                }
-            }
-            if (canOpen) {
-                for (int k = 0; k < bold; ++k)
-                    boldStack.append({j, i, j});
-                for (int k = 0; k < ital; ++k)
-                    italStack.append({j, i, j});
-            }
-            i = j;
-        }
-    };
-    matchRuns(QLatin1Char('*'), false);
-    matchRuns(QLatin1Char('_'), true);
+    const EmphasisAnalysis analysis =
+        analyzeEmphasis(text, consumed, seedStyle, seedStart, seedEnd);
+    const QList<int> &mask = analysis.mask;
+    const QList<bool> &delim = analysis.delimiters;
 
     // Apply: delimiters get the marker format (dimmed when revealed, hidden
     // otherwise); styled content gets a single merged format. Coalesce equal
     // adjacent characters into one setFormat call.
-    const QTextCharFormat markerFmt = reveal ? m_marker : conceal();
+    const QTextCharFormat markerFmt =
+        reveal ? inlineFormat(m_marker) : conceal();
     for (int i = 0; i < n;) {
         if (delim[i]) {
             int j = i;
@@ -619,16 +762,17 @@ void MarkdownHighlighter::applyWikiLinks(const QString &text,
 
         if (reveal) {
             // On the active line keep the raw text editable, just dim markers.
-            setFormat(start, 2, m_marker);            // [[
-            setFormat(innerStart, inner.size(), m_link);
-            setFormat(innerEnd, end - innerEnd, m_marker); // ]]
+            setFormat(start, 2, inlineFormat(m_marker)); // [[
+            setFormat(innerStart, inner.size(), inlineFormat(m_link));
+            setFormat(innerEnd, end - innerEnd, inlineFormat(m_marker)); // ]]
         } else {
             // Show only the alias (text after '|'); hide the target + brackets.
             const int pipe = inner.indexOf(QLatin1Char('|'));
             const int displayStart =
                 pipe >= 0 ? innerStart + pipe + 1 : innerStart;
             setFormat(start, displayStart - start, conceal());
-            setFormat(displayStart, innerEnd - displayStart, m_link);
+            setFormat(displayStart, innerEnd - displayStart,
+                      inlineFormat(m_link));
             setFormat(innerEnd, end - innerEnd, conceal());
         }
 
@@ -656,9 +800,10 @@ void MarkdownHighlighter::applyInternetLinks(const QString &text,
 
         // The link text is shown either way; only the surrounding "[" and
         // "](url)" differ — dimmed on the active line, hidden off it.
-        const QTextCharFormat wrap = reveal ? m_marker : conceal();
+        const QTextCharFormat wrap =
+            reveal ? inlineFormat(m_marker) : conceal();
         setFormat(start, textStart - start, wrap); // "["
-        setFormat(textStart, textEnd - textStart, m_link);
+        setFormat(textStart, textEnd - textStart, inlineFormat(m_link));
         setFormat(textEnd, end - textEnd, wrap);   // "](url)"
 
         for (int i = start; i < end; ++i)
@@ -686,9 +831,9 @@ void MarkdownHighlighter::applyMath(const QString &text, QList<bool> &consumed,
         if (reveal) {
             // On the cursor's own line keep the raw source editable: tint the
             // body and just dim the $ delimiters.
-            setFormat(innerStart, innerEnd - innerStart, m_math);
-            setFormat(start, innerStart - start, m_marker);
-            setFormat(innerEnd, end - innerEnd, m_marker);
+            setFormat(innerStart, innerEnd - innerStart, inlineFormat(m_math));
+            setFormat(start, innerStart - start, inlineFormat(m_marker));
+            setFormat(innerEnd, end - innerEnd, inlineFormat(m_marker));
         } else {
             // Off the active line the editor paints the formula over this span
             // (MarkdownEditor::paintEvent). Hide the source and reserve the
@@ -725,6 +870,11 @@ void MarkdownHighlighter::applyMath(const QString &text, QList<bool> &consumed,
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
+    // Inline overlays normally start from the document's default character
+    // format. Table rows temporarily replace this with their monospace base.
+    m_hasInlineBase = false;
+    m_inlineBase = QTextCharFormat();
+
     // The mascot seed lives on the first line (a hidden HTML comment). When the
     // user reveals and edits it, tint a *valid* seed so they can see it's being
     // interpreted correctly; a malformed line falls through to normal rendering.
@@ -877,11 +1027,11 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
 
-    // Table row: |-delimited. The editor paints the grid itself, so inactive
-    // tables keep the source advances for stable cell geometry but conceal the
-    // pipe/separator glyphs. Editing any row reveals the complete table source;
-    // MarkdownEditor suppresses the graphical grid for the same table so the
-    // two representations can never overlap.
+    // Table row: |-delimited. The editor paints the inactive grid while this
+    // pass renders inline Markdown inside each cell. Editing any row reveals
+    // the complete table source and suppresses the graphical grid. Only real
+    // column separators are treated as scaffolding: an alias pipe in
+    // [[target|alias]] remains part of the link.
     const QString trimmed = text.trimmed();
     if (trimmed.size() > 1 && trimmed.startsWith(QLatin1Char('|')) &&
         trimmed.endsWith(QLatin1Char('|'))) {
@@ -904,11 +1054,25 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         const QTextBlock next = currentBlock().next();
         const bool header =
             next.isValid() && m_reTableSep.match(next.text()).hasMatch();
-        setFormat(0, text.size(), header ? m_tableHeader : m_table);
-        for (int i = 0; i < text.size(); ++i)
-            if (text[i] == QLatin1Char('|'))
-                setFormat(i, 1, revealTable ? m_tablePipe
-                                            : hiddenScaffolding);
+        m_inlineBase = header ? m_tableHeader : m_table;
+        m_hasInlineBase = true;
+        setFormat(0, text.size(), m_inlineBase);
+        for (int pipe : tablePipePositions(text)) {
+            setFormat(pipe, 1,
+                      revealTable ? inlineFormat(m_tablePipe)
+                                  : hiddenScaffolding);
+            consumed[pipe] = true;
+        }
+
+        applyInline(m_reCode, text, consumed, m_code, revealTable);
+        applyMath(text, consumed, revealTable);
+        applyInternetLinks(text, consumed, revealTable);
+        applyWikiLinks(text, consumed, revealTable);
+        applyEmphasis(text, consumed, revealTable);
+        strikeConsumedInline(text, revealTable, -1, -1);
+
+        m_hasInlineBase = false;
+        m_inlineBase = QTextCharFormat();
         return;
     }
 
@@ -1085,7 +1249,7 @@ void MarkdownHighlighter::strikeConsumedInline(const QString &text, bool reveal,
     while (cit.hasNext()) {
         const auto cm = cit.next();
         if (spanStruck(cm.capturedStart(0), cm.capturedEnd(0))) {
-            QTextCharFormat cf = m_code;
+            QTextCharFormat cf = inlineFormat(m_code);
             cf.setFontStrikeOut(true);
             setFormat(cm.capturedStart(1), cm.capturedLength(1), cf);
         }
@@ -1096,7 +1260,7 @@ void MarkdownHighlighter::strikeConsumedInline(const QString &text, bool reveal,
     if (reveal) {
         for (const auto &sp : MathRender::spans(text)) {
             if (sp.length >= 2 && spanStruck(sp.start, sp.start + sp.length)) {
-                QTextCharFormat cf = m_math;
+                QTextCharFormat cf = inlineFormat(m_math);
                 cf.setFontStrikeOut(true);
                 setFormat(sp.start + 1, sp.length - 2, cf); // body, between $ $
             }

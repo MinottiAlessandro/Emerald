@@ -159,12 +159,11 @@ bool isSeparatorRow(const QString &text) {
     return re.match(text).hasMatch();
 }
 QStringList splitRow(const QString &text) {
-    QString t = text.trimmed();
-    if (t.startsWith(QLatin1Char('|')))
-        t.remove(0, 1);
-    if (t.endsWith(QLatin1Char('|')))
-        t.chop(1);
-    QStringList cells = t.split(QLatin1Char('|'));
+    const QString t = text.trimmed();
+    const QList<int> pipes = MarkdownHighlighter::tablePipePositions(t);
+    QStringList cells;
+    for (int i = 0; i + 1 < pipes.size(); ++i)
+        cells.append(t.mid(pipes[i] + 1, pipes[i + 1] - pipes[i] - 1));
     for (QString &c : cells)
         c = c.trimmed();
     return cells;
@@ -176,7 +175,8 @@ int sepAlign(const QString &cell) { // 0 left, 1 right, 2 centre, 3 explicit-lef
     return (l && r) ? 2 : r ? 1 : l ? 3 : 0;
 }
 QString padCell(const QString &s, int width, int align) {
-    const int pad = qMax(0, width - int(s.length()));
+    const int pad =
+        qMax(0, width - MarkdownHighlighter::inlinePreviewColumnCount(s));
     if (align == 1)
         return QString(pad, QLatin1Char(' ')) + s;
     if (align == 2)
@@ -2940,7 +2940,9 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
     for (int r = 0; r < rows.size(); ++r)
         if (!sep[r])
             for (int c = 0; c < rows[r].size(); ++c)
-                width[c] = qMax(width[c], int(rows[r][c].length()));
+                width[c] = qMax(
+                    width[c],
+                    MarkdownHighlighter::inlinePreviewColumnCount(rows[r][c]));
 
     QList<int> align(cols, 0);
     for (int r = 0; r < rows.size(); ++r)
@@ -3079,12 +3081,13 @@ bool MarkdownEditor::handleTableTab(bool forward) {
     for (const QStringList &r : rows)
         nCols = qMax(nCols, int(r.size()));
 
-    // The caret's cell = number of pipes before it, minus the leading one.
+    // The caret's cell = number of structural pipes before it, minus the
+    // leading one. A pipe inside [[target|alias]] belongs to that same cell.
     const QString text = block.text();
     const int caret = cursor.positionInBlock();
     int pipes = 0;
-    for (int i = 0; i < caret && i < text.size(); ++i)
-        if (text[i] == QLatin1Char('|'))
+    for (int pipe : MarkdownHighlighter::tablePipePositions(text))
+        if (pipe < caret)
             ++pipes;
     const int cells = qMax(1, int(rows[rowIdx].size()));
     const int cellIdx = qBound(0, pipes - 1, cells - 1);
@@ -3190,10 +3193,7 @@ bool MarkdownEditor::handleTableTab(bool forward) {
 
 void MarkdownEditor::moveToTableCell(const QTextBlock &block, int cellIdx) {
     const QString t = block.text();
-    QList<int> pipes;
-    for (int i = 0; i < t.size(); ++i)
-        if (t[i] == QLatin1Char('|'))
-            pipes << i;
+    const QList<int> pipes = MarkdownHighlighter::tablePipePositions(t);
     QTextCursor cur(block);
     if (pipes.size() < 2) { // not a real row; land at its start
         setTextCursor(cur);
@@ -3383,10 +3383,12 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             qreal right = 0.0;
             for (const QTextBlock &row : rows) {
                 const QString text = row.text();
-                const int firstPipe = text.indexOf(QLatin1Char('|'));
-                const int lastPipe = text.lastIndexOf(QLatin1Char('|'));
-                if (firstPipe < 0 || lastPipe <= firstPipe)
+                const QList<int> pipes =
+                    MarkdownHighlighter::tablePipePositions(text);
+                if (pipes.size() < 2)
                     continue;
+                const int firstPipe = pipes.first();
+                const int lastPipe = pipes.last();
                 const auto firstRect = textRangeViewportRects(row, firstPipe, 1);
                 const auto lastRect = textRangeViewportRects(row, lastPipe, 1);
                 if (firstRect.isEmpty() || lastRect.isEmpty())
@@ -3425,9 +3427,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 }
 
                 tablePainter.setPen(QPen(QColor(0x32, 0x55, 0x43), 1.0));
-                for (int pos = 0; pos < row.text().size(); ++pos) {
-                    if (row.text().at(pos) != QLatin1Char('|'))
-                        continue;
+                for (int pos :
+                     MarkdownHighlighter::tablePipePositions(row.text())) {
                     const auto pipeRects = textRangeViewportRects(row, pos, 1);
                     if (pipeRects.isEmpty())
                         continue;
