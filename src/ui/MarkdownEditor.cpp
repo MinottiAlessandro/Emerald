@@ -4,6 +4,7 @@
 #include "MarkdownHighlighter.h"
 #include "MarkdownReadObjectRenderer.h"
 #include "MarkdownReadRenderer.h"
+#include "MarkdownStyle.h"
 #include "MathRender.h"
 #include "core/ContentSecurity.h"
 #include "core/MascotSeed.h"
@@ -32,6 +33,7 @@
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QSet>
 #include <QStyleHints>
 #include <QStringListModel>
 #include <QTextBlock>
@@ -265,6 +267,151 @@ using QuotePrefix = MarkdownCallout::QuotePrefix;
 
 QuotePrefix quotePrefix(const QString &text) {
     return MarkdownCallout::quotePrefix(text);
+}
+
+struct InlineHighlightSpan {
+    int openStart = 0;
+    int contentStart = 0;
+    int contentEnd = 0;
+};
+
+// Find the ==...== pairs that Read Mode actually renders. This follows the
+// same precedence as MarkdownReadRenderer::insertInline: link destinations,
+// code and formula source are skipped, while link labels and nested emphasis
+// remain eligible for highlighting.
+void collectInlineHighlightSpans(const QString &text, int sourceOffset,
+                                 QList<InlineHighlightSpan> *spans) {
+    if (!spans)
+        return;
+    int pos = 0;
+    while (pos < text.size()) {
+        if (text.at(pos) == QLatin1Char('\\') && pos + 1 < text.size()) {
+            pos += 2;
+            continue;
+        }
+
+        if (text.mid(pos, 2) == QStringLiteral("[[")) {
+            const int end = text.indexOf(QStringLiteral("]]"), pos + 2);
+            if (end >= 0) {
+                const QString inside = text.mid(pos + 2, end - pos - 2);
+                const int separator = inside.indexOf(QLatin1Char('|'));
+                const int labelStart = separator >= 0 ? separator + 1 : 0;
+                collectInlineHighlightSpans(
+                    inside.mid(labelStart),
+                    sourceOffset + pos + 2 + labelStart, spans);
+                pos = end + 2;
+                continue;
+            }
+        }
+
+        if (text.at(pos) == QLatin1Char('[') &&
+            (pos == 0 || text.at(pos - 1) != QLatin1Char('!'))) {
+            const int labelEnd = text.indexOf(QStringLiteral("]("), pos + 1);
+            if (labelEnd >= 0) {
+                const int targetEnd =
+                    text.indexOf(QLatin1Char(')'), labelEnd + 2);
+                if (targetEnd >= 0) {
+                    collectInlineHighlightSpans(
+                        text.mid(pos + 1, labelEnd - pos - 1),
+                        sourceOffset + pos + 1, spans);
+                    pos = targetEnd + 1;
+                    continue;
+                }
+            }
+        }
+
+        if (text.mid(pos, 2) == QStringLiteral("![")) {
+            const int labelEnd = text.indexOf(QStringLiteral("]("), pos + 2);
+            if (labelEnd >= 0) {
+                const int targetEnd =
+                    text.indexOf(QLatin1Char(')'), labelEnd + 2);
+                if (targetEnd >= 0) {
+                    pos = targetEnd + 1;
+                    continue;
+                }
+            }
+        }
+
+        QString pairedMarker;
+        bool highlight = false;
+        if (text.mid(pos, 2) == QStringLiteral("**") ||
+            text.mid(pos, 2) == QStringLiteral("__") ||
+            text.mid(pos, 2) == QStringLiteral("~~")) {
+            pairedMarker = text.mid(pos, 2);
+        } else if (text.mid(pos, 2) == QStringLiteral("==")) {
+            pairedMarker = QStringLiteral("==");
+            highlight = true;
+        }
+        if (!pairedMarker.isEmpty()) {
+            const int end = text.indexOf(pairedMarker, pos + 2);
+            if (end > pos + 1) {
+                if (highlight) {
+                    spans->append({sourceOffset + pos, sourceOffset + pos + 2,
+                                   sourceOffset + end});
+                } else {
+                    collectInlineHighlightSpans(
+                        text.mid(pos + 2, end - pos - 2),
+                        sourceOffset + pos + 2, spans);
+                }
+                pos = end + 2;
+                continue;
+            }
+        }
+
+        if (text.at(pos) == QLatin1Char('`')) {
+            const int end = text.indexOf(QLatin1Char('`'), pos + 1);
+            if (end > pos) {
+                pos = end + 1;
+                continue;
+            }
+        }
+
+        if (text.at(pos) == QLatin1Char('$')) {
+            const auto math = MathRender::pattern().match(text, pos);
+            if (math.hasMatch() && math.capturedStart(0) == pos) {
+                pos = math.capturedEnd(0);
+                continue;
+            }
+        }
+
+        if (text.at(pos) == QLatin1Char('*') ||
+            text.at(pos) == QLatin1Char('_')) {
+            const QString marker(text.at(pos));
+            const int end = text.indexOf(marker, pos + 1);
+            if (end > pos) {
+                collectInlineHighlightSpans(
+                    text.mid(pos + 1, end - pos - 1),
+                    sourceOffset + pos + 1, spans);
+                pos = end + 1;
+                continue;
+            }
+        }
+        ++pos;
+    }
+}
+
+int highlightableContentStart(const QTextBlock &block) {
+    if (!block.isValid())
+        return 0;
+    const QString text = block.text();
+    const QuotePrefix quote = quotePrefix(text);
+    if (quote.depth > 0) {
+        const int previousDepth = block.previous().isValid()
+                                      ? quotePrefix(block.previous().text()).depth
+                                      : 0;
+        const MarkdownCallout::TitleLine title =
+            MarkdownCallout::titleLine(text, previousDepth);
+        if (title.valid())
+            return title.hasCustomTitle() ? title.titleStart : text.size();
+        return quote.contentStart;
+    }
+    const ListPrefix list = listPrefix(text);
+    if (list.valid())
+        return list.contentStart;
+    static const QRegularExpression heading(
+        QStringLiteral("^#{1,6}\\s+"));
+    const auto match = heading.match(text);
+    return match.hasMatch() ? int(match.capturedEnd()) : 0;
 }
 
 struct HeadingSpacing {
@@ -1117,8 +1264,8 @@ void MarkdownEditor::setReadMode(bool enabled) {
         setSourceTextCursor(m_sourceCursor);
         setAccessibleName(tr("Note reader"));
         setAccessibleDescription(
-            tr("Rendered note. Text can be selected and copied; task "
-               "checkboxes can be toggled."));
+            tr("Rendered note. Text can be selected and copied, or highlighted "
+               "with Ctrl+Shift+H; task checkboxes can be toggled."));
         // QTextEdit::setDocument() marks the newly installed document dirty as
         // part of resetting its control. Presentation is derived state, never
         // a saveable edit, so normalize that Qt bookkeeping immediately.
@@ -1278,6 +1425,329 @@ void MarkdownEditor::copyReadSelection() {
     const QString text = readSelectionText(textCursor());
     if (!text.isEmpty())
         QApplication::clipboard()->setText(text);
+}
+
+bool MarkdownEditor::toggleReadHighlight() {
+    if (!m_readMode || !m_readDocument || !m_sourceDocument ||
+        document() != m_readDocument)
+        return false;
+    const QTextCursor readSelection = textCursor();
+    if (!readSelection.hasSelection())
+        return false;
+
+    const int selectionStart = readSelection.selectionStart();
+    const int selectionEnd = readSelection.selectionEnd();
+    const QColor highlightBackground = MarkdownStyle::highlightBackground();
+    auto highlightedAt = [&](int position) {
+        QTextCursor character(m_readDocument);
+        character.setPosition(position);
+        character.movePosition(QTextCursor::NextCharacter,
+                               QTextCursor::KeepAnchor);
+        return character.charFormat().background().color() ==
+               highlightBackground;
+    };
+    auto rangeHasVisibleText = [&](int start, int end) {
+        for (int position = start; position < end; ++position) {
+            const QChar character = m_readDocument->characterAt(position);
+            if (!character.isNull() && !character.isSpace() &&
+                character != QChar::ObjectReplacementCharacter &&
+                character != QChar::ParagraphSeparator)
+                return true;
+        }
+        return false;
+    };
+
+    // The user's rule is word-oriented: punctuation or a paragraph separator
+    // between highlighted words must not turn an unhighlight operation into an
+    // add operation. If a selection contains no letters/numbers, fall back to
+    // its other visible characters so a punctuation-only selection still acts
+    // predictably.
+    bool sawWordCharacter = false;
+    bool everyWordCharacterHighlighted = true;
+    bool sawVisibleCharacter = false;
+    bool everyVisibleCharacterHighlighted = true;
+    for (int position = selectionStart; position < selectionEnd; ++position) {
+        const QChar character = m_readDocument->characterAt(position);
+        if (character.isNull() || character.isSpace() ||
+            character == QChar::ObjectReplacementCharacter ||
+            character == QChar::ParagraphSeparator)
+            continue;
+        const bool highlighted = highlightedAt(position);
+        sawVisibleCharacter = true;
+        everyVisibleCharacterHighlighted &= highlighted;
+        if (character.isLetterOrNumber()) {
+            sawWordCharacter = true;
+            everyWordCharacterHighlighted &= highlighted;
+        }
+    }
+    if (!sawVisibleCharacter)
+        return false;
+    const bool removeHighlight =
+        sawWordCharacter ? everyWordCharacterHighlighted
+                         : everyVisibleCharacterHighlighted;
+
+    struct ReadBlockSelection {
+        QTextBlock readBlock;
+        QTextBlock sourceBlock;
+        int readStart = 0;
+        int readEnd = 0;
+    };
+    QList<ReadBlockSelection> blockSelections;
+    for (QTextBlock block = m_readDocument->findBlock(selectionStart);
+         block.isValid() && block.position() < selectionEnd;
+         block = block.next()) {
+        const int readStart = qMax(selectionStart, block.position());
+        const int readEnd =
+            qMin(selectionEnd, block.position() + block.length() - 1);
+        if (readStart >= readEnd ||
+            !rangeHasVisibleText(readStart, readEnd))
+            continue;
+
+        QTextCursor part(m_readDocument);
+        part.setPosition(readStart);
+        part.setPosition(readEnd, QTextCursor::KeepAnchor);
+        const QTextCursor sourcePart = MarkdownReadRenderer::mapToSourceCursor(
+            m_sourceDocument, part);
+        const QTextBlock sourceFirst =
+            m_sourceDocument->findBlock(sourcePart.selectionStart());
+        const QTextBlock sourceLast = m_sourceDocument->findBlock(
+            qMax(sourcePart.selectionStart(), sourcePart.selectionEnd() - 1));
+        if (!sourcePart.hasSelection() || !sourceFirst.isValid() ||
+            sourceFirst != sourceLast)
+            continue; // rendered objects and synthetic rows are not prose
+
+        const int contentStart =
+            sourceFirst.position() + highlightableContentStart(sourceFirst);
+        if (sourcePart.selectionEnd() <= contentStart)
+            continue; // generated bullet/callout title only
+        blockSelections.append(
+            {block, sourceFirst, readStart, readEnd});
+    }
+    if (blockSelections.isEmpty())
+        return false;
+
+    struct ReadHighlightSpan {
+        InlineHighlightSpan source;
+        int readStart = 0;
+        int readEnd = 0;
+    };
+    QHash<int, int> removals;
+    QSet<int> insertions;
+    auto removeMarkerPair = [&](const InlineHighlightSpan &span) {
+        removals.insert(span.openStart, 2);
+        removals.insert(span.contentEnd, 2);
+    };
+    auto addMarkerPair = [&](int start, int end) {
+        if (start >= end)
+            return;
+        insertions.insert(start);
+        insertions.insert(end);
+    };
+
+    for (const ReadBlockSelection &selected : std::as_const(blockSelections)) {
+        QList<InlineHighlightSpan> sourceSpans;
+        collectInlineHighlightSpans(selected.sourceBlock.text(),
+                                    selected.sourceBlock.position(),
+                                    &sourceSpans);
+        QList<ReadHighlightSpan> currentHighlights;
+        for (const InlineHighlightSpan &span : std::as_const(sourceSpans)) {
+            QTextCursor sourceSpan(m_sourceDocument);
+            sourceSpan.setPosition(span.contentStart);
+            sourceSpan.setPosition(span.contentEnd,
+                                   QTextCursor::KeepAnchor);
+            const QTextCursor rendered = MarkdownReadRenderer::mapToReadCursor(
+                m_readDocument, sourceSpan);
+            if (!rendered.hasSelection())
+                continue;
+            const int readStart = rendered.selectionStart();
+            const int readEnd = rendered.selectionEnd();
+            if (m_readDocument->findBlock(readStart) != selected.readBlock ||
+                m_readDocument->findBlock(qMax(readStart, readEnd - 1)) !=
+                    selected.readBlock)
+                continue;
+            bool visiblyHighlighted = false;
+            for (int position = readStart; position < readEnd; ++position) {
+                const QChar character =
+                    m_readDocument->characterAt(position);
+                if (!character.isSpace() &&
+                    character != QChar::ObjectReplacementCharacter &&
+                    highlightedAt(position)) {
+                    visiblyHighlighted = true;
+                    break;
+                }
+            }
+            if (visiblyHighlighted)
+                currentHighlights.append({span, readStart, readEnd});
+        }
+
+        auto sourceRangeForReadRange = [&](int readStart, int readEnd,
+                                           int *sourceStart,
+                                           int *sourceEnd) {
+            // Keep Markdown markers snug against actual text. In particular,
+            // removing the first word from ==first second== should produce
+            // "first ==second==", not "first== second==".
+            while (readStart < readEnd &&
+                   m_readDocument->characterAt(readStart).isSpace())
+                ++readStart;
+            while (readEnd > readStart &&
+                   m_readDocument->characterAt(readEnd - 1).isSpace())
+                --readEnd;
+            if (readStart >= readEnd)
+                return false;
+            QTextCursor rendered(m_readDocument);
+            rendered.setPosition(readStart);
+            rendered.setPosition(readEnd, QTextCursor::KeepAnchor);
+            const QTextCursor source = MarkdownReadRenderer::mapToSourceCursor(
+                m_sourceDocument, rendered);
+            const int start = qMax(
+                source.selectionStart(),
+                selected.sourceBlock.position() +
+                    highlightableContentStart(selected.sourceBlock));
+            const int end = qMin(source.selectionEnd(),
+                                 selected.sourceBlock.position() +
+                                     selected.sourceBlock.text().size());
+            if (start >= end)
+                return false;
+            *sourceStart = start;
+            *sourceEnd = end;
+            return true;
+        };
+
+        if (removeHighlight) {
+            for (const ReadHighlightSpan &highlight :
+                 std::as_const(currentHighlights)) {
+                if (highlight.readEnd <= selected.readStart ||
+                    highlight.readStart >= selected.readEnd)
+                    continue;
+                removeMarkerPair(highlight.source);
+
+                const int prefixEnd =
+                    qMin(selected.readStart, highlight.readEnd);
+                if (highlight.readStart < prefixEnd &&
+                    rangeHasVisibleText(highlight.readStart, prefixEnd)) {
+                    int sourceStart = 0, sourceEnd = 0;
+                    if (sourceRangeForReadRange(highlight.readStart, prefixEnd,
+                                                &sourceStart, &sourceEnd))
+                        addMarkerPair(sourceStart, sourceEnd);
+                }
+
+                const int suffixStart =
+                    qMax(selected.readEnd, highlight.readStart);
+                if (suffixStart < highlight.readEnd &&
+                    rangeHasVisibleText(suffixStart, highlight.readEnd)) {
+                    int sourceStart = 0, sourceEnd = 0;
+                    if (sourceRangeForReadRange(suffixStart, highlight.readEnd,
+                                                &sourceStart, &sourceEnd))
+                        addMarkerPair(sourceStart, sourceEnd);
+                }
+            }
+        } else {
+            int targetStart = selected.readStart;
+            int targetEnd = selected.readEnd;
+            bool expanded = true;
+            while (expanded) {
+                expanded = false;
+                for (const ReadHighlightSpan &highlight :
+                     std::as_const(currentHighlights)) {
+                    if (highlight.readEnd < targetStart ||
+                        highlight.readStart > targetEnd)
+                        continue;
+                    const int nextStart =
+                        qMin(targetStart, highlight.readStart);
+                    const int nextEnd = qMax(targetEnd, highlight.readEnd);
+                    if (nextStart != targetStart || nextEnd != targetEnd) {
+                        targetStart = nextStart;
+                        targetEnd = nextEnd;
+                        expanded = true;
+                    }
+                }
+            }
+            for (const ReadHighlightSpan &highlight :
+                 std::as_const(currentHighlights)) {
+                if (highlight.readEnd < targetStart ||
+                    highlight.readStart > targetEnd)
+                    continue;
+                removeMarkerPair(highlight.source);
+            }
+            int sourceStart = 0, sourceEnd = 0;
+            if (sourceRangeForReadRange(targetStart, targetEnd, &sourceStart,
+                                        &sourceEnd))
+                addMarkerPair(sourceStart, sourceEnd);
+        }
+    }
+
+    if (removals.isEmpty() && insertions.isEmpty())
+        return false;
+
+    const QTextCursor originalSourceSelection =
+        MarkdownReadRenderer::mapToSourceCursor(m_sourceDocument,
+                                                readSelection);
+    const bool selectionForward =
+        readSelection.anchor() <= readSelection.position();
+    const int originalSelectionStart =
+        originalSourceSelection.selectionStart();
+    const int originalSelectionEnd = originalSourceSelection.selectionEnd();
+    QList<int> editPositions = removals.keys();
+    for (int position : std::as_const(insertions))
+        if (!editPositions.contains(position))
+            editPositions.append(position);
+
+    std::sort(editPositions.begin(), editPositions.end());
+    auto transformedBoundary = [&](int original, bool afterInsertionAtBoundary) {
+        int delta = 0;
+        for (int position : std::as_const(editPositions)) {
+            const int removeLength = removals.value(position, 0);
+            const int insertLength = insertions.contains(position) ? 2 : 0;
+            if (original < position)
+                break;
+            if (original == position) {
+                return position + delta +
+                       (afterInsertionAtBoundary ? insertLength : 0);
+            }
+            if (removeLength > 0 && original < position + removeLength)
+                return position + delta + insertLength;
+            delta += insertLength - removeLength;
+        }
+        return original + delta;
+    };
+    const int transformedSelectionStart =
+        transformedBoundary(originalSelectionStart, true);
+    const int transformedSelectionEnd =
+        transformedBoundary(originalSelectionEnd, false);
+
+    std::sort(editPositions.begin(), editPositions.end(), std::greater<int>());
+
+    QTextCursor edit(m_sourceDocument);
+    edit.beginEditBlock();
+    for (int position : std::as_const(editPositions)) {
+        edit.setPosition(position);
+        const int removeLength = removals.value(position, 0);
+        if (removeLength > 0)
+            edit.setPosition(position + removeLength,
+                             QTextCursor::KeepAnchor);
+        edit.insertText(insertions.contains(position)
+                            ? QStringLiteral("==")
+                            : QString());
+    }
+    edit.endEditBlock();
+
+    QTextCursor restoredSourceSelection(m_sourceDocument);
+    restoredSourceSelection.setPosition(selectionForward
+                                            ? transformedSelectionStart
+                                            : transformedSelectionEnd);
+    restoredSourceSelection.setPosition(selectionForward
+                                            ? transformedSelectionEnd
+                                            : transformedSelectionStart,
+                                        QTextCursor::KeepAnchor);
+    m_sourceCursor = restoredSourceSelection;
+    // The installed Read document still carries mappings for the pre-edit
+    // source. Tell rebuildReadDocument to use the transformed source cursor
+    // above instead of mapping that stale rendered selection one more time.
+    m_readCursorChanged = false;
+    const qreal scrollRatio = currentScrollRatio();
+    rebuildReadDocument(scrollRatio);
+    emit sourceChanged();
+    return true;
 }
 
 QTextCharFormat MarkdownEditor::readObjectFormat(
@@ -2252,13 +2722,20 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     }
 
     if (m_readMode) {
+        const auto mods = event->modifiers() &
+                          ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
+        if (mods == (Qt::ControlModifier | Qt::ShiftModifier) &&
+            event->key() == Qt::Key_H) {
+            stopSmoothScroll();
+            toggleReadHighlight();
+            event->accept();
+            return;
+        }
         if (event->matches(QKeySequence::Copy)) {
             copy();
             event->accept();
             return;
         }
-        const auto mods = event->modifiers() &
-                          ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
         if (mods == Qt::AltModifier &&
             (event->key() == Qt::Key_Left ||
              event->key() == Qt::Key_Right)) {

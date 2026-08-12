@@ -168,6 +168,12 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] Read Mode strips a first-line callout marker, shows its generated or
       custom title with the type's unique emoji, propagates its background over
       the complete quote group without row gaps, and aligns the card left.
+- [ ] Select plain text in Read Mode and press `Ctrl+Shift+H`; Emerald inserts
+      `==` in the Markdown source, keeps the rendered text selected, and
+      autosaves. Select only highlighted words and press it again to remove the
+      selected highlight. If even one selected word is not highlighted, the
+      shortcut fills every gap instead. Multi-line list/quote selections retain
+      their structural prefixes. ◆
 - [ ] **Smooth mouse-wheel scrolling** — each ordinary wheel notch eases to its
       target without visible line-sized jumps. Spin several notches quickly and
       confirm they accumulate into one continuous movement rather than restarting
@@ -178,10 +184,12 @@ move the caret back onto the line, confirm the raw markers reappear.
       at least one Linux setup and macOS if available. ◆
 - [ ] Start a smooth wheel movement, then click in the note or drag the scrollbar.
       The animation stops immediately and does not pull the page away afterward.
-- [ ] While Read Mode is on, typing, title edits, task toggles, templates,
-      images, mascots, new/renamed/moved/deleted notes and folders, and clicking
-      a missing `[[link]]` cannot change the vault. Links, search, folding,
-      selection/copy, and externally updated notes continue to work. ◆
+- [ ] While Read Mode is on, typing, title edits, templates, images, mascots,
+      new/renamed/moved/deleted notes and folders, and clicking a missing
+      `[[link]]` cannot change the vault. `Ctrl+Shift+H` highlights and task
+      checkbox toggles are the deliberate exceptions and autosave; links,
+      search, folding, selection/copy, and externally updated notes continue to
+      work. ◆
 - [ ] **Font size** `Ctrl++` / `Ctrl+-` / `Ctrl+0` (up / down / reset).
 - [ ] **Toggle sidebar** (`Ctrl+\` or the gear menu) collapses the left pane fully and restores it; clicking the splitter handle does the same. ◆
 - [ ] Heading sizes scale with the body font.
@@ -234,6 +242,7 @@ Verify each fires and that menu items show their shortcut label.
 | Review broken links                | `Ctrl+Shift+B`                 | [ ] |
 | Open Graph View                    | `Ctrl+Shift+G`                 | [ ] |
 | Toggle Read Mode                   | `Ctrl+E`                       | [ ] |
+| Toggle selected Read Mode highlight | `Ctrl+Shift+H`                | [ ] |
 | Settings                           | `Ctrl+,`                       | [ ] |
 | Back / Forward                     | `Alt+←` / `Alt+→`              | [ ] |
 | Quick Jump to visible link         | Hold `Alt`, then type hint     | [ ] |

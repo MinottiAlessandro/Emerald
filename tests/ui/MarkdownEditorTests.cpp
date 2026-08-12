@@ -2053,6 +2053,168 @@ int main(int argc, char **argv) {
           QStringLiteral("source undo should still work after a Read Mode "
                          "document swap"));
 
+    // Ctrl+Shift+H edits highlights through the rendered selection while the
+    // Markdown source remains authoritative. If every selected word is already
+    // highlighted it removes only that selected portion; otherwise it fills
+    // every gap and coalesces the result with highlights it touches.
+    {
+        MarkdownEditor highlightEditor;
+        highlightEditor.resize(700, 420);
+        highlightEditor.show();
+        highlightEditor.activateWindow();
+        highlightEditor.setFocus();
+        int highlightChanges = 0;
+        QObject::connect(&highlightEditor, &MarkdownEditor::sourceChanged,
+                         [&highlightChanges] { ++highlightChanges; });
+        auto selectRendered = [&](const QString &first,
+                                  const QString &last = QString()) {
+            QTextCursor start =
+                highlightEditor.document()->find(first);
+            check(!start.isNull(),
+                  QStringLiteral("Read Mode highlight test should find '%1'")
+                      .arg(first));
+            if (start.isNull())
+                return;
+            if (last.isEmpty()) {
+                highlightEditor.setTextCursor(start);
+                return;
+            }
+            const QTextCursor end =
+                highlightEditor.document()->find(last, start);
+            check(!end.isNull(),
+                  QStringLiteral("Read Mode highlight test should find '%1'")
+                      .arg(last));
+            if (end.isNull())
+                return;
+            start.setPosition(start.selectionStart());
+            start.setPosition(end.selectionEnd(), QTextCursor::KeepAnchor);
+            highlightEditor.setTextCursor(start);
+        };
+        auto toggleHighlight = [&] {
+            sendKey(highlightEditor, QEvent::KeyPress, Qt::Key_H,
+                    Qt::ControlModifier | Qt::ShiftModifier,
+                    QStringLiteral("h"));
+            QApplication::processEvents();
+        };
+
+        highlightEditor.setPlainText(
+            QStringLiteral("Alpha beta ==gamma delta== epsilon"));
+        highlightEditor.setReadMode(true);
+        selectRendered(QStringLiteral("beta"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("Alpha ==beta== ==gamma delta== epsilon"),
+              QStringLiteral("Ctrl+Shift+H should highlight a plain Read Mode "
+                             "selection"));
+        check(highlightEditor.textCursor().selectedText() ==
+                  QStringLiteral("beta"),
+              QStringLiteral("highlighting should preserve the rendered "
+                             "selection (actual '%1')")
+                  .arg(highlightEditor.textCursor().selectedText()));
+
+        selectRendered(QStringLiteral("gamma"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("Alpha ==beta== gamma ==delta== epsilon"),
+              QStringLiteral("selecting part of a highlighted run should "
+                             "unhighlight only that part"));
+
+        selectRendered(QStringLiteral("beta"), QStringLiteral("gamma"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("Alpha ==beta gamma== ==delta== epsilon"),
+              QStringLiteral("one unhighlighted word should make the shortcut "
+                             "fill gaps and preserve existing highlights"));
+        selectRendered(QStringLiteral("beta"), QStringLiteral("delta"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("Alpha beta gamma delta epsilon"),
+              QStringLiteral("an entirely highlighted selection should remove "
+                             "the complete highlight"));
+
+        // Marker insertions use rendered boundaries, so partial toggles remain
+        // correctly nested inside other inline Markdown rather than crossing
+        // the ** delimiters.
+        highlightEditor.setPlainText(QStringLiteral("==**bold**=="));
+        selectRendered(QStringLiteral("bo"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("**bo==ld==**"),
+              QStringLiteral("partial removal should preserve nested bold "
+                             "Markdown"));
+        selectRendered(QStringLiteral("bold"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("**==bold==**"),
+              QStringLiteral("a mixed nested selection should fill its "
+                             "unhighlighted portion"));
+        selectRendered(QStringLiteral("bold"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() == QStringLiteral("**bold**"),
+              QStringLiteral("a fully highlighted nested selection should "
+                             "toggle off cleanly"));
+
+        highlightEditor.setPlainText(
+            QStringLiteral("- first words\n> second phrase"));
+        selectRendered(QStringLiteral("first"), QStringLiteral("phrase"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("- ==first words==\n> ==second phrase=="),
+              QStringLiteral("multi-line Read Mode highlights should wrap each "
+                             "line without consuming list or quote markers"));
+        selectRendered(QStringLiteral("first"), QStringLiteral("phrase"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("- first words\n> second phrase"),
+              QStringLiteral("the same multi-line selection should toggle all "
+                             "of its highlights off"));
+
+        highlightEditor.setPlainText(
+            QStringLiteral("Open [[Target|wiki label]] now"));
+        selectRendered(QStringLiteral("wiki label"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("Open [[Target|==wiki label==]] now"),
+              QStringLiteral("highlighting a wiki alias should modify only its "
+                             "visible label, not the hidden target"));
+        selectRendered(QStringLiteral("wiki label"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() ==
+                  QStringLiteral("Open [[Target|wiki label]] now"),
+              QStringLiteral("a highlighted wiki alias should toggle off "
+                             "without damaging link syntax"));
+
+        highlightEditor.setPlainText(QStringLiteral(
+            "| Name | Value |\n| --- | --- |\n| Alpha | Beta |"));
+        selectRendered(QStringLiteral("Alpha"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() == QStringLiteral(
+                  "| Name | Value |\n| --- | --- |\n| ==Alpha== | Beta |"),
+              QStringLiteral("highlighting a semantic table cell should keep "
+                             "the table structure intact"));
+        selectRendered(QStringLiteral("Alpha"));
+        toggleHighlight();
+        check(highlightEditor.toPlainText() == QStringLiteral(
+                  "| Name | Value |\n| --- | --- |\n| Alpha | Beta |"),
+              QStringLiteral("a highlighted table cell should toggle off "
+                             "without consuming its pipes"));
+
+        QTextCursor noSelection = highlightEditor.textCursor();
+        noSelection.clearSelection();
+        highlightEditor.setTextCursor(noSelection);
+        const QString beforeNoSelection = highlightEditor.toPlainText();
+        const int changesBeforeNoSelection = highlightChanges;
+        toggleHighlight();
+        check(highlightEditor.toPlainText() == beforeNoSelection &&
+                  highlightChanges == changesBeforeNoSelection,
+              QStringLiteral("Ctrl+Shift+H without selected text should be a "
+                             "no-op"));
+        check(highlightChanges == 13,
+              QStringLiteral("each successful Read Mode highlight edit should "
+                             "emit exactly one autosave signal (actual %1)")
+                  .arg(highlightChanges));
+    }
+
     // QTextEdit normally owns and deletes its installed document. The source
     // and rendered documents use a neutral owner specifically so destruction
     // is also safe while the rendered one is still installed.

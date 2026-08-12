@@ -105,8 +105,8 @@ signals:
     void imageFilesInserted(const QStringList &paths);
     void imagePasted(const QImage &image);
     // A permitted Read Mode interaction changed the hidden Markdown source
-    // (currently toggling a task checkbox). MainWindow uses this to autosave
-    // even though ordinary Read Mode editing remains disabled.
+    // (a task checkbox or Ctrl+Shift+H highlight). MainWindow uses this to
+    // autosave even though ordinary Read Mode editing remains disabled.
     void sourceChanged();
     // The mascot seed changed — on load, on Generate/Delete, or when the user
     // hand-edits the revealed header line. 0 means the note now has no mascot.
@@ -134,6 +134,10 @@ private:
     void syncSourceCursorFromReadSelection();
     QString readSelectionText(const QTextCursor &selection) const;
     void copyReadSelection();
+    // Ctrl+Shift+H in Read Mode edits the authoritative Markdown selection:
+    // remove == only when every selected word is highlighted; otherwise fill
+    // every missing portion. Returns false when there is no eligible text.
+    bool toggleReadHighlight();
     qreal currentScrollRatio() const;
     void restoreScrollRatio(qreal ratio);
     QTextCharFormat readObjectFormat(const QTextBlock &block) const;
