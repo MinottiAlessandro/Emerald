@@ -26,6 +26,22 @@ Plain `.md` files · inline live preview · one dependency · Linux · macOS · 
 
 ---
 
+## Emerald at a glance
+
+<p align="center">
+  <img src="docs/screenshots/read-mode-overview.png" alt="Emerald displaying a Markdown note in Read Mode with a callout, tasks, nested lists, a rendered table, highlighted text, math, code, wiki links, and a note mascot" width="100%">
+  <br>
+  <sub>Read Mode turns plain Markdown into a focused view with callouts, tasks, tables, math, code, wiki links, and more.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/graph-view.png" alt="Emerald Graph View showing the links between notes in a vault" width="100%">
+  <br>
+  <sub>Explore the whole vault—or a note's local neighborhood—in the same workspace with Graph View.</sub>
+</p>
+
+---
+
 ## Download
 
 Grab the latest build for your platform — **self-contained, no Qt installation required.**
