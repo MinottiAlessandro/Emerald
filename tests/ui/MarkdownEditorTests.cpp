@@ -3,6 +3,7 @@
 #include "ui/MarkdownHighlighter.h"
 #include "ui/MarkdownReadObjectRenderer.h"
 #include "ui/MarkdownReadRenderer.h"
+#include "ui/MarkdownStyle.h"
 #include "ui/MathRender.h"
 
 #include "core/Perf.h"
@@ -923,6 +924,146 @@ int main(int argc, char **argv) {
     clickEditor(editor, foldPoint);
     check(editor.document()->findBlockByNumber(1).isVisible(),
           QStringLiteral("clicking the same fold gutter should expand it"));
+
+    // Consecutive, deeper-indented list items form a source-backed tree. The
+    // cached parent makes guide painting linear, while each fold hides only its
+    // own descendant run and leaves the next same-level sibling visible.
+    const QString nestedListSource = QStringLiteral(
+        "- Parent\n"
+        "  1. Child one\n"
+        "    - Grandchild\n"
+        "  - [ ] Child task\n"
+        "- Parent sibling");
+    editor.setPlainText(nestedListSource);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock listParent = editor.document()->findBlockByNumber(0);
+    const QTextBlock listChild = editor.document()->findBlockByNumber(1);
+    const QTextBlock listGrandchild = editor.document()->findBlockByNumber(2);
+    const QTextBlock listTaskChild = editor.document()->findBlockByNumber(3);
+    const QTextBlock listSibling = editor.document()->findBlockByNumber(4);
+    settleLayout(editor, listSibling);
+    check(listChild.blockFormat()
+                  .property(MarkdownStyle::ListParentBlockProperty)
+                  .toInt() == 0 &&
+              listGrandchild.blockFormat()
+                      .property(MarkdownStyle::ListParentBlockProperty)
+                      .toInt() == 1 &&
+              listTaskChild.blockFormat()
+                      .property(MarkdownStyle::ListParentBlockProperty)
+                      .toInt() == 0 &&
+              listSibling.blockFormat()
+                      .property(MarkdownStyle::ListParentBlockProperty)
+                      .toInt() == -1,
+          QStringLiteral("nested bullet, numbered, and task items should cache "
+                         "their nearest shallower list parent"));
+
+    // Folding is a presentation-only affordance and never changes source.
+    const QRect parentMarkerCell = editor.cursorRect(QTextCursor(listParent));
+    QTextCursor childMarkerCursor(listChild);
+    childMarkerCursor.setPosition(listChild.position() + 2);
+    const QRect childMarkerCell = editor.cursorRect(childMarkerCursor);
+    check(editor.toPlainText() == nestedListSource,
+          QStringLiteral("nested-list presentation should not modify Markdown "
+                         "source"));
+
+    const QPoint parentFoldPoint(qMax(1, parentMarkerCell.left() - 8),
+                                 parentMarkerCell.center().y());
+    clickEditor(editor, parentFoldPoint);
+    check(!listChild.isVisible() && !listGrandchild.isVisible() &&
+              !listTaskChild.isVisible() && listSibling.isVisible(),
+          QStringLiteral("collapsing a list parent should hide all descendants "
+                         "but preserve its next sibling"));
+    clickEditor(editor, parentFoldPoint);
+    check(listChild.isVisible() && listGrandchild.isVisible() &&
+              listTaskChild.isVisible(),
+          QStringLiteral("clicking a collapsed list parent should restore its "
+                         "whole child tree"));
+
+    const QPoint childFoldPoint(qMax(1, childMarkerCell.left() - 8),
+                                childMarkerCell.center().y());
+    clickEditor(editor, childFoldPoint);
+    check(!listGrandchild.isVisible() && listTaskChild.isVisible(),
+          QStringLiteral("a nested parent fold should hide only its own deeper "
+                         "children"));
+    clickEditor(editor, childFoldPoint);
+
+    // List fold state and parent metadata are source-backed, so the rendered
+    // document offers the same interaction without exposing Markdown markers.
+    clickEditor(editor, parentFoldPoint);
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    const QTextBlock readParent = MarkdownReadRenderer::blockForSourceBlock(
+        editor.document(), 0);
+    const QTextBlock readChild = MarkdownReadRenderer::blockForSourceBlock(
+        editor.document(), 1);
+    const QTextBlock readSibling = MarkdownReadRenderer::blockForSourceBlock(
+        editor.document(), 4);
+    check(readParent.isVisible() && !readChild.isVisible() &&
+              readSibling.isVisible() &&
+              readChild.blockFormat()
+                      .property(MarkdownStyle::ListParentBlockProperty)
+                      .toInt() == readParent.blockNumber(),
+          QStringLiteral("Read Mode should preserve nested-list ownership and "
+                         "collapsed visibility"));
+    const QRect readMarkerCell = editor.cursorRect(QTextCursor(readParent));
+    clickEditor(editor,
+                QPoint(qMax(1, readMarkerCell.left() - 8),
+                       readMarkerCell.center().y()));
+    check(readChild.isVisible(),
+          QStringLiteral("a list parent should expand directly in Read Mode"));
+    editor.setReadMode(false);
+    check(editor.document()->findBlockByNumber(1).isVisible(),
+          QStringLiteral("expanding in Read Mode should carry back to Edit Mode"));
+
+    editor.setPlainText(QStringLiteral("- Dynamic parent\n- Dynamic child"));
+    QTextCursor dynamicChild(editor.document()->findBlockByNumber(1));
+    dynamicChild.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(dynamicChild);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+    QApplication::processEvents();
+    check(editor.document()
+                  ->findBlockByNumber(1)
+                  .blockFormat()
+                  .property(MarkdownStyle::ListParentBlockProperty)
+                  .toInt() == 0,
+          QStringLiteral("indenting an existing item should immediately attach "
+                         "it to the preceding shallower parent"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Backtab, Qt::ShiftModifier);
+    QApplication::processEvents();
+    check(editor.document()
+                  ->findBlockByNumber(1)
+                  .blockFormat()
+                  .property(MarkdownStyle::ListParentBlockProperty)
+                  .toInt() == -1,
+          QStringLiteral("outdenting an item should immediately detach it from "
+                         "the old parent"));
+
+    editor.setPlainText(QStringLiteral(
+        "- Bounded parent\n"
+        "  - Owned child\n"
+        "ordinary paragraph\n"
+        "  - Detached indented item"));
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock boundedParent = editor.document()->firstBlock();
+    const QRect boundedMarker = editor.cursorRect(QTextCursor(boundedParent));
+    clickEditor(editor,
+                QPoint(qMax(1, boundedMarker.left() - 8),
+                       boundedMarker.center().y()));
+    check(!editor.document()->findBlockByNumber(1).isVisible() &&
+              editor.document()->findBlockByNumber(2).isVisible() &&
+              editor.document()->findBlockByNumber(3).isVisible() &&
+              editor.document()
+                      ->findBlockByNumber(3)
+                      .blockFormat()
+                      .property(MarkdownStyle::ListParentBlockProperty)
+                      .toInt() == -1,
+          QStringLiteral("a paragraph should terminate both a list fold and "
+                         "the following item's parent relationship"));
+    clickEditor(editor,
+                QPoint(qMax(1, boundedMarker.left() - 8),
+                       boundedMarker.center().y()));
 
     // Link hit testing now uses the same wrapped-range rectangles as Quick Jump.
     // Clicking blank space after the token must not inherit the nearest cursor.

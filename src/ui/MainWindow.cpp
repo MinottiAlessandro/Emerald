@@ -180,6 +180,7 @@ QString manualText() {
         "## Lists\n"
         "- bullets start with `-`, `*` or `+`\n"
         "  - press Tab to indent, Shift+Tab to outdent\n"
+        "    - click a parent item's arrow to fold or unfold its children\n"
         "    - the bullet glyph changes with the nesting depth\n"
         "- Enter keeps the list going; Enter on an empty item ends it\n"
         "\n"

@@ -737,6 +737,11 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     bool firstOutput = true;
     bool reuseCurrentBlock = false;
     QVector<QString> calloutTypes(1);
+    struct ListAncestor {
+        int depth = 0;
+        int readBlock = -1;
+    };
+    QVector<ListAncestor> listAncestors;
     for (int sourceBlock = 0; sourceBlock < lines.size(); ++sourceBlock) {
         const QString line = lines.at(sourceBlock);
         const int lineStart = lineStarts.at(sourceBlock);
@@ -793,6 +798,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                                 lines, lineStarts, options);
                 firstOutput = false;
                 reuseCurrentBlock = true;
+                listAncestors.clear();
                 sourceBlock = sourceEndBlock;
                 continue;
             }
@@ -811,6 +817,8 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         bool parseInline = true;
         bool taskItem = false;
         bool checkedTask = false;
+        int listDepth = -1;
+        int listParentBlock = -1;
 
         if (const auto fence = fenceRe.match(line); fence.hasMatch()) {
             const QString marker = fence.captured(1);
@@ -962,6 +970,13 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                 for (const QChar ch : list.captured(1))
                     columns += ch == QLatin1Char('\t') ? 2 : 1;
                 const int depth = (columns + 1) / 2;
+                listDepth = depth;
+                while (!listAncestors.isEmpty() &&
+                       listAncestors.constLast().depth >= depth)
+                    listAncestors.removeLast();
+                if (!listAncestors.isEmpty())
+                    listParentBlock =
+                        listAncestors.constLast().readBlock;
                 QString marker = list.captured(2);
                 content = list.captured(4);
                 contentSourceOffset =
@@ -992,6 +1007,9 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                 }
                 block.setLeftMargin(18.0 + depth * 22.0);
                 block.setTextIndent(-14.0);
+                block.setProperty(MarkdownStyle::ListDepthProperty, depth);
+                block.setProperty(MarkdownStyle::ListParentBlockProperty,
+                                  listParentBlock);
             } else if (ruleRe.match(content).hasMatch()) {
                 object = MarkdownReadObjectRenderer::ruleFormat(
                     options.baseFont, options.fallbackWidth);
@@ -1051,6 +1069,10 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         }
         attachSourceData(cursor.block(), sourceBlock, lineStart,
                          sourceEnd - lineStart, ranges);
+        if (listDepth >= 0)
+            listAncestors.append({listDepth, cursor.block().blockNumber()});
+        else
+            listAncestors.clear();
         sourceBlock = sourceEndBlock;
     }
 

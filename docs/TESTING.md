@@ -58,6 +58,11 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] `Tab` / `Shift+Tab` indent / outdent an item.
 - [ ] Multi-line selection + `Tab`/`Shift+Tab` indents/outdents every line.
 - [ ] Off the active line, dashes render as bullet glyphs (●/○/▪ by nesting level).
+- [ ] Consecutive indented bullet, numbered, and task items belong to their
+      nearest shallower parent. A parent's fold arrow hides its whole deeper-
+      indented run, stops before the next same-level item or paragraph, and
+      expands again in both Edit and Read Mode. Nested parent arrows affect only
+      their own descendants. ◆
 - [ ] **Ctrl+Enter** opens a new line below without splitting, continuing the list.
 
 ## 5. Tables
@@ -197,6 +202,9 @@ move the caret back onto the line, confirm the raw markers reappear.
 
 ## 13. Folding
 - [ ] Fold control on a heading collapses everything down to the next same/higher heading.
+- [ ] Fold control on a list parent collapses its indented child tree without
+      hiding the parent's next sibling; its state survives switching between
+      Edit and Read Mode. ◆
 - [ ] Fold control on a fenced code block collapses it.
 - [ ] Editing visible trailing blank lines below a folded section doesn't pull more text into the fold.
 

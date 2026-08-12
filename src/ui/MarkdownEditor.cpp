@@ -821,6 +821,21 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
            !insideCodeBlock(last.next()))
         last = last.next();
 
+    // List ancestry is contextual too. Expand a partial update to the edges of
+    // its consecutive list run so every row receives an accurate parent block
+    // even after indenting, outdenting, inserting, or deleting an item.
+    const auto isStructuralList = [this](const QTextBlock &block) {
+        return block.isValid() && !insideCodeBlock(block) &&
+               quotePrefix(block.text()).depth == 0 &&
+               listPrefix(block.text()).valid();
+    };
+    while (first.previous().isValid() && isStructuralList(first) &&
+           isStructuralList(first.previous()))
+        first = first.previous();
+    while (last.next().isValid() && isStructuralList(last) &&
+           isStructuralList(last.next()))
+        last = last.next();
+
     static const QRegularExpression fenceRe(
         QStringLiteral("^\\s*(```|~~~)"));
     bool inFence = false;
@@ -848,6 +863,11 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     const qreal available =
         qMax(qreal(0), viewport()->width() - document()->documentMargin() * 2);
     QVector<QString> calloutTypes(1);
+    struct ListAncestor {
+        int depth = 0;
+        int blockNumber = -1;
+    };
+    QVector<ListAncestor> listAncestors;
     for (QTextBlock block = first; block.isValid(); block = block.next()) {
         const auto fenceMatch = fenceRe.match(block.text());
         const bool insideFence = inFence;
@@ -899,6 +919,17 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const ListPrefix list = codeRegion || quote.depth > 0
                                     ? ListPrefix{}
                                     : listPrefix(block.text());
+        int listParentBlock = -1;
+        if (list.valid()) {
+            while (!listAncestors.isEmpty() &&
+                   listAncestors.constLast().depth >= list.depth)
+                listAncestors.removeLast();
+            if (!listAncestors.isEmpty())
+                listParentBlock = listAncestors.constLast().blockNumber;
+            listAncestors.append({list.depth, block.blockNumber()});
+        } else {
+            listAncestors.clear();
+        }
         const int contentStart =
             quote.depth > 0 ? quote.contentStart
                             : list.contentStart;
@@ -985,6 +1016,19 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const qreal bottomMargin =
             extra + (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0) +
             quoteBottom + listBottom + codeBottom;
+        const bool listMetadataChanged =
+            list.valid()
+                ? !format.hasProperty(MarkdownStyle::ListDepthProperty) ||
+                      !format.hasProperty(
+                          MarkdownStyle::ListParentBlockProperty) ||
+                      format.property(MarkdownStyle::ListDepthProperty)
+                              .toInt() != list.depth ||
+                      format.property(
+                                MarkdownStyle::ListParentBlockProperty)
+                              .toInt() != listParentBlock
+                : format.hasProperty(MarkdownStyle::ListDepthProperty) ||
+                      format.hasProperty(
+                          MarkdownStyle::ListParentBlockProperty);
         const bool changed = !qFuzzyCompare(format.leftMargin() + 1.0,
                                             leftMargin + 1.0) ||
                              !qFuzzyCompare(format.textIndent() + 1.0,
@@ -1003,7 +1047,8 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                              format.property(CalloutDepthProperty).toInt() !=
                                  calloutDepth ||
                              format.property(CalloutTitleProperty).toBool() !=
-                                 isCalloutTitle;
+                                 isCalloutTitle ||
+                             listMetadataChanged;
         if (changed) {
             if (!formatEditOpen) {
                 // Paragraph layout is derived from the source edit that caused
@@ -1026,6 +1071,16 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                 format.clearProperty(CalloutTypeProperty);
                 format.clearProperty(CalloutDepthProperty);
                 format.clearProperty(CalloutTitleProperty);
+            }
+            if (list.valid()) {
+                format.setProperty(MarkdownStyle::ListDepthProperty,
+                                   list.depth);
+                format.setProperty(MarkdownStyle::ListParentBlockProperty,
+                                   listParentBlock);
+            } else {
+                format.clearProperty(MarkdownStyle::ListDepthProperty);
+                format.clearProperty(
+                    MarkdownStyle::ListParentBlockProperty);
             }
             formatCursor.setPosition(block.position());
             formatCursor.setBlockFormat(format);
@@ -1259,6 +1314,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
         m_switchingDocuments = true;
         setDocument(m_readDocument);
         m_switchingDocuments = false;
+        reapplyFolds();
         setReadOnly(true);
         setCursorWidth(0);
         setSourceTextCursor(m_sourceCursor);
@@ -1284,6 +1340,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
         setDocument(m_sourceDocument);
         setTextCursor(m_sourceCursor);
         m_switchingDocuments = false;
+        reapplyFolds();
         setReadOnly(false);
         setCursorWidth(m_editCursorWidth);
         setAccessibleName(tr("Note editor"));
@@ -1379,6 +1436,7 @@ void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
         // like an editable/saveable note.
         m_readDocument->setModified(false);
         delete oldReadDocument;
+        reapplyFolds();
     }
     m_switchingDocuments = wasSwitching;
     m_sourceCursor = sourceCursor;
@@ -2443,14 +2501,47 @@ bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
 
 bool MarkdownEditor::isOverFoldControl(const QPoint &pos) const {
     const QTextBlock block = cursorForPosition(pos).block();
-    return headingFoldable(block) && foldControlRect(block).contains(pos);
+    return foldAnchorFoldable(block) && foldControlRect(block).contains(pos);
 }
 
 QRectF MarkdownEditor::foldControlRect(const QTextBlock &block) const {
     if (!block.isValid())
         return {};
+    const QTextBlock sourceBlock = sourceBlockForDisplay(block);
+    if (sourceBlock.isValid() && listPrefix(sourceBlock.text()).valid()) {
+        const QRectF marker = listMarkerRect(block);
+        if (marker.isValid()) {
+            constexpr qreal Width = 12.0;
+            constexpr qreal Gap = 2.0;
+            return QRectF(qMax(qreal(0), marker.left() - Width - Gap),
+                          marker.top(), Width, marker.height());
+        }
+    }
     const QRectF geo = blockViewportRect(block);
     return QRectF(0, geo.top(), document()->documentMargin(), geo.height());
+}
+
+QRectF MarkdownEditor::listMarkerRect(const QTextBlock &block) const {
+    if (!block.isValid())
+        return {};
+    int markerPosition = 0;
+    if (!m_readMode) {
+        const ListPrefix prefix = listPrefix(block.text());
+        if (!prefix.valid())
+            return {};
+        markerPosition = prefix.markerStart;
+    } else if (!block.blockFormat().hasProperty(
+                   MarkdownStyle::ListDepthProperty)) {
+        return {};
+    }
+
+    const QList<QRectF> markerRects =
+        textRangeViewportRects(block, markerPosition, 1);
+    if (!markerRects.isEmpty())
+        return markerRects.first();
+    QTextCursor marker(block);
+    marker.setPosition(block.position() + markerPosition);
+    return cursorRect(marker);
 }
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
@@ -2863,9 +2954,9 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
-    // Enter at the very start of a collapsed heading inserts the blank line
-    // above without popping the section open. A plain insert would split the
-    // heading's block, drift its fold handle onto the new empty line, and
+    // Enter at the very start of a collapsed heading/list item inserts the
+    // blank line above without popping the section open. A plain insert would
+    // split the anchor block, drift its fold handle onto the new empty line, and
     // reapplyFolds would then drop the fold; instead re-point the fold (and its
     // captured end) to the heading's new position and re-apply.
     if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
@@ -2882,8 +2973,8 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             c.insertText(QStringLiteral("\n"));
             setTextCursor(c);
             m_applyingFolds = false;
-            // Everything from the heading down shifted one block lower.
-            m_folds[fi].heading = document()->findBlockByNumber(headNum + 1);
+            // Everything from the fold anchor down shifted one block lower.
+            m_folds[fi].anchor = document()->findBlockByNumber(headNum + 1);
             if (endNum >= 0)
                 m_folds[fi].end = document()->findBlockByNumber(endNum + 1);
             reapplyFolds();
@@ -3427,13 +3518,16 @@ int MarkdownEditor::headingLevel(const QString &text) const {
 }
 
 QTextBlock MarkdownEditor::foldSectionEnd(const QTextBlock &heading) const {
+    const QTextBlock sourceHeading = sourceBlockForDisplay(heading);
+    if (!sourceHeading.isValid())
+        return {};
     // The last block a fold of `heading` should hide: the section runs from
     // heading.next() down to the next same-or-higher heading (or EOF), minus any
     // trailing blank lines — so the blank separation before that next heading
     // stays visible. Invalid when the section has no foldable content.
-    const int level = headingLevel(heading.text());
+    const int level = headingLevel(sourceHeading.text());
     QTextBlock lastContent;
-    for (QTextBlock b = heading.next(); b.isValid(); b = b.next()) {
+    for (QTextBlock b = sourceHeading.next(); b.isValid(); b = b.next()) {
         // A "# ..." line inside a code block is literal text, not a heading,
         // so it must not end the section early.
         const int l = insideCodeBlock(b) ? 0 : headingLevel(b.text());
@@ -3446,16 +3540,84 @@ QTextBlock MarkdownEditor::foldSectionEnd(const QTextBlock &heading) const {
 }
 
 bool MarkdownEditor::headingFoldable(const QTextBlock &heading) const {
-    if (insideCodeBlock(heading))
+    const QTextBlock sourceHeading = sourceBlockForDisplay(heading);
+    if (!sourceHeading.isValid() || insideCodeBlock(sourceHeading))
         return false; // a "# ..." line inside a code block isn't a heading
-    if (headingLevel(heading.text()) == 0)
+    if (headingLevel(sourceHeading.text()) == 0)
         return false;
-    return foldSectionEnd(heading).isValid(); // foldable only with content below
+    return foldSectionEnd(sourceHeading).isValid();
+}
+
+QTextBlock MarkdownEditor::listSubtreeEnd(const QTextBlock &item) const {
+    const QTextBlock sourceItem = sourceBlockForDisplay(item);
+    if (!sourceItem.isValid() || insideCodeBlock(sourceItem) ||
+        quotePrefix(sourceItem.text()).depth > 0)
+        return {};
+    const ListPrefix parent = listPrefix(sourceItem.text());
+    if (!parent.valid())
+        return {};
+
+    QTextBlock block = sourceItem.next();
+    if (!block.isValid() || insideCodeBlock(block) ||
+        quotePrefix(block.text()).depth > 0)
+        return {};
+    const ListPrefix firstChild = listPrefix(block.text());
+    if (!firstChild.valid() || firstChild.depth <= parent.depth)
+        return {};
+
+    QTextBlock end = block;
+    for (block = block.next(); block.isValid(); block = block.next()) {
+        if (insideCodeBlock(block) || quotePrefix(block.text()).depth > 0)
+            break;
+        const ListPrefix descendant = listPrefix(block.text());
+        if (!descendant.valid() || descendant.depth <= parent.depth)
+            break;
+        end = block;
+    }
+    return end;
+}
+
+bool MarkdownEditor::listItemFoldable(const QTextBlock &item) const {
+    // The renderer caches direct ownership on consecutive list rows. This is
+    // the paint/hit-test fast path; the source scan below remains the fallback
+    // while a just-edited block is waiting for its queued visual-format pass.
+    if (item.isValid() && item.blockFormat().hasProperty(
+                              MarkdownStyle::ListDepthProperty)) {
+        const QTextBlock child = item.next();
+        return child.isValid() &&
+               child.blockFormat().hasProperty(
+                   MarkdownStyle::ListParentBlockProperty) &&
+               child.blockFormat()
+                       .property(MarkdownStyle::ListParentBlockProperty)
+                       .toInt() == item.blockNumber();
+    }
+    return listSubtreeEnd(item).isValid();
+}
+
+bool MarkdownEditor::foldAnchorFoldable(const QTextBlock &block) const {
+    // Read Mode historically leaves headings expanded, but nested lists are
+    // deliberately interactive in both representations.
+    return listItemFoldable(block) || (!m_readMode && headingFoldable(block));
+}
+
+QTextBlock MarkdownEditor::sourceBlockForDisplay(
+    const QTextBlock &block) const {
+    if (!block.isValid() || !m_sourceDocument)
+        return {};
+    if (block.document() == m_sourceDocument)
+        return block;
+    const int sourceBlock = MarkdownReadRenderer::sourceBlockNumber(block);
+    return sourceBlock >= 0
+               ? m_sourceDocument->findBlockByNumber(sourceBlock)
+               : QTextBlock();
 }
 
 int MarkdownEditor::foldIndexOf(const QTextBlock &heading) const {
+    const QTextBlock sourceAnchor = sourceBlockForDisplay(heading);
+    if (!sourceAnchor.isValid())
+        return -1;
     for (int i = 0; i < m_folds.size(); ++i)
-        if (m_folds[i].heading == heading)
+        if (m_folds[i].anchor == sourceAnchor)
             return i;
     return -1;
 }
@@ -3465,8 +3627,9 @@ bool MarkdownEditor::isFolded(const QTextBlock &heading) const {
 }
 
 void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
-    if (!headingFoldable(heading))
+    if (!foldAnchorFoldable(heading))
         return;
+    const QTextBlock sourceAnchor = sourceBlockForDisplay(heading);
     const int idx = foldIndexOf(heading);
     if (idx >= 0) {
         m_folds.removeAt(idx);
@@ -3475,20 +3638,24 @@ void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
         // trailing blank lines won't grow the fold (see Fold). Move the caret out
         // of the part about to be hidden; trailing blanks stay visible, so a
         // caret resting on one of those is fine to leave in place.
-        const QTextBlock end = foldSectionEnd(heading);
-        const int caret = textCursor().blockNumber();
-        for (QTextBlock b = heading.next(); end.isValid() && b.isValid();
+        const bool listFold = listItemFoldable(sourceAnchor);
+        const Fold::Kind kind =
+            listFold ? Fold::Kind::List : Fold::Kind::Heading;
+        const QTextBlock end = listFold ? listSubtreeEnd(sourceAnchor)
+                                        : foldSectionEnd(sourceAnchor);
+        const int caret = sourceTextCursor().blockNumber();
+        for (QTextBlock b = sourceAnchor.next(); end.isValid() && b.isValid();
              b = b.next()) {
             if (b.blockNumber() == caret) {
-                QTextCursor c(heading);
+                QTextCursor c(sourceAnchor);
                 c.movePosition(QTextCursor::EndOfBlock);
-                setTextCursor(c);
+                setSourceTextCursor(c);
                 break;
             }
             if (b == end)
                 break;
         }
-        m_folds.append({heading, end});
+        m_folds.append({sourceAnchor, end, kind});
     }
     reapplyFolds();
 }
@@ -3508,11 +3675,16 @@ void MarkdownEditor::reapplyFolds() {
         return;
     m_applyingFolds = true;
 
-    // Forget folds whose heading was edited away or deleted.
+    // Forget folds whose source anchor was edited away, deleted, or no longer
+    // owns any content of the same structural kind.
     m_folds.erase(std::remove_if(m_folds.begin(), m_folds.end(),
                                  [this](const Fold &f) {
-                                     return !f.heading.isValid() ||
-                                            headingLevel(f.heading.text()) == 0;
+                                     if (!f.anchor.isValid())
+                                         return true;
+                                     if (f.kind == Fold::Kind::Heading)
+                                         return headingLevel(f.anchor.text()) == 0 ||
+                                                !foldSectionEnd(f.anchor).isValid();
+                                     return !listSubtreeEnd(f.anchor).isValid();
                                  }),
                   m_folds.end());
 
@@ -3521,15 +3693,35 @@ void MarkdownEditor::reapplyFolds() {
             b.setVisible(true);
 
     for (const Fold &f : m_folds) {
+        // Heading folds remain an Edit Mode feature. Nested-list folds are
+        // source-backed and therefore carry cleanly across both documents.
+        if (m_readMode && f.kind == Fold::Kind::Heading)
+            continue;
         // Use the extent captured when the fold was made. If that block was
         // deleted since, fall back to recomputing so the fold still holds.
-        QTextBlock end = f.end.isValid() ? f.end : foldSectionEnd(f.heading);
+        QTextBlock end =
+            f.end.isValid()
+                ? f.end
+                : (f.kind == Fold::Kind::List ? listSubtreeEnd(f.anchor)
+                                              : foldSectionEnd(f.anchor));
         if (!end.isValid())
             continue;
-        for (QTextBlock b = f.heading.next(); b.isValid(); b = b.next()) {
-            b.setVisible(false);
-            if (b == end)
-                break; // leave the trailing blank lines before the next heading
+        if (!m_readMode) {
+            for (QTextBlock b = f.anchor.next(); b.isValid(); b = b.next()) {
+                b.setVisible(false);
+                if (b == end)
+                    break;
+            }
+        } else {
+            const int firstSource = f.anchor.blockNumber() + 1;
+            const int lastSource = end.blockNumber();
+            for (QTextBlock b = document()->firstBlock(); b.isValid();
+                 b = b.next()) {
+                const int sourceBlock =
+                    MarkdownReadRenderer::sourceBlockNumber(b);
+                if (sourceBlock >= firstSource && sourceBlock <= lastSource)
+                    b.setVisible(false);
+            }
         }
     }
 
@@ -3922,6 +4114,52 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     verticalScrollBar()->setValue(qRound(documentTop - anchorOffset));
 }
 
+void MarkdownEditor::drawFoldControls(QPainter &painter,
+                                      const QRect &clip) const {
+    painter.setRenderHint(QPainter::Antialiasing);
+    for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
+         block = block.next()) {
+        const QRectF geo = blockViewportRect(block);
+        if (geo.top() > clip.bottom())
+            break;
+        if (!block.isVisible() || geo.bottom() < clip.top() ||
+            !foldAnchorFoldable(block))
+            continue;
+
+        const QRectF control = foldControlRect(block);
+        const QPointF center = control.center();
+        const bool folded = isFolded(block);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0x4f, 0x75, 0x65));
+        QPointF triangle[3];
+        if (folded) {
+            triangle[0] = {center.x() - 3, center.y() - 4};
+            triangle[1] = {center.x() + 3, center.y()};
+            triangle[2] = {center.x() - 3, center.y() + 4};
+        } else {
+            triangle[0] = {center.x() - 4, center.y() - 3};
+            triangle[1] = {center.x() + 4, center.y() - 3};
+            triangle[2] = {center.x(), center.y() + 4};
+        }
+        painter.drawPolygon(triangle, 3);
+
+        // A collapsed list item gets the same quiet trailing cue as a heading.
+        if (folded) {
+            QTextCursor endCursor(block);
+            endCursor.movePosition(QTextCursor::EndOfBlock);
+            const auto endRects = textRangeViewportRects(
+                block, qMax(0, block.length() - 2), 1);
+            const QRectF end = endRects.isEmpty() ? cursorRect(endCursor)
+                                                  : endRects.last();
+            const qreal dotRadius = 1.4;
+            qreal x = end.right() + 10.0;
+            for (int dot = 0; dot < 3; ++dot, x += 5.5)
+                painter.drawEllipse(QPointF(x, end.center().y()), dotRadius,
+                                    dotRadius);
+        }
+    }
+}
+
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
     EMERALD_PROFILE_SCOPE("MarkdownEditor::paintEvent");
     if (m_readMode) {
@@ -3929,6 +4167,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         // the source editor's regex-driven overlays may inspect or repaint it.
         QTextEdit::paintEvent(event);
         QPainter overlay(viewport());
+        drawFoldControls(overlay, event->rect());
         drawQuickJumpOverlay(overlay);
         return;
     }
@@ -4526,53 +4765,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
     });
 
-    // Fold arrows in the left margin next to foldable headings.
-    for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
-         block = block.next()) {
-        const QRectF geo = blockViewportRect(block);
-        if (geo.top() > event->rect().bottom())
-            break;
-        // A heading hidden inside an enclosing fold (e.g. a collapsed child under
-        // a collapsed parent) lays out at zero height on the parent's line; it
-        // must not paint its own arrow/ellipsis there.
-        if (!block.isVisible())
-            continue;
-        if (geo.bottom() < event->rect().top() || !headingFoldable(block))
-            continue;
-        QTextCursor hc(block);
-        const qreal y = foldControlRect(block).center().y();
-        const qreal x = 5;
-        const bool folded = isFolded(block);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x4f, 0x75, 0x65));
-        QPointF tri[3];
-        if (folded) { // ▸ collapsed
-            tri[0] = {x, y - 4};
-            tri[1] = {x + 6, y};
-            tri[2] = {x, y + 4};
-        } else { // ▾ expanded
-            tri[0] = {x - 1, y - 3};
-            tri[1] = {x + 7, y - 3};
-            tri[2] = {x + 3, y + 4};
-        }
-        p.drawPolygon(tri, 3);
-
-        // Trailing "⋯" — three faint dots after a collapsed heading's title —
-        // so a folded section reads as collapsed even away from the margin.
-        if (folded) {
-            hc.movePosition(QTextCursor::EndOfBlock);
-            const auto endRects = textRangeViewportRects(
-                block, qMax(0, block.length() - 2), 1);
-            const QRectF end = endRects.isEmpty() ? cursorRect(hc)
-                                                  : endRects.last();
-            const qreal dotR = 1.4;
-            const qreal gap = 5.5;
-            qreal dx = end.right() + 10;
-            p.setBrush(QColor(0x4f, 0x75, 0x65));
-            for (int i = 0; i < 3; ++i, dx += gap)
-                p.drawEllipse(QPointF(dx, end.center().y()), dotR, dotR);
-        }
-    }
+    drawFoldControls(p, event->rect());
 
     drawQuickJumpOverlay(p);
 }

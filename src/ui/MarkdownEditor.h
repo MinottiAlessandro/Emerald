@@ -224,9 +224,11 @@ private:
     // If pos hits the checkbox of a rendered task line, toggle [ ]<->[x] and
     // return true.
     bool toggleTaskAt(const QPoint &pos);
-    // Is `pos` over a foldable heading's fold control (the left margin)?
+    // Is `pos` over a foldable heading/list item's fold control?
     bool isOverFoldControl(const QPoint &pos) const;
     QRectF foldControlRect(const QTextBlock &block) const;
+    QRectF listMarkerRect(const QTextBlock &block) const;
+    void drawFoldControls(QPainter &painter, const QRect &clip) const;
 
     struct CodeBlock {
         QRectF header;   // the top header bar (language tag + copy button)
@@ -265,13 +267,18 @@ private:
     void insertLink();                         // Ctrl+K — wrap/insert [text](…)
     void setHeadingLevel(int level);           // Ctrl+1…6 — set/toggle # heading
 
-    // Heading folding. A heading hides everything below it until the next
-    // heading of the same or higher level.
+    // Structural folding. A heading hides everything below it until the next
+    // heading of the same or higher level. A list item hides the immediately
+    // following run of more deeply-indented list items.
     int headingLevel(const QString &text) const;       // 0 if not a heading
     // Last block a fold of `heading` hides (section minus trailing blank lines);
     // invalid if the heading has no foldable content below it.
     QTextBlock foldSectionEnd(const QTextBlock &heading) const;
     bool headingFoldable(const QTextBlock &heading) const;
+    QTextBlock listSubtreeEnd(const QTextBlock &item) const;
+    bool listItemFoldable(const QTextBlock &item) const;
+    bool foldAnchorFoldable(const QTextBlock &block) const;
+    QTextBlock sourceBlockForDisplay(const QTextBlock &block) const;
     bool isFolded(const QTextBlock &heading) const;
     // Index of the fold collapsing `heading` in m_folds, or -1.
     int foldIndexOf(const QTextBlock &heading) const;
@@ -308,13 +315,15 @@ private:
     QCompleter *m_completer = nullptr;
     QStringListModel *m_completionModel = nullptr;
 
-    // A collapsed section: the heading plus the last block it hides. The end is
-    // captured when the fold happens and then held fixed, so editing the visible
-    // trailing blank lines below it doesn't pull more text into the fold — the
-    // extent only changes when the section is folded again.
+    // A collapsed source section: its heading/list item plus the last source
+    // block it hides. Source handles remain stable while Read Mode swaps in a
+    // separate rendered document. The end is captured when the fold happens,
+    // so visible trailing edits do not unexpectedly grow an existing fold.
     struct Fold {
-        QTextBlock heading;
+        enum class Kind { Heading, List };
+        QTextBlock anchor;
         QTextBlock end;
+        Kind kind = Kind::Heading;
     };
     QList<Fold> m_folds;          // collapsed sections
     bool m_applyingFolds = false; // guard against re-entrant relayout
