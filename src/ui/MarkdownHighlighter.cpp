@@ -16,14 +16,6 @@ const QRegularExpression &imageLineRe() {
     return re;
 }
 
-bool isPipeTableRow(const QTextBlock &block) {
-    if (!block.isValid())
-        return false;
-    const QString trimmed = block.text().trimmed();
-    return trimmed.size() > 1 && trimmed.startsWith(QLatin1Char('|')) &&
-           trimmed.endsWith(QLatin1Char('|'));
-}
-
 const QRegularExpression &inlineCodeRe() {
     static const QRegularExpression re(QStringLiteral("`([^`]+)`"));
     return re;
@@ -51,8 +43,8 @@ int headingWeight(int level) {
 }
 
 // "monospace" is a fontconfig generic alias that only resolves on Linux; on
-// Windows/macOS it falls back to a proportional font, which breaks code blocks
-// and the pipe-table grid. List real per-platform families plus a Monospace
+// Windows/macOS it falls back to a proportional font, which breaks code blocks.
+// List real per-platform families plus a Monospace
 // style hint so a fixed-width font is picked everywhere.
 void applyMono(QTextCharFormat &fmt) {
     static const QStringList families{
@@ -115,16 +107,6 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_taskDone.setForeground(QColor("#4f7565"));
     m_taskDone.setFontStrikeOut(true);
 
-    m_table.setForeground(QColor("#a9c8b8"));
-    applyMono(m_table);
-
-    m_tableHeader = m_table;
-    m_tableHeader.setForeground(QColor("#d7eee2"));
-    m_tableHeader.setFontWeight(QFont::Bold);
-
-    m_tablePipe = m_table;
-    m_tablePipe.setForeground(QColor("#4f7565"));
-
     m_marker.setForeground(QColor("#4f7565"));
 
     // A recognised mascot seed line: italic + the accent green so editing it
@@ -147,8 +129,6 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_reList       = QRegularExpression(
         QStringLiteral("^(\\s*)([-*+]|\\d+[.)])(\\s+)"));
     m_reCode       = inlineCodeRe();
-    m_reTableSep =
-        QRegularExpression(QStringLiteral("^\\s*\\|?[\\s:|-]*-[\\s:|-]*\\|?\\s*$"));
     m_reLink = internetLinkRe();
 }
 
@@ -185,21 +165,6 @@ void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
         const QTextBlock b = doc->findBlockByNumber(n);
         if (!b.isValid())
             break;
-        if (isPipeTableRow(b)) {
-            QTextBlock first = b;
-            QTextBlock last = b;
-            while (isPipeTableRow(first.previous()))
-                first = first.previous();
-            while (isPipeTableRow(last.next()))
-                last = last.next();
-            for (QTextBlock x = first; x.isValid(); x = x.next()) {
-                rehighlightBlock(x);
-                if (x == last)
-                    break;
-            }
-            n = last.blockNumber() + 1;
-            continue;
-        }
         QTextBlock first, last;
         bool inRegion = false;
         if (regional(b)) { // opening or body line
@@ -245,20 +210,6 @@ void MarkdownHighlighter::rehighlightAround(int blockNumber) {
     QTextBlock b = doc->findBlockByNumber(blockNumber);
     if (!b.isValid())
         return;
-    if (isPipeTableRow(b)) {
-        QTextBlock first = b;
-        QTextBlock last = b;
-        while (isPipeTableRow(first.previous()))
-            first = first.previous();
-        while (isPipeTableRow(last.next()))
-            last = last.next();
-        for (QTextBlock x = first; x.isValid(); x = x.next()) {
-            rehighlightBlock(x);
-            if (x == last)
-                break;
-        }
-        return;
-    }
     // Both a $$ math block and a ``` fenced code block reveal/conceal their
     // delimiters as a whole region (the code block now shows both fences while
     // the caret is anywhere inside it), so when the caret enters or leaves one,
@@ -319,11 +270,7 @@ QTextCharFormat MarkdownHighlighter::conceal() const {
 
 QTextCharFormat
 MarkdownHighlighter::inlineFormat(const QTextCharFormat &overlay) const {
-    if (!m_hasInlineBase)
-        return overlay;
-    QTextCharFormat combined = m_inlineBase;
-    combined.merge(overlay);
-    return combined;
+    return overlay;
 }
 
 MarkdownHighlighter::EmphasisAnalysis MarkdownHighlighter::analyzeEmphasis(
@@ -685,7 +632,7 @@ void MarkdownHighlighter::applyInline(const QRegularExpression &re,
 }
 
 QTextCharFormat MarkdownHighlighter::emphasisFormat(int mask) const {
-    QTextCharFormat f = m_hasInlineBase ? m_inlineBase : QTextCharFormat();
+    QTextCharFormat f;
     if (mask & SBold)
         f.setFontWeight(QFont::Bold);
     if (mask & SItalic)
@@ -878,11 +825,6 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         return;
     }
 
-    // Inline overlays normally start from the document's default character
-    // format. Table rows temporarily replace this with their monospace base.
-    m_hasInlineBase = false;
-    m_inlineBase = QTextCharFormat();
-
     // The mascot seed lives on the first line (a hidden HTML comment). When the
     // user reveals and edits it, tint a *valid* seed so they can see it's being
     // interpreted correctly; a malformed line falls through to normal rendering.
@@ -1032,55 +974,6 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
             hidden.setForeground(QColor(0, 0, 0, 0));
             setFormat(0, text.size(), hidden);
         }
-        return;
-    }
-
-    // Table row: |-delimited. The editor paints the inactive grid while this
-    // pass renders inline Markdown inside each cell. Editing any row reveals
-    // the complete table source and suppresses the graphical grid. Only real
-    // column separators are treated as scaffolding: an alias pipe in
-    // [[target|alias]] remains part of the link.
-    const QString trimmed = text.trimmed();
-    if (trimmed.size() > 1 && trimmed.startsWith(QLatin1Char('|')) &&
-        trimmed.endsWith(QLatin1Char('|'))) {
-        QTextBlock firstTableRow = currentBlock();
-        QTextBlock lastTableRow = currentBlock();
-        while (isPipeTableRow(firstTableRow.previous()))
-            firstTableRow = firstTableRow.previous();
-        while (isPipeTableRow(lastTableRow.next()))
-            lastTableRow = lastTableRow.next();
-        const bool revealTable =
-            m_selLast >= firstTableRow.blockNumber() &&
-            m_selFirst <= lastTableRow.blockNumber();
-        QTextCharFormat hiddenScaffolding = m_tablePipe;
-        hiddenScaffolding.setForeground(QColor(0, 0, 0, 0));
-        if (m_reTableSep.match(text).hasMatch()) {
-            setFormat(0, text.size(), revealTable ? m_tablePipe
-                                                  : hiddenScaffolding);
-            return;
-        }
-        const QTextBlock next = currentBlock().next();
-        const bool header =
-            next.isValid() && m_reTableSep.match(next.text()).hasMatch();
-        m_inlineBase = header ? m_tableHeader : m_table;
-        m_hasInlineBase = true;
-        setFormat(0, text.size(), m_inlineBase);
-        for (int pipe : tablePipePositions(text)) {
-            setFormat(pipe, 1,
-                      revealTable ? inlineFormat(m_tablePipe)
-                                  : hiddenScaffolding);
-            consumed[pipe] = true;
-        }
-
-        applyInline(m_reCode, text, consumed, m_code, revealTable);
-        applyMath(text, consumed, revealTable);
-        applyInternetLinks(text, consumed, revealTable);
-        applyWikiLinks(text, consumed, revealTable);
-        applyEmphasis(text, consumed, revealTable);
-        strikeConsumedInline(text, revealTable, -1, -1);
-
-        m_hasInlineBase = false;
-        m_inlineBase = QTextCharFormat();
         return;
     }
 

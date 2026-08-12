@@ -67,9 +67,9 @@ it opens or installs a download.
 ## Features
 
 **Editing & live preview**
-- Headings, **bold**, *italic*, ***both***, `code`, ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists, fenced ` ``` ` code blocks (with language tag), `|` tables and `[[wiki|links]]` all render in place.
+- Headings, **bold**, *italic*, ***both***, `code`, ~~strike~~, ==highlight==, `> quotes`, `---` rules, `- [ ]` task lists, fenced ` ``` ` code blocks (with language tag) and `[[wiki|links]]` all render in place.
 - **Overlapping emphasis** — bold / italic / strike / highlight nest and stack, so `==dog ~~cat *horse **elephant***~~==` layers all four styles incrementally.
-- **Pipe tables** — Enter on a header row auto-adds the `---` separator and a first data row (caret lands in the first cell); Tab walks/grows the grid and re-aligns the columns on every press; Enter on the last row leaves the table.
+- **Pipe tables** — Enter anywhere in the header or separator formats the table when it fits and starts at the first cell of the first data row, auto-creating missing structure; in a body row it moves to the same cell below, adding a row at the bottom when needed. Tab walks/grows the grid, and auto-alignment is skipped whenever its padded rows would exceed the editor width. Tables remain plain Markdown in Edit Mode and render semantically in Read Mode.
 - **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); pressing Enter mid-item splits the line, carrying the text after the caret onto a new marked item; Enter on an empty item ends it; Tab / Shift+Tab indent and outdent (a multi-line selection indents every line). Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level).
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
 - **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).

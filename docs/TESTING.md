@@ -55,12 +55,14 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Ctrl+Enter** opens a new line below without splitting, continuing the list.
 
 ## 5. Tables
-- [ ] Enter on a header row auto-adds the `| --- |` separator + first data row; caret lands in cell 1.
+- [ ] Enter anywhere on a fresh header row auto-adds the `| --- |` separator + first data row; caret lands in the first data cell.
+- [ ] Enter anywhere in an established header or its separator row formats the table when it fits, then lands in the first cell of the first data row.
+- [ ] Enter in a body row moves to the same cell in the data row below.
+- [ ] Enter in the final data row appends a row and moves to the same cell in it.
 - [ ] `Tab` walks cells and grows the grid at its edges; columns re-align on each press.
-- [ ] Enter on the last row leaves the table.
-- [ ] Leaving a table re-aligns (prettifies) its columns into a monospace grid.
-- [ ] A table has one rounded grid surface, a stronger header, a separator rail and alternating data-row shading.
-- [ ] Pipes remain visible and directly editable in the source-mode table preview.
+- [ ] Leaving a table re-aligns (prettifies) its columns when the padded rows fit the editor width.
+- [ ] Edit Mode shows plain Markdown table source without a background, borders, header skin, or alternating row shading.
+- [ ] Read Mode still renders a semantic table.
 - [ ] **A row that would wrap to a new line does NOT get auto-formatted** (grid no longer breaks). ★
 - [ ] **Tab on the `| --- |` separator row** lands in the first cell of the data row below — creating that row only when the table is still just header + separator (an existing data row is reused, not pushed down). ◆
 

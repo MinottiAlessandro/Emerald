@@ -13,6 +13,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QTextBlock>
@@ -298,6 +299,8 @@ int main(int argc, char **argv) {
               "[Web](https://example.com/a/very/long/path)")) == 3,
           QStringLiteral("table width should ignore an internet-link URL"));
 
+    editor.resize(900, 220);
+    QApplication::processEvents();
     const QString rawTable = QStringLiteral(
         "| Column | Link |\n"
         "| --- | --- |\n"
@@ -321,6 +324,29 @@ int main(int argc, char **argv) {
               QStringLiteral("| **x** | [[A very long target|y]] |"))
                   .size() == 3,
           QStringLiteral("a wiki-link alias pipe should stay inside its cell"));
+
+    // Prettification is all-or-nothing when its padded output would be wider
+    // than the editor. A compact source table remains compact instead of being
+    // expanded into wrapped rows that no longer read as a grid.
+    editor.resize(220, 220);
+    QApplication::processEvents();
+    const QString tooWideTable = QStringLiteral(
+        "| A very long header that cannot fit | B |\n"
+        "| --- | --- |\n"
+        "| x | y |\n"
+        "after narrow table");
+    editor.setPlainText(tooWideTable);
+    QTextCursor narrowTableCell(editor.document()->findBlockByNumber(2));
+    editor.setTextCursor(narrowTableCell);
+    QTextCursor afterNarrowTable(editor.document()->findBlockByNumber(3));
+    editor.setTextCursor(afterNarrowTable);
+    QApplication::processEvents();
+    check(editor.toPlainText() == tooWideTable,
+          QStringLiteral("a table whose formatted row exceeds the editor width "
+                         "should remain completely unformatted"));
+
+    editor.resize(250, 220);
+    QApplication::processEvents();
 
     const QString inlineTable = QStringLiteral(
         "| Bold | Italic | Strike | Mark | Code | Note | Web |\n"
@@ -442,70 +468,183 @@ int main(int argc, char **argv) {
     settleLayout(editor, tableBody);
     const QTextCharFormat headerCell = formatAt(tableHeader, 2);
     const QTextCharFormat bodyCell = formatAt(tableBody, 2);
-    check(headerCell.fontWeight() > bodyCell.fontWeight(),
-          QStringLiteral("table headers should be visually stronger than data"));
-    check(headerCell.fontStyleHint() == QFont::Monospace &&
-              bodyCell.fontStyleHint() == QFont::Monospace,
-          QStringLiteral("table cells should retain a cross-platform monospace grid"));
-    check(formatAt(tableHeader, 0).foreground().color().alpha() == 0 &&
-              formatAt(tableSeparator, 3).foreground().color().alpha() == 0,
-          QStringLiteral("inactive table pipes and separator ASCII should stay "
-                         "hidden behind the graphical grid"));
+    check(headerCell.fontWeight() == bodyCell.fontWeight() &&
+              formatAt(tableHeader, 0).isEmpty() &&
+              formatAt(tableSeparator, 3).isEmpty(),
+          QStringLiteral("Edit Mode should leave table headers, pipes, and "
+                         "separator source unskinned"));
     QImage inactiveTableRender(editor.viewport()->size(),
                                QImage::Format_ARGB32_Premultiplied);
     inactiveTableRender.fill(Qt::transparent);
     editor.viewport()->render(&inactiveTableRender);
     const QRgb tableSurfacePixel = QColor(0x12, 0x1d, 0x18).rgba();
-    check(containsPixel(inactiveTableRender, tableSurfacePixel),
-          QStringLiteral("an inactive table should paint its graphical surface"));
+    check(!containsPixel(inactiveTableRender, tableSurfacePixel),
+          QStringLiteral("an inactive Edit Mode table should not paint a skin"));
     QTextCursor activeTableHeader(tableHeader);
     editor.setTextCursor(activeTableHeader);
     settleLayout(editor, tableHeader);
-    check(formatAt(tableHeader, 0).foreground().color().alpha() > 0 &&
-              formatAt(tableSeparator, 3).foreground().color().alpha() > 0 &&
-              formatAt(tableBody, 0).foreground().color().alpha() > 0,
-          QStringLiteral("an active table should reveal its complete editable source"));
+    check(formatAt(tableHeader, 0).isEmpty() &&
+              formatAt(tableSeparator, 3).isEmpty() &&
+              formatAt(tableBody, 0).isEmpty(),
+          QStringLiteral("an active Edit Mode table should remain plain source"));
     QImage activeTableRender(editor.viewport()->size(),
                              QImage::Format_ARGB32_Premultiplied);
     activeTableRender.fill(Qt::transparent);
     editor.viewport()->render(&activeTableRender);
     check(!containsPixel(activeTableRender, tableSurfacePixel),
-          QStringLiteral("the graphical grid should not overlap active table source"));
+          QStringLiteral("an active Edit Mode table should not paint a skin"));
     check(editor.toPlainText() == tableSource &&
               !editor.document()->isUndoAvailable(),
           QStringLiteral("table preview must preserve source and undo history"));
 
-    // Table convenience actions only own Enter at the end of a row. In the
-    // middle, Enter must behave like ordinary text input and split exactly at
-    // the caret instead of being consumed and relocated to the table's end.
+    // A fresh header owns Enter at every caret position, not only at its end.
+    // It creates the separator + first data row and starts in its first cell.
+    const QString freshHeader = QStringLiteral("| Name | Score |");
+    for (int position = 0; position <= freshHeader.size(); ++position) {
+        editor.setPlainText(freshHeader);
+        QTextCursor inHeader(editor.document());
+        inHeader.setPosition(position);
+        editor.setTextCursor(inHeader);
+        sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\n"));
+        const QTextBlock firstDataRow =
+            editor.document()->findBlockByNumber(2);
+        const QList<int> dataPipes =
+            MarkdownHighlighter::tablePipePositions(firstDataRow.text());
+        check(editor.document()->blockCount() == 3 &&
+                  editor.document()->findBlockByNumber(1).text().contains(
+                      QStringLiteral("---")) &&
+                  editor.textCursor().blockNumber() == 2 &&
+                  dataPipes.size() == 3 &&
+                  editor.textCursor().positionInBlock() >
+                      dataPipes.at(0) &&
+                  editor.textCursor().positionInBlock() <
+                      dataPipes.at(1),
+              QStringLiteral("Enter at header position %1 should build the "
+                             "table and enter the first data cell")
+                  .arg(position));
+    }
+
+    const QString navigableTable = QStringLiteral(
+        "| A | B |\n| --- | --- |\n| one | two |\n| three | four |");
+    const QString formattedNavigableTable = QStringLiteral(
+        "| A     | B    |\n"
+        "| ----- | ---- |\n"
+        "| one   | two  |\n"
+        "| three | four |");
+    const QStringList navigableRows = navigableTable.split(QLatin1Char('\n'));
+    for (int sourceRow = 0; sourceRow <= 1; ++sourceRow) {
+        for (int position = 0; position <= navigableRows[sourceRow].size();
+             ++position) {
+            editor.setPlainText(navigableTable);
+            QTextCursor inHeader(editor.document()->findBlockByNumber(sourceRow));
+            inHeader.setPosition(inHeader.block().position() + position);
+            editor.setTextCursor(inHeader);
+            sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                    QStringLiteral("\n"));
+            check(editor.toPlainText() == formattedNavigableTable &&
+                      editor.textCursor().blockNumber() == 2 &&
+                      editor.textCursor().selectedText() ==
+                          QStringLiteral("one"),
+                  QStringLiteral("Enter at header row %1 position %2 should "
+                                 "start in the first body cell")
+                      .arg(sourceRow)
+                      .arg(position));
+        }
+    }
+
+    // Exercise the real click path as well as direct QTextCursor placement.
+    // This guards the common interaction where a rendered/inactive table is
+    // clicked before Return is pressed.
+    for (int sourceRow = 0; sourceRow <= 1; ++sourceRow) {
+        editor.setPlainText(navigableTable);
+        editor.moveCursor(QTextCursor::End);
+        settleLayout(editor,
+                     editor.document()->findBlockByNumber(sourceRow));
+        QTextCursor secondCell(editor.document()->findBlockByNumber(sourceRow));
+        const QList<int> sourcePipes = MarkdownHighlighter::tablePipePositions(
+            secondCell.block().text());
+        secondCell.setPosition(secondCell.block().position() +
+                               sourcePipes.at(1) + 2);
+        clickEditor(editor, editor.cursorRect(secondCell).center());
+        sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\n"));
+        check(editor.textCursor().blockNumber() == 2 &&
+                  editor.textCursor().selectedText() == QStringLiteral("one"),
+              QStringLiteral("clicking the second cell of header row %1 then "
+                             "pressing Enter should start in the first data cell")
+                  .arg(sourceRow));
+    }
+
+    const QString unformattedTable = QStringLiteral(
+        "|Name|Score|\n|:--|--:|\n|Ada|10|");
+    const QString formattedTable = QStringLiteral(
+        "| Name | Score |\n| :--- | ----: |\n| Ada  |    10 |");
+    for (int sourceRow = 0; sourceRow <= 1; ++sourceRow) {
+        editor.setPlainText(unformattedTable);
+        QTextCursor headerEnter(
+            editor.document()->findBlockByNumber(sourceRow));
+        headerEnter.movePosition(QTextCursor::EndOfBlock);
+        editor.setTextCursor(headerEnter);
+        sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\n"));
+        check(editor.toPlainText() == formattedTable &&
+                  editor.textCursor().blockNumber() == 2 &&
+                  editor.textCursor().selectedText() == QStringLiteral("Ada"),
+              QStringLiteral("Enter on header row %1 should format a table "
+                             "that fits and start in its first data cell")
+                  .arg(sourceRow));
+    }
+
+    editor.resize(180, 220);
+    QApplication::processEvents();
+    const QString enterTooWideTable = QStringLiteral(
+        "| A header far too long for this editor | B |\n"
+        "| --- | --- |\n"
+        "| x | y |");
+    editor.setPlainText(enterTooWideTable);
+    QTextCursor wideHeader(editor.document()->firstBlock());
+    wideHeader.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(wideHeader);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.toPlainText() == enterTooWideTable &&
+              editor.textCursor().blockNumber() == 2 &&
+              editor.textCursor().selectedText() == QStringLiteral("x"),
+          QStringLiteral("header Enter should preserve an oversized table "
+                         "while still entering its first data cell"));
+    editor.resize(250, 220);
+    QApplication::processEvents();
+
+    editor.setPlainText(navigableTable);
+    QTextCursor inDataCell = editor.document()->find(QStringLiteral("two"));
+    inDataCell.clearSelection();
+    editor.setTextCursor(inDataCell);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.toPlainText() == navigableTable &&
+              editor.textCursor().blockNumber() == 3 &&
+              editor.textCursor().selectedText() == QStringLiteral("four"),
+          QStringLiteral("Enter in a data cell should move to the same cell "
+                         "in the row below without changing source"));
+
     editor.setPlainText(QStringLiteral(
-        "| Name | Score |\n| --- | --- |\n| Ada | 10 |"));
-    QTextCursor splitDataRow = editor.document()->find(QStringLiteral("Ada"));
-    splitDataRow.clearSelection();
-    editor.setTextCursor(splitDataRow);
+        "| A | B |\n| --- | --- |\n| one | two |"));
+    QTextCursor inLastCell = editor.document()->find(QStringLiteral("two"));
+    inLastCell.clearSelection();
+    editor.setTextCursor(inLastCell);
     sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
             QStringLiteral("\n"));
-    check(editor.toPlainText() == QStringLiteral(
-              "| Name | Score |\n| --- | --- |\n| Ada\n | 10 |"),
-          QStringLiteral("Enter inside the last table row should insert at the caret"));
-
-    editor.setPlainText(QStringLiteral("| Name | Score |"));
-    QTextCursor splitHeader = editor.document()->find(QStringLiteral("Name"));
-    splitHeader.clearSelection();
-    editor.setTextCursor(splitHeader);
-    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
-            QStringLiteral("\n"));
-    check(editor.toPlainText() == QStringLiteral("| Name\n | Score |"),
-          QStringLiteral("Enter inside a table header should insert at the caret"));
-
-    editor.setPlainText(QStringLiteral("| Name | Score |"));
-    editor.moveCursor(QTextCursor::End);
-    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
-            QStringLiteral("\n"));
-    check(editor.document()->blockCount() == 3 &&
-              editor.document()->findBlockByNumber(1).text().contains(
-                  QStringLiteral("---")),
-          QStringLiteral("Enter at a header's end should still build the table"));
+    const QTextBlock appendedRow = editor.document()->findBlockByNumber(3);
+    const QList<int> appendedPipes =
+        MarkdownHighlighter::tablePipePositions(appendedRow.text());
+    check(editor.document()->blockCount() == 4 &&
+              editor.textCursor().blockNumber() == 3 &&
+              appendedPipes.size() == 3 &&
+              editor.textCursor().positionInBlock() > appendedPipes.at(1) &&
+              editor.textCursor().positionInBlock() < appendedPipes.at(2),
+          QStringLiteral("Enter in the final table row should append a row and "
+                         "move to the same cell below"));
 
     editor.setPlainText(QStringLiteral("before\n\nafter"));
     QTextCursor middleEmpty(editor.document()->findBlockByNumber(1));
@@ -548,6 +687,121 @@ int main(int argc, char **argv) {
                          "creating lines"));
     QApplication::processEvents();
 
+    // Every unclaimed Return variant must make an actual Markdown source line.
+    // Keep these cases separate from the table/list conveniences above: this is
+    // the final fallback that protects plain paragraphs, selections, code, and
+    // alternate Enter keys from being silently consumed.
+    editor.setPlainText(QStringLiteral("alpha beta"));
+    QTextCursor splitParagraph(editor.document());
+    splitParagraph.setPosition(5);
+    editor.setTextCursor(splitParagraph);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("alpha\n beta") &&
+              editor.textCursor().blockNumber() == 1,
+          QStringLiteral("Enter in a plain paragraph should split it at the caret"));
+
+    editor.setPlainText(QStringLiteral("plain"));
+    QTextCursor replaceSelection(editor.document());
+    replaceSelection.setPosition(1);
+    replaceSelection.setPosition(4, QTextCursor::KeepAnchor);
+    editor.setTextCursor(replaceSelection);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("p\nn") &&
+              !editor.textCursor().hasSelection(),
+          QStringLiteral("Enter should replace a selection with one source newline"));
+
+    editor.setPlainText(QStringLiteral("first"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::ShiftModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("first\n"),
+          QStringLiteral("Shift+Enter should create a Markdown source line"));
+
+    editor.setPlainText(QStringLiteral("keypad"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Enter, Qt::KeypadModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("keypad\n"),
+          QStringLiteral("keypad Enter should create a Markdown source line"));
+
+    editor.setPlainText(QStringLiteral("```\ncode\n```"));
+    QTextCursor splitCode = editor.document()->find(QStringLiteral("code"));
+    splitCode.setPosition(splitCode.selectionStart() + 2);
+    editor.setTextCursor(splitCode);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("```\nco\nde\n```"),
+          QStringLiteral("Enter inside fenced code should insert a literal newline"));
+
+    editor.setPlainText(QStringLiteral("open below"));
+    QTextCursor controlEnter(editor.document());
+    controlEnter.setPosition(4);
+    editor.setTextCursor(controlEnter);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::ControlModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("open below\n") &&
+              editor.textCursor().blockNumber() == 1,
+          QStringLiteral("Ctrl+Enter should open a line below and move into it"));
+
+    editor.setPlainText(QStringLiteral("- item"));
+    QTextCursor splitList = editor.document()->find(QStringLiteral("item"));
+    splitList.setPosition(splitList.selectionStart() + 2);
+    editor.setTextCursor(splitList);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("- it\n- em"),
+          QStringLiteral("Enter inside a list item should split and continue it"));
+
+    editor.setPlainText(QStringLiteral("1. item"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("1. item\n2. "),
+          QStringLiteral("Enter should advance an ordered-list marker"));
+
+    editor.setPlainText(QStringLiteral("- [x] done"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("- [x] done\n- [ ] "),
+          QStringLiteral("Enter should continue a task as an unchecked item"));
+
+    editor.setPlainText(QString());
+    for (int i = 0; i < 3; ++i)
+        sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\r"));
+    check(editor.toPlainText() == QStringLiteral("\n\n\n") &&
+              editor.textCursor().blockNumber() == 3,
+          QStringLiteral("rapid consecutive Enters should never lose a newline"));
+
+    // Exercise Return at every caret position across the main block shapes.
+    // Convenience handlers may add markers or table rows, but none may consume
+    // the key without adding at least one source line.
+    const QStringList newlineShapes{
+        QStringLiteral("paragraph"), QStringLiteral("# heading"),
+        QStringLiteral("**bold** and `code`"), QStringLiteral("[[Wiki link]]"),
+        QStringLiteral("- bullet item"), QStringLiteral("1. numbered item"),
+        QStringLiteral("> quoted text"), QStringLiteral("| A | B |"),
+        QStringLiteral("```\nbody\n```")};
+    for (const QString &shape : newlineShapes) {
+        for (int position = 0; position <= shape.size(); ++position) {
+            editor.setPlainText(shape);
+            QTextCursor atPosition(editor.document());
+            atPosition.setPosition(position);
+            editor.setTextCursor(atPosition);
+            const int linesBefore = shape.count(QLatin1Char('\n'));
+            sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                    QStringLiteral("\r"));
+            check(editor.toPlainText().count(QLatin1Char('\n')) > linesBefore,
+                  QStringLiteral("Enter must add a source line at position %1 "
+                                 "in '%2'")
+                      .arg(position)
+                      .arg(shape));
+        }
+    }
+
     // Replacing a note while wiki-link completion is open must not leave Enter
     // owned by the old popup. A new empty note has no completion context, so
     // Enter always belongs to the editor.
@@ -582,20 +836,30 @@ int main(int argc, char **argv) {
           QStringLiteral("Enter in a cleared empty note should dismiss stale "
                          "completion state and insert a line"));
 
-    const QStringList emptyConstructs{QStringLiteral("- "),
-                                      QStringLiteral("- [ ] "),
-                                      QStringLiteral("> ")};
+    const QStringList emptyConstructs{
+        QStringLiteral("-"),       QStringLiteral("- "),
+        QStringLiteral("* "),      QStringLiteral("+ "),
+        QStringLiteral("- [ ]"),   QStringLiteral("- [ ] "),
+        QStringLiteral("- [x] "), QStringLiteral("1."),
+        QStringLiteral("2) "),     QStringLiteral(">"),
+        QStringLiteral(">> ")};
     for (const QString &emptyConstruct : emptyConstructs) {
         editor.setPlainText(QStringLiteral("first\n") + emptyConstruct);
         editor.moveCursor(QTextCursor::End);
+        const int blockCountBefore = editor.document()->blockCount();
         sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
                 QStringLiteral("\n"));
-        check(editor.toPlainText() == QStringLiteral("first\n\n") &&
-                  editor.textCursor().blockNumber() == 2,
+        check(editor.toPlainText() == QStringLiteral("first\n") &&
+                  editor.document()->blockCount() == blockCountBefore &&
+                  editor.textCursor().blockNumber() == 1,
               QStringLiteral("Enter on an empty %1 line should remove its "
-                             "marker and enter a new blank line")
+                             "marker without creating another line")
                   .arg(emptyConstruct.trimmed()));
     }
+
+    editor.undo();
+    check(editor.toPlainText() == QStringLiteral("first\n>> "),
+          QStringLiteral("undo should restore an empty construct removed by Enter"));
 
     // Painted interaction affordances and their hit tests share one geometry
     // source. A rendered task checkbox should toggle at the same pixel where it
@@ -1537,24 +1801,47 @@ int main(int argc, char **argv) {
           QStringLiteral("leaving Read Mode should preserve reading progress "
                          "instead of jumping to the top"));
 
-    // Loading another note while Read Mode remains enabled updates the hidden
-    // source and rebuilds the presentation document, without ever exposing the
-    // source document as the editor's active surface.
+    // Following a wiki link replaces the current note synchronously from the
+    // linkClicked handler. Build the replacement off-screen and swap it once:
+    // rendering into the installed QTextDocument causes every inserted block to
+    // invalidate the live viewport and leaves a large queue of layout work.
     const QString replacedWhileReading =
         QStringLiteral("## Rebuilt note\nText with ~~old~~ and `code`.");
     editor.setReadMode(true);
-    QTextDocument *const renderedBeforeReplace = editor.document();
-    editor.setPlainText(replacedWhileReading);
+    QPointer<QTextDocument> renderedBeforeReplace = editor.document();
+    bool replacedFromWikiClick = false;
+    const QMetaObject::Connection replaceConnection = QObject::connect(
+        &editor, &MarkdownEditor::linkClicked, &editor,
+        [&](const QString &target) {
+            if (target != QStringLiteral("Target"))
+                return;
+            replacedFromWikiClick = true;
+            editor.setPlainText(replacedWhileReading);
+        });
+    QTextCursor replacementLink =
+        editor.document()->find(QStringLiteral("wiki label"));
+    if (!replacementLink.isNull()) {
+        replacementLink.setPosition(replacementLink.selectionStart());
+        editor.verticalScrollBar()->setValue(0);
+        settleLayout(editor, replacementLink.block());
+        const QRect left = editor.cursorRect(replacementLink);
+        replacementLink.movePosition(QTextCursor::NextCharacter);
+        const QRect right = editor.cursorRect(replacementLink);
+        clickEditor(editor,
+                    QPoint((left.left() + right.left()) / 2,
+                           left.center().y()));
+    }
     QApplication::processEvents();
-    check(editor.document() == renderedBeforeReplace &&
+    QObject::disconnect(replaceConnection);
+    check(replacedFromWikiClick && renderedBeforeReplace.isNull() &&
               editor.document() != editor.sourceDocument() &&
               editor.toPlainText() == replacedWhileReading &&
               editor.document()->toPlainText().contains(
                   QStringLiteral("Rebuilt note")) &&
               !editor.document()->toPlainText().contains(QStringLiteral("##")) &&
               !editor.document()->toPlainText().contains(QStringLiteral("~~")),
-          QStringLiteral("setPlainText in Read Mode should replace source and "
-                         "rebuild the separate presentation document"));
+          QStringLiteral("clicking a Read Mode wiki link should atomically "
+                         "replace the separate presentation document"));
     editor.setReadMode(false);
     const QTextBlock replacedSourceBlock =
         editor.document()->findBlockByNumber(1);

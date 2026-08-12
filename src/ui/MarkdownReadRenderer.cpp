@@ -690,6 +690,14 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     if (!target)
         return;
 
+    // QTextDocument otherwise incrementally lays out the partially-built note
+    // after many of the cursor insertions below. Read Mode is derived in one
+    // batch and is never useful half-rendered, so defer layout until the final
+    // document structure and all source mappings are in place. This matters
+    // especially for link-dense notes, where every anchor introduces another
+    // formatted fragment.
+    const bool layoutWasEnabled = target->isLayoutEnabled();
+    target->setLayoutEnabled(false);
     target->setUndoRedoEnabled(false);
     target->clear();
     target->setDefaultFont(options.baseFont);
@@ -986,6 +994,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         attachSourceData(cursor.block(), 0, 0, 0);
     }
     target->setModified(false);
+    target->setLayoutEnabled(layoutWasEnabled);
 }
 
 int MarkdownReadRenderer::sourceBlockNumber(const QTextBlock &block) {

@@ -129,6 +129,7 @@ protected:
 
 private:
     void updateActiveHighlight();
+    QTextDocument *createReadDocument();
     void rebuildReadDocument(qreal scrollRatio = -1.0);
     void syncSourceCursorFromReadSelection();
     QString readSelectionText(const QTextCursor &selection) const;
@@ -200,13 +201,14 @@ private:
     // (new column/row) at its edges. Shift+Tab (forward=false) just steps back
     // one cell. Returns true if it handled the key.
     bool handleTableTab(bool forward = true);
-    // On Enter on a table header that has no separator row yet, insert the
-    // `| --- |` separator (and an empty data row if none follows) and move the
-    // caret to the first data cell. Returns true if it handled the key.
+    // On Enter anywhere in a table header that has no separator row yet, insert
+    // the `| --- |` separator (and an empty data row if none follows), then move
+    // to the first cell in the first data row. Returns true if handled.
     bool handleTableHeaderEnter();
-    // On Enter on the last row of a table, leave the grid: open an empty line
-    // below it. Returns true if it handled the key.
-    bool handleTableExitEnter();
+    // On Enter in an established pipe table, header/separator rows move to the
+    // first data cell; body rows preserve their column, appending when needed.
+    // Returns true if handled.
+    bool handleTableCellEnter();
     // Place the caret in cell `cellIdx` of a table row, selecting its content.
     void moveToTableCell(const QTextBlock &block, int cellIdx);
     // The rendered task line whose checkbox sits under `pos`, or an invalid
@@ -272,8 +274,8 @@ private:
     void reapplyFolds(); // recompute block visibility from the folded set
 
     // Re-align the pipe table containing the given block (pad cells to equal
-    // column widths) so the monospace render reads as a real grid. Run when the
-    // caret leaves the table.
+    // column widths). If a resulting row would be wider than the editor's text
+    // area, leave the entire table untouched. Run when the caret leaves it.
     void prettifyTableAt(int blockNumber);
 
     // Mascot header line (block 0). mascotBlock() is the first block when it is
@@ -286,6 +288,7 @@ private:
     // the current line, or empty with *inContext=false when not inside a link.
     QString wikiContextPrefix(bool *inContext) const;
     void updateCompletionPopup();
+    void dismissCompletionIfOutOfContext();
     void insertCompletion(const QString &completion);
 
     MarkdownHighlighter *m_highlighter = nullptr;

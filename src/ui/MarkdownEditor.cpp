@@ -168,6 +168,17 @@ QStringList splitRow(const QString &text) {
         c = c.trimmed();
     return cells;
 }
+int tableCellIndex(const QTextCursor &cursor) {
+    const QList<int> pipes =
+        MarkdownHighlighter::tablePipePositions(cursor.block().text());
+    if (pipes.size() < 2)
+        return 0;
+    int pipesBeforeCaret = 0;
+    for (int pipe : pipes)
+        if (pipe < cursor.positionInBlock())
+            ++pipesBeforeCaret;
+    return qBound(0, pipesBeforeCaret - 1, int(pipes.size()) - 2);
+}
 int sepAlign(const QString &cell) { // 0 left, 1 right, 2 centre, 3 explicit-left
     const QString t = cell.trimmed();
     const bool l = t.startsWith(QLatin1Char(':'));
@@ -304,10 +315,8 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     m_documentOwner = new QObject(this);
     m_sourceDocument = document();
     m_sourceDocument->setParent(m_documentOwner);
-    m_readDocument = new QTextDocument(m_documentOwner);
     m_readObjectRenderer = new MarkdownReadObjectRenderer(this);
-    m_readDocument->documentLayout()->registerHandler(
-        MarkdownReadObjectRenderer::ObjectType, m_readObjectRenderer);
+    m_readDocument = createReadDocument();
     m_sourceCursor = QTextCursor(m_sourceDocument);
     // Keep the existing reading-friendly overscroll: one extra viewport lets
     // the final line rise to the top. QTextEdit's range is pixel-addressable,
@@ -381,6 +390,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
             viewport()->update();
             return;
         }
+        dismissCompletionIfOutOfContext();
         updateActiveHighlight();
         viewport()->update(); // repaint bullets as the active line moves
         updateMascotLineState(); // reveal/hide the header line as the caret moves
@@ -417,6 +427,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
             viewport()->update();
             return;
         }
+        dismissCompletionIfOutOfContext();
         updateActiveHighlight();
         viewport()->update();
     });
@@ -1103,6 +1114,13 @@ void MarkdownEditor::restoreScrollRatio(qreal ratio) {
     QTimer::singleShot(0, this, restore);
 }
 
+QTextDocument *MarkdownEditor::createReadDocument() {
+    auto *readDocument = new QTextDocument(m_documentOwner);
+    readDocument->documentLayout()->registerHandler(
+        MarkdownReadObjectRenderer::ObjectType, m_readObjectRenderer);
+    return readDocument;
+}
+
 void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
     if (!m_readDocument || !m_sourceDocument)
         return;
@@ -1123,13 +1141,30 @@ void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
     options.fallbackWidth = qMax(80, viewport()->width());
     options.maxImageHeight =
         qBound(qreal(120), viewport()->height() * 0.62, qreal(520));
+    // Rebuilding the document currently installed in QTextEdit makes every
+    // inserted block invalidate the live layout. A link navigation can then
+    // enqueue thousands of viewport updates while the rendered note is being
+    // assembled, leaving Read Mode sluggish long after the click. Build into a
+    // detached document and swap it in once, so the visible editor observes one
+    // layout change regardless of note size.
+    QTextDocument *renderTarget =
+        readDocumentInstalled ? createReadDocument() : m_readDocument;
+    MarkdownReadRenderer::render(renderTarget,
+                                 m_sourceDocument->toPlainText(), options);
+
     const bool wasSwitching = m_switchingDocuments;
     m_switchingDocuments = true;
-    MarkdownReadRenderer::render(m_readDocument,
-                                 m_sourceDocument->toPlainText(), options);
     if (readDocumentInstalled) {
+        QTextDocument *oldReadDocument = m_readDocument;
+        m_readDocument = renderTarget;
+        setDocument(m_readDocument);
         setTextCursor(MarkdownReadRenderer::mapToReadCursor(
             m_readDocument, sourceCursor));
+        // Presentation is derived state. QTextEdit may mark a newly installed
+        // document dirty while resetting its control, but it must never look
+        // like an editable/saveable note.
+        m_readDocument->setModified(false);
+        delete oldReadDocument;
     }
     m_switchingDocuments = wasSwitching;
     m_sourceCursor = sourceCursor;
@@ -1458,6 +1493,17 @@ void MarkdownEditor::updateCompletionPopup() {
     rect.setWidth(m_completer->popup()->sizeHintForColumn(0) +
                   m_completer->popup()->verticalScrollBar()->sizeHint().width());
     m_completer->complete(rect);
+}
+
+void MarkdownEditor::dismissCompletionIfOutOfContext() {
+    if (!m_completer || !m_completer->popup()->isVisible())
+        return;
+    bool inContext = false;
+    wikiContextPrefix(&inContext);
+    if (inContext && !textCursor().hasSelection())
+        return;
+    m_completer->popup()->hide();
+    m_completer->setCompletionPrefix(QString());
 }
 
 void MarkdownEditor::insertCompletion(const QString &completion) {
@@ -1967,15 +2013,24 @@ bool MarkdownEditor::continueList() {
 
     const QString line = cur.block().text();
     const int caret = cur.positionInBlock();
-    auto endConstruct = [&] { // drop the empty marker and advance a blank line
+    auto endConstruct = [&] { // drop the marker, stay on the now-empty line
         cur.beginEditBlock();
         cur.movePosition(QTextCursor::StartOfBlock);
         cur.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
         cur.removeSelectedText();
-        cur.insertBlock();
         cur.endEditBlock();
         setTextCursor(cur);
     };
+
+    // Accept an empty marker even before its customary trailing space has been
+    // typed ("-", "- [ ]", "1.", and so on). At any other caret position the
+    // normal split behavior still wins, so editing inside a marker is safe.
+    static const QRegularExpression emptyListRe(QStringLiteral(
+        "^\\s*(?:[-*+]|\\d+[.)])(?:\\s+\\[[ xX]\\])?\\s*$"));
+    if (caret == line.size() && emptyListRe.match(line).hasMatch()) {
+        endConstruct();
+        return true;
+    }
 
     static const QRegularExpression listRe(QStringLiteral(
         "^(\\s*)(?:([-*+])|(\\d+)([.)]))\\s+(\\[[ xX]\\]\\s+)?(.*)$"));
@@ -2253,9 +2308,13 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         QTextCursor c = textCursor();
         c.movePosition(QTextCursor::EndOfBlock);
         setTextCursor(c);
-        if (insideCodeBlock(c.block()) || !continueList())
-            textCursor().insertText(QStringLiteral("\n"));
+        if (insideCodeBlock(c.block()) || !continueList()) {
+            c = textCursor();
+            c.insertText(QStringLiteral("\n"));
+            setTextCursor(c);
+        }
         ensureCursorVisible();
+        event->accept();
         return;
     }
 
@@ -2339,7 +2398,7 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         }
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
             !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
-            handleTableExitEnter()) {
+            handleTableCellEnter()) {
             return;
         }
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
@@ -2355,6 +2414,21 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             return;
         if (event->key() == Qt::Key_Backtab && adjustListIndent(false))
             return;
+    }
+
+    // Markdown's source model is line-oriented, so Return must always create a
+    // real paragraph break after the special table/list cases above decline it.
+    // Relying on QTextEdit's final fallback left the key vulnerable to stale
+    // completer state and platform-specific soft-line handling. Make the source
+    // edit explicit and keep every ordinary, Shift, keypad, and code-block
+    // Return on the same guaranteed path.
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        QTextCursor cursor = textCursor();
+        cursor.insertText(QStringLiteral("\n"));
+        setTextCursor(cursor);
+        ensureCursorVisible();
+        event->accept();
+        return;
     }
 
     // Editor keybindings. (On macOS Qt maps ControlModifier to ⌘, so these are
@@ -2969,6 +3043,18 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
         out << line;
     }
 
+    // The editor's configured maximum column width is reflected by the live
+    // viewport. Padding a narrow source table can otherwise make every row wrap
+    // after prettification, destroying the visual grid it was meant to create.
+    // Decide for the table as a whole before touching the document: either all
+    // rows fit and are aligned, or the original Markdown is preserved exactly.
+    const qreal availableWidth = qMax(
+        qreal(0), viewport()->width() - document()->documentMargin() * 2);
+    const QFontMetricsF metrics(font());
+    for (const QString &line : std::as_const(out))
+        if (metrics.horizontalAdvance(line) > availableWidth)
+            return;
+
     QTextCursor cur(first);
     cur.movePosition(QTextCursor::StartOfBlock);
     cur.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
@@ -2981,13 +3067,14 @@ void MarkdownEditor::prettifyTableAt(int blockNumber) {
     m_prettifying = false;
 }
 
-// Enter on a freshly-typed table header (a pipe row that is the first row and
-// has no separator yet) builds the `| --- |` separator beneath it — plus an
-// empty data row when none follows — and drops the caret in the first data
+// Enter anywhere on a freshly-typed table header (a pipe row that is the first
+// row and has no separator yet) builds the `| --- |` separator beneath it — plus
+// an empty data row when none follows — and starts the caret in the first data
 // cell. Returns false (Enter behaves normally) for any other line.
 bool MarkdownEditor::handleTableHeaderEnter() {
     QTextCursor cur = textCursor();
-    if (cur.hasSelection() || !cur.atBlockEnd())
+    if (document()->findBlock(cur.selectionStart()) !=
+        document()->findBlock(cur.selectionEnd()))
         return false;
     const QTextBlock block = cur.block();
     if (!isTableRow(block.text()) || isSeparatorRow(block.text()))
@@ -3023,31 +3110,71 @@ bool MarkdownEditor::handleTableHeaderEnter() {
     m_prettifying = false;
     prettifyTableAt(headerNo); // align header + separator (+ new row)
 
-    // First cell of the data row (the new one, or the row that followed).
+    // A completed header starts data entry at the beginning of the first row,
+    // regardless of which header cell held the caret.
     const QTextBlock data = document()->findBlockByNumber(headerNo + 2);
     if (data.isValid())
         moveToTableCell(data, 0);
     return true;
 }
 
-// Enter on the last row of a table leaves the grid: open a fresh, empty line
-// just below it and put the caret there. Returns false for any other line so
-// Enter behaves normally. (The header-without-separator case is handled first
-// by handleTableHeaderEnter, so a one-row table builds itself before this.)
-bool MarkdownEditor::handleTableExitEnter() {
+// Enter in an established table moves vertically. Header + separator are one
+// setup region and always start at the first cell of the first data row; body
+// rows keep their current column. At the bottom, grow one compact data row.
+bool MarkdownEditor::handleTableCellEnter() {
     QTextCursor cur = textCursor();
-    if (cur.hasSelection() || !cur.atBlockEnd())
+    if (document()->findBlock(cur.selectionStart()) !=
+        document()->findBlock(cur.selectionEnd()))
         return false;
     const QTextBlock block = cur.block();
     if (!isTableRow(block.text()))
         return false;
-    const QTextBlock next = block.next();
-    if (next.isValid() && isTableRow(next.text()))
-        return false; // not the last row of the table
-    QTextCursor c(block);
-    c.movePosition(QTextCursor::EndOfBlock);
-    c.insertText(QStringLiteral("\n"));
-    setTextCursor(c);
+
+    QTextBlock first = block;
+    QTextBlock last = block;
+    while (first.previous().isValid() && isTableRow(first.previous().text()))
+        first = first.previous();
+    while (last.next().isValid() && isTableRow(last.next().text()))
+        last = last.next();
+
+    const int firstNo = first.blockNumber();
+    const bool inHeaderRegion = block == first || isSeparatorRow(block.text());
+    const int targetCell = inHeaderRegion ? 0 : tableCellIndex(cur);
+    QTextBlock destination = block.next();
+    while (destination.isValid() && destination != last.next() &&
+           isSeparatorRow(destination.text()))
+        destination = destination.next();
+
+    if (!destination.isValid() || !isTableRow(destination.text())) {
+        int columns = 1;
+        for (QTextBlock row = first; row.isValid(); row = row.next()) {
+            columns = qMax(columns, int(splitRow(row.text()).size()));
+            if (row == last)
+                break;
+        }
+        QString empty = QStringLiteral("|");
+        for (int column = 0; column < columns; ++column)
+            empty += QStringLiteral("  |");
+
+        const int destinationNo = last.blockNumber() + 1;
+        QTextCursor edit(last);
+        edit.movePosition(QTextCursor::EndOfBlock);
+        m_prettifying = true;
+        edit.insertText(QLatin1Char('\n') + empty);
+        m_prettifying = false;
+        prettifyTableAt(firstNo);
+        destination = document()->findBlockByNumber(destinationNo);
+    } else if (inHeaderRegion) {
+        // Enter confirms the header structure. Align the whole table before
+        // data entry when the width guard in prettifyTableAt allows it, then
+        // reacquire the destination because prettification replaces the rows.
+        const int destinationNo = destination.blockNumber();
+        prettifyTableAt(firstNo);
+        destination = document()->findBlockByNumber(destinationNo);
+    }
+
+    if (destination.isValid())
+        moveToTableCell(destination, targetCell);
     return true;
 }
 
@@ -3335,125 +3462,6 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 quotePainter.drawLine(QPointF(x, geo.top()),
                                       QPointF(x, geo.bottom()));
             }
-        }
-    }
-
-    // Pipe tables remain editable plain text, but consecutive rows share one
-    // lightweight grid surface. The source pipes stay visible as useful edit
-    // affordances while these rails make headers, columns and data rows easier
-    // to follow at a glance.
-    {
-        QPainter tablePainter(viewport());
-        tablePainter.setRenderHint(QPainter::Antialiasing);
-        const QTextCursor tableSelection = textCursor();
-        const int tableSelectionFirst =
-            document()->findBlock(tableSelection.selectionStart()).blockNumber();
-        const int tableSelectionLast =
-            document()->findBlock(tableSelection.selectionEnd()).blockNumber();
-        QTextBlock block = firstVisibleTextBlock();
-        while (block.previous().isValid() &&
-               isTableRow(block.previous().text()) &&
-               block.previous().userState() != 1)
-            block = block.previous();
-
-        while (block.isValid()) {
-            if (!block.isVisible() || block.userState() == 1 ||
-                !isTableRow(block.text())) {
-                block = block.next();
-                continue;
-            }
-
-            QList<QTextBlock> rows;
-            QTextBlock after = block;
-            while (after.isValid() && after.isVisible() &&
-                   after.userState() != 1 && isTableRow(after.text())) {
-                rows.append(after);
-                after = after.next();
-            }
-            if (rows.isEmpty()) {
-                block = after;
-                continue;
-            }
-            const bool editingTable =
-                tableSelectionLast >= rows.first().blockNumber() &&
-                tableSelectionFirst <= rows.last().blockNumber();
-            if (editingTable) {
-                // The highlighter reveals every row of an active table. Leave
-                // the grid off until the caret exits so raw pipes/dashes have
-                // a clean editing surface instead of sitting over painted rails.
-                block = after;
-                continue;
-            }
-
-            qreal left = viewport()->width();
-            qreal right = 0.0;
-            for (const QTextBlock &row : rows) {
-                const QString text = row.text();
-                const QList<int> pipes =
-                    MarkdownHighlighter::tablePipePositions(text);
-                if (pipes.size() < 2)
-                    continue;
-                const int firstPipe = pipes.first();
-                const int lastPipe = pipes.last();
-                const auto firstRect = textRangeViewportRects(row, firstPipe, 1);
-                const auto lastRect = textRangeViewportRects(row, lastPipe, 1);
-                if (firstRect.isEmpty() || lastRect.isEmpty())
-                    continue;
-                left = qMin(left, firstRect.first().left() - 5.0);
-                right = qMax(right, lastRect.first().right() + 5.0);
-            }
-            const QRectF firstGeo = blockViewportRect(rows.first());
-            const QRectF lastGeo = blockViewportRect(rows.last());
-            QRectF tableRect(left, firstGeo.top(), qMax(qreal(0), right - left),
-                             lastGeo.bottom() - firstGeo.top());
-            if (tableRect.width() <= 0 || !tableRect.intersects(event->rect())) {
-                block = after;
-                continue;
-            }
-
-            QPainterPath tableClip;
-            tableClip.addRoundedRect(tableRect, 5, 5);
-            tablePainter.save();
-            tablePainter.setClipPath(tableClip);
-            tablePainter.fillPath(tableClip, QColor(0x12, 0x1d, 0x18));
-
-            int dataRow = 0;
-            for (int rowIndex = 0; rowIndex < rows.size(); ++rowIndex) {
-                const QTextBlock &row = rows.at(rowIndex);
-                const QRectF geo = blockViewportRect(row);
-                const bool separator = isSeparatorRow(row.text());
-                const bool header = rowIndex + 1 < rows.size() &&
-                                    isSeparatorRow(rows.at(rowIndex + 1).text());
-                const QRectF rowRect(tableRect.left(), geo.top(),
-                                     tableRect.width(), geo.height());
-                if (header) {
-                    tablePainter.fillRect(rowRect, QColor(0x1a, 0x35, 0x27));
-                } else if (!separator && (dataRow++ % 2) == 1) {
-                    tablePainter.fillRect(rowRect, QColor(0x17, 0x29, 0x20));
-                }
-
-                tablePainter.setPen(QPen(QColor(0x32, 0x55, 0x43), 1.0));
-                for (int pos :
-                     MarkdownHighlighter::tablePipePositions(row.text())) {
-                    const auto pipeRects = textRangeViewportRects(row, pos, 1);
-                    if (pipeRects.isEmpty())
-                        continue;
-                    const qreal x = pipeRects.first().center().x();
-                    tablePainter.drawLine(QPointF(x, geo.top()),
-                                          QPointF(x, geo.bottom()));
-                }
-                if (separator) {
-                    tablePainter.setPen(QPen(QColor(0x3c, 0x6d, 0x52), 1.4));
-                    tablePainter.drawLine(
-                        QPointF(tableRect.left(), geo.center().y()),
-                        QPointF(tableRect.right(), geo.center().y()));
-                }
-            }
-            tablePainter.restore();
-            tablePainter.setPen(QPen(QColor(0x2c, 0x4d, 0x3c), 1.0));
-            tablePainter.setBrush(Qt::NoBrush);
-            tablePainter.drawRoundedRect(tableRect, 5, 5);
-            block = after;
         }
     }
 

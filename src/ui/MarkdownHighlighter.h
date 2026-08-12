@@ -84,9 +84,6 @@ private:
                                              int seedEnd = 0);
 
     QTextCharFormat conceal() const; // tiny + transparent
-    // Merge an inline style over the current block's base style. This is used
-    // for table rows, whose monospace/header formatting must survive when a
-    // link, emphasis span, or inline-code span overlays part of the cell.
     QTextCharFormat inlineFormat(const QTextCharFormat &overlay) const;
     void applyInline(const QRegularExpression &re, const QString &text,
                      QList<bool> &consumed, const QTextCharFormat &contentFmt,
@@ -167,15 +164,9 @@ private:
     QTextCharFormat m_rule;
     QTextCharFormat m_listMarker;
     QTextCharFormat m_taskDone;
-    QTextCharFormat m_table;       // monospace cell text
-    QTextCharFormat m_tableHeader; // monospace + bold header cells
-    QTextCharFormat m_tablePipe;   // dimmed column separators
     QTextCharFormat m_marker; // dimmed markers, shown on the active line
     QTextCharFormat m_mascot; // a recognised mascot seed line (first line only)
     QTextCharFormat m_math;   // inline $…$ formula body
-
-    QTextCharFormat m_inlineBase;
-    bool m_hasInlineBase = false;
 
     QRegularExpression m_reHeading;
     QRegularExpression m_reFence;
@@ -184,6 +175,5 @@ private:
     QRegularExpression m_reTask;
     QRegularExpression m_reList;
     QRegularExpression m_reCode;
-    QRegularExpression m_reTableSep;
     QRegularExpression m_reLink;         // [text](url)
 };

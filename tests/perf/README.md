@@ -69,6 +69,10 @@ Metrics:
   separate presentation-only Read Mode document and install it in the editor.
 - `editor_render_read_viewport`: render one viewport of the separate Read Mode
   document, including any native math, code, task, rule, and image objects.
+- `editor_switch_read_note`: replace the source and presentation documents while
+  Read Mode stays active.
+- `editor_switch_read_wiki_dense_note`: the same replacement with 2,000 rendered
+  wiki links, guarding the link-navigation path against live-layout regressions.
 - `math_measure_and_paint`: repeated formula measure/paint loop.
 - `mascot_render_unique_500`: render 500 different deterministic mascot pixmaps.
 - `mascot_render_repeated_500`: render the same mascot 500 times to measure cache reuse.
