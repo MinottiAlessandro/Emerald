@@ -650,12 +650,36 @@ bool MarkdownEditor::posInColumns(const QPoint &pos, const QTextBlock &block,
     // rendered horizontal span so the clickable area stops at the text. (The
     // concealed brackets collapse to ~0 width, so [start,end] tracks what's
     // visible.)
-    QTextCursor c(block);
-    c.setPosition(block.position() + startCol);
-    const int left = cursorRect(c).left();
-    c.setPosition(block.position() + endCol);
-    const int right = cursorRect(c).left();
-    return pos.x() >= left && pos.x() <= right;
+    QTextLayout *layout = block.layout();
+    if (!layout || startCol >= endCol)
+        return false;
+
+    // startCol and endCol can sit on different visual lines when the link wraps.
+    // Comparing their two cursor x positions treats the token as one horizontal
+    // interval and loses every segment whose x range differs from the final
+    // line. Test only the segment on the visual line under the mouse instead.
+    const QRectF blockGeo =
+        blockBoundingGeometry(block).translated(contentOffset());
+    const qreal localY = pos.y() - blockGeo.top();
+    for (int i = 0; i < layout->lineCount(); ++i) {
+        const QTextLine line = layout->lineAt(i);
+        if (localY < line.y() || localY >= line.y() + line.height())
+            continue;
+
+        const int lineStart = line.textStart();
+        const int lineEnd = lineStart + line.textLength();
+        const int overlapStart = qMax(startCol, lineStart);
+        const int overlapEnd = qMin(endCol, lineEnd);
+        if (overlapStart >= overlapEnd)
+            return false;
+
+        const qreal x1 = line.cursorToX(overlapStart);
+        const qreal x2 = line.cursorToX(overlapEnd);
+        const qreal left = blockGeo.left() + qMin(x1, x2);
+        const qreal right = blockGeo.left() + qMax(x1, x2);
+        return pos.x() >= left && pos.x() <= right;
+    }
+    return false;
 }
 
 QString MarkdownEditor::linkAt(const QPoint &pos) const {

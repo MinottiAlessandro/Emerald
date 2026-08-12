@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QEventLoop>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -120,6 +121,14 @@ void sendKey(MarkdownEditor &editor, QEvent::Type type, int key,
              const QString &text = QString()) {
     QKeyEvent event(type, key, modifiers, text);
     QApplication::sendEvent(&editor, &event);
+}
+
+void sendMousePress(MarkdownEditor &editor, const QPoint &position,
+                    Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QMouseEvent event(QEvent::MouseButtonPress, QPointF(position),
+                      QPointF(editor.viewport()->mapToGlobal(position)),
+                      Qt::LeftButton, Qt::LeftButton, modifiers);
+    QApplication::sendEvent(editor.viewport(), &event);
 }
 
 void waitForQuickJump() {
@@ -346,6 +355,67 @@ int main(int argc, char **argv) {
     QString jumpedTo;
     QObject::connect(&editor, &MarkdownEditor::linkClicked,
                      [&jumpedTo](const QString &target) { jumpedTo = target; });
+
+    // A rendered wiki link can occupy several visual lines while remaining one
+    // QTextBlock. Every visible segment should have its own clickable x range.
+    editor.resize(180, 240);
+    const QString wrappedTarget(47, QLatin1Char('W'));
+    editor.setPlainText(QStringLiteral("[[") + wrappedTarget +
+                        QStringLiteral("]]\nplain trailing line"));
+    QTextCursor trailing(editor.document()->findBlockByNumber(1));
+    editor.setTextCursor(trailing); // render (conceal) the link on block zero
+    const QTextBlock wrappedBlock = editor.document()->firstBlock();
+    settleLayout(editor, wrappedBlock);
+    QTextLayout *wrappedLayout = wrappedBlock.layout();
+    check(wrappedLayout && wrappedLayout->lineCount() >= 3,
+          QStringLiteral("the wrapped-link fixture should span visual lines"));
+    if (wrappedLayout && wrappedLayout->lineCount() >= 2) {
+        const int displayStart = 2;
+        const int displayEnd = displayStart + wrappedTarget.size();
+        QTextCursor sourceStart(wrappedBlock);
+        sourceStart.setPosition(wrappedBlock.position());
+        QTextCursor sourceEnd(wrappedBlock);
+        sourceEnd.setPosition(wrappedBlock.position() + wrappedBlock.length() - 1);
+        const int legacyLeft = editor.cursorRect(sourceStart).left();
+        const int legacyRight = editor.cursorRect(sourceEnd).left();
+        bool exercisesWrappedRange = false;
+        for (int i = 0; i < wrappedLayout->lineCount(); ++i) {
+            const QTextLine line = wrappedLayout->lineAt(i);
+            const int overlapStart = qMax(displayStart, line.textStart());
+            const int overlapEnd =
+                qMin(displayEnd, line.textStart() + line.textLength());
+            if (overlapStart >= overlapEnd)
+                continue;
+
+            // Click the final visible character on each segment; this catches
+            // the old whole-token x range, which ended at the short final line.
+            const int column = overlapEnd - 1;
+            QTextCursor before(wrappedBlock);
+            before.setPosition(wrappedBlock.position() + column);
+            QTextCursor after(wrappedBlock);
+            after.setPosition(wrappedBlock.position() + column + 1);
+            const QRect beforeRect = editor.cursorRect(before);
+            const QRect afterRect = editor.cursorRect(after);
+            const QPoint click((beforeRect.left() + afterRect.left()) / 2,
+                               beforeRect.center().y());
+            exercisesWrappedRange =
+                exercisesWrappedRange || click.x() < legacyLeft ||
+                click.x() > legacyRight;
+
+            jumpedTo.clear();
+            editor.setTextCursor(trailing);
+            sendMousePress(editor, click);
+            check(jumpedTo == wrappedTarget,
+                  QStringLiteral("wrapped wiki-link visual line %1 should be "
+                                 "clickable")
+                      .arg(i));
+        }
+        check(exercisesWrappedRange,
+              QStringLiteral("the fixture should exercise a wrapped segment "
+                             "outside the old whole-token x range"));
+    }
+
+    editor.resize(700, 700);
     editor.setPlainText(QStringLiteral("[[First]] then [[Second]]"));
     QApplication::processEvents();
 
