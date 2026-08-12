@@ -482,6 +482,8 @@ if(EMERALD_BUILD_FUZZ_TESTS)
     src/core/Vault.cpp
     src/core/WikiLink.h
     src/core/WikiLink.cpp
+    src/core/MarkdownWikiLinkScanner.h
+    src/core/MarkdownWikiLinkScanner.cpp
   )
   target_include_directories(emerald_fuzz_core PRIVATE src)
   target_link_libraries(emerald_fuzz_core PRIVATE Qt6::Core)

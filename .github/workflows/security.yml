@@ -53,7 +53,13 @@ jobs:
             -DEMERALD_ENABLE_SANITIZERS=ON
 
       - name: Build sanitizer tests
-        run: cmake --build build-security --target emerald_core_tests emerald_security_tests -j
+        run: >-
+          cmake --build build-security --target
+          emerald_core_tests
+          emerald_broken_links_tests
+          emerald_link_graph_tests
+          emerald_security_tests
+          -j
 
       - name: Run sanitizer tests
         run: ctest --test-dir build-security --output-on-failure
