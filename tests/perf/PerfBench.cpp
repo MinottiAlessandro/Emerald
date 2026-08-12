@@ -1,5 +1,7 @@
+#include "core/LinkGraphIndex.h"
 #include "core/SearchIndex.h"
 #include "core/Vault.h"
+#include "ui/GraphView.h"
 #include "ui/MarkdownEditor.h"
 #include "ui/Mascot.h"
 #include "ui/MathRender.h"
@@ -8,6 +10,7 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -18,6 +21,7 @@
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QTimer>
 #include <QtGlobal>
 
 #if defined(Q_OS_LINUX) || defined(__linux__)
@@ -560,6 +564,61 @@ int main(int argc, char **argv) {
     addMetric(metrics, QStringLiteral("search_update_note"),
               timeMs([&] { index.updateNote(updateNote.path, updateNote.title, updated); }),
               QStringLiteral("ms"));
+
+    LinkGraphIndex graphIndex;
+    const qint64 rssBeforeGraph = currentRssKb();
+    addMetric(metrics, QStringLiteral("graph_index_rebuild"),
+              timeMs([&] {
+                  graphIndex.setNotes(vault.root(), vault.notes());
+                  for (const Note &note : vault.notes())
+                      graphIndex.updateNote(note.path, note.title,
+                                            vault.read(note.path));
+              }),
+              QStringLiteral("ms"));
+    LinkGraphIndex::Snapshot graphSnapshot;
+    addMetric(metrics, QStringLiteral("graph_snapshot"),
+              timeMs([&] { graphSnapshot = graphIndex.snapshot(); }),
+              QStringLiteral("ms"));
+    addMetric(metrics, QStringLiteral("graph_update_note"),
+              timeMs([&] {
+                  graphIndex.updateNote(updateNote.path, updateNote.title,
+                                        updated);
+              }),
+              QStringLiteral("ms"));
+    const qint64 rssAfterGraph = currentRssKb();
+    addMetric(metrics, QStringLiteral("rss_graph_index_delta"),
+              (rssBeforeGraph >= 0 && rssAfterGraph >= 0)
+                  ? rssAfterGraph - rssBeforeGraph
+                  : -1,
+              QStringLiteral("KiB"));
+
+    GraphView graphView;
+    graphView.resize(1100, 720);
+    QElapsedTimer graphLayoutTimer;
+    graphLayoutTimer.start();
+    QEventLoop graphLayoutLoop;
+    QTimer graphLayoutTimeout;
+    graphLayoutTimeout.setSingleShot(true);
+    graphLayoutTimeout.setInterval(30000);
+    QObject::connect(&graphView, &GraphView::layoutSettled, &graphLayoutLoop,
+                     &QEventLoop::quit);
+    QObject::connect(&graphLayoutTimeout, &QTimer::timeout, &graphLayoutLoop,
+                     &QEventLoop::quit);
+    graphLayoutTimeout.start();
+    graphView.setSnapshot(graphSnapshot);
+    graphLayoutLoop.exec();
+    addMetric(metrics, QStringLiteral("graph_initial_layout"),
+              graphLayoutTimer.nsecsElapsed() / 1000000.0,
+              QStringLiteral("ms"));
+    QImage graphImage(graphView.size(), QImage::Format_ARGB32_Premultiplied);
+    addMetric(metrics, QStringLiteral("graph_render_viewport"),
+              timeMs([&] {
+                  graphImage.fill(Qt::transparent);
+                  QPainter painter(&graphImage);
+                  graphView.render(&painter);
+              }),
+              QStringLiteral("ms"));
+    addCurrentRssMetric(QStringLiteral("rss_after_graph_current"));
 
     MarkdownEditor editor;
     editor.resize(820, 720);

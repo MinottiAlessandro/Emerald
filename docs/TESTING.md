@@ -116,6 +116,22 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Find in note** (`Ctrl+F`).
 - [ ] **Search vault** (`Ctrl+Shift+F`) — popup with ranked results; type to filter, ↑/↓ to move, Enter jumps to first match.
 
+## 9a. Graph View
+- [ ] **Open Graph View** (`Ctrl+Shift+G` or **Settings → Vault → Graph view → Open global**). It replaces the note in the central pane; no dialog, dock, or second top-level window appears. ◆
+- [ ] **Open Local Graph** from **Settings → Vault → Graph view → Open local**. The dedicated Graph buttons are absent from both the sidebar footer and mobile toolbar.
+- [ ] The **Graph** title, left-aligned search field, and graph controls occupy one header row. The visible note/link totals remain pinned to the bottom-right, including while a selected note's details appear at bottom-left.
+- [ ] The graph canvas meets the sidebar's painted divider with no transparent gutter; after fully collapsing the sidebar, the graph likewise reaches the left divider/edge without a persistent gap. Returning to a note restores the wider resize target.
+- [ ] The global graph includes every Markdown note, including orphans. Wiki-link aliases and heading fragments resolve to the target note; links in inline/fenced code do not appear. Repeated links form one stronger edge. ◆
+- [ ] Pan empty space, zoom around the pointer, drag a node, press **F** to fit, and press **0** to reset the camera. After the layout settles, idle CPU use returns to normal.
+- [ ] Hover/select a node to highlight its immediate connections and show incoming/outgoing counts. Double-click it, or select it and press Enter, to open the note.
+- [ ] Type in graph search (`/` or `Ctrl+F`) and confirm non-matching nodes dim without causing a layout jump.
+- [ ] Filter by top-level folder and toggle **Orphans**, **Missing**, and **Arrows**. Missing targets are hollow/dashed and never create a file when selected or double-clicked; filters remain isolated per vault.
+- [ ] In Local mode, switch between **Both directions**, **Outgoing**, and **Incoming** and confirm neighborhood traversal follows the chosen edge direction.
+- [ ] Switch to **Local**, choose depth 1–3, and confirm the open/selected note is the root and both incoming and outgoing neighbors appear.
+- [ ] Navigate `Note A → Graph → Note B`, then Back twice. The first Back restores the same graph camera/search/filter/selection state; the second restores Note A. Forward walks the same sequence. ◆
+- [ ] In Read Mode, Graph View remains available and navigable, while Save/Rename/Delete/Insert actions remain disabled.
+- [ ] On a narrow/mobile window, Graph View still occupies the editor side, the filters collapse into a compact menu, tap selects, a second tap opens, drag pans, and pinch zooms.
+
 ## 10. Templates
 - [ ] **Settings → Templates folder** points at a folder in the vault.
 - [ ] **Insert Template…** (`Ctrl+T`) opens a picker of every note under it (sub-folders included). ★
@@ -216,6 +232,7 @@ Verify each fires and that menu items show their shortcut label.
 | Find in note                       | `Ctrl+F`                       | [ ] |
 | Search vault                       | `Ctrl+Shift+F`                 | [ ] |
 | Review broken links                | `Ctrl+Shift+B`                 | [ ] |
+| Open Graph View                    | `Ctrl+Shift+G`                 | [ ] |
 | Toggle Read Mode                   | `Ctrl+E`                       | [ ] |
 | Settings                           | `Ctrl+,`                       | [ ] |
 | Back / Forward                     | `Alt+←` / `Alt+→`              | [ ] |

@@ -161,16 +161,91 @@ QWidget#sidebar {
     background: #101113;
 }
 
-/* The drag-to-resize divider between the sidebar and the editor. The handle is
-   deliberately wide (set in code) for an easy grab target, but stays transparent
-   so only the thin border line shows; it brightens on hover. Drag it to the left
-   edge to collapse the sidebar, and back out to reopen it. */
+/* In-pane vault graph. The page occupies the normal note workspace rather
+   than a dialog/dock; the canvas itself is painted by GraphView. */
+QWidget#graphPage,
+QStackedWidget#workspacePages {
+    background: #141619;
+    border: 0;
+    padding: 0;
+}
+QWidget#graphHeader {
+    background: #101113;
+    border-bottom: 1px solid #1f4733;
+}
+QLabel#graphTitle {
+    background: transparent;
+    color: #d7eee2;
+    font-size: 23px;
+    font-weight: 700;
+}
+QLineEdit#graphSearch {
+    background: #17181b;
+    color: #d7eee2;
+    border: 1px solid #2f4a3b;
+    border-radius: 6px;
+    padding: 6px 9px;
+    selection-background-color: #1f4a33;
+}
+QLineEdit#graphSearch:focus {
+    border-color: #2bbf74;
+}
+QComboBox#graphScope,
+QComboBox#graphDepth,
+QComboBox#graphFolder,
+QComboBox#graphDirection,
+QPushButton#graphFit {
+    background: #17181b;
+    color: #a9c8b8;
+    border: 1px solid #2f4a3b;
+    border-radius: 5px;
+    padding: 4px 8px;
+}
+QComboBox#graphScope:hover,
+QComboBox#graphDepth:hover,
+QComboBox#graphFolder:hover,
+QComboBox#graphDirection:hover,
+QPushButton#graphFit:hover {
+    border-color: #2bbf74;
+    color: #d7eee2;
+}
+QWidget#graphCanvasLayer,
+QWidget#graphStatusOverlay {
+    background: transparent;
+}
+QLabel#graphStatus,
+QLabel#graphSelectionStatus {
+    background: rgba(16, 17, 19, 205);
+    color: #6d8e7c;
+    font-size: 12px;
+    border-radius: 4px;
+    padding: 4px 7px;
+}
+QLabel#graphSelectionStatus {
+    color: #8faf9e;
+}
+QWidget#graphCanvas {
+    background: #141619;
+}
+
+/* The drag-to-resize divider between the sidebar and the workspace. Notes keep
+   a wide grab target; Graph View narrows the handle to this painted line so its
+   canvas meets the sidebar without a dead gutter. */
 QSplitter#mainSplitter::handle {
     background: transparent;
     border-left: 2px solid #1f4733;
 }
 QSplitter#mainSplitter::handle:hover {
+    background: transparent;
     border-left: 2px solid #2bbf74;
+}
+QSplitter#mainSplitter[graphActive="true"]::handle {
+    background: #1f4733;
+    border: 0;
+}
+QSplitter#mainSplitter[graphActive="true"]::handle:hover {
+    background: #2bbf74;
+    border: 0;
 }
 
 QDockWidget {

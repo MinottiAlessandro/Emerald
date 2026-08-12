@@ -76,10 +76,18 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/SearchIndex.cpp
   src/core/WikiLink.h
   src/core/WikiLink.cpp
+  src/core/MarkdownWikiLinkScanner.h
+  src/core/MarkdownWikiLinkScanner.cpp
+  src/core/LinkGraphIndex.h
+  src/core/LinkGraphIndex.cpp
   src/core/Perf.h
   src/core/MascotSeed.h
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
+  src/ui/GraphView.h
+  src/ui/GraphView.cpp
+  src/ui/GraphPage.h
+  src/ui/GraphPage.cpp
   src/ui/MarkdownEditor.h
   src/ui/MarkdownEditor.cpp
   src/ui/MarkdownCallout.h
@@ -235,10 +243,16 @@ if(EMERALD_BUILD_PERF_TESTS)
     src/core/SearchIndex.cpp
     src/core/WikiLink.h
     src/core/WikiLink.cpp
+    src/core/MarkdownWikiLinkScanner.h
+    src/core/MarkdownWikiLinkScanner.cpp
+    src/core/LinkGraphIndex.h
+    src/core/LinkGraphIndex.cpp
     src/core/MascotSeed.h
     src/core/Perf.h
     src/ui/MarkdownEditor.h
     src/ui/MarkdownEditor.cpp
+    src/ui/GraphView.h
+    src/ui/GraphView.cpp
     src/ui/MarkdownCallout.h
     src/ui/MarkdownReadRenderer.h
     src/ui/MarkdownReadRenderer.cpp
@@ -312,6 +326,66 @@ if(EMERALD_BUILD_EDITOR_TESTS)
   add_test(NAME emerald_search_popup_tests COMMAND emerald_search_popup_tests)
   set_tests_properties(emerald_search_popup_tests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  add_executable(emerald_main_window_graph_tests
+    tests/ui/MainWindowGraphTests.cpp
+    src/core/Note.h
+    src/core/ContentSecurity.h
+    src/core/ContentSecurity.cpp
+    src/core/LegacyMascotMigration.h
+    src/core/LegacyMascotMigration.cpp
+    src/core/Vault.h
+    src/core/Vault.cpp
+    src/core/VaultSettings.h
+    src/core/VaultSettings.cpp
+    src/core/SearchIndex.h
+    src/core/SearchIndex.cpp
+    src/core/WikiLink.h
+    src/core/WikiLink.cpp
+    src/core/MarkdownWikiLinkScanner.h
+    src/core/MarkdownWikiLinkScanner.cpp
+    src/core/LinkGraphIndex.h
+    src/core/LinkGraphIndex.cpp
+    src/core/Perf.h
+    src/core/MascotSeed.h
+    src/ui/MainWindow.h
+    src/ui/MainWindow.cpp
+    src/ui/GraphView.h
+    src/ui/GraphView.cpp
+    src/ui/GraphPage.h
+    src/ui/GraphPage.cpp
+    src/ui/MarkdownEditor.h
+    src/ui/MarkdownEditor.cpp
+    src/ui/MarkdownCallout.h
+    src/ui/MarkdownReadRenderer.h
+    src/ui/MarkdownReadRenderer.cpp
+    src/ui/MarkdownReadObjectRenderer.h
+    src/ui/MarkdownReadObjectRenderer.cpp
+    src/ui/Mascot.h
+    src/ui/Mascot.cpp
+    src/ui/MascotCatalog.h
+    src/ui/MascotCatalog.cpp
+    src/ui/MarkdownHighlighter.h
+    src/ui/MarkdownHighlighter.cpp
+    src/ui/MarkdownStyle.h
+    src/ui/MathRender.h
+    src/ui/MathRender.cpp
+    src/ui/SearchPopup.h
+    src/ui/SearchPopup.cpp
+    src/ui/Updater.h
+    src/ui/Updater.cpp
+    resources/resources.qrc
+  )
+  target_include_directories(emerald_main_window_graph_tests PRIVATE src)
+  target_link_libraries(emerald_main_window_graph_tests PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Svg)
+  target_compile_definitions(emerald_main_window_graph_tests PRIVATE
+    EMERALD_VERSION="${EMERALD_BUILD_VERSION}")
+  emerald_enable_sanitizers(emerald_main_window_graph_tests)
+  add_test(NAME emerald_main_window_graph_tests
+           COMMAND emerald_main_window_graph_tests)
+  set_tests_properties(emerald_main_window_graph_tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 # --- Core regression tests -----------------------------------------------
@@ -339,11 +413,28 @@ if(EMERALD_BUILD_CORE_TESTS)
     src/core/Vault.cpp
     src/core/WikiLink.h
     src/core/WikiLink.cpp
+    src/core/MarkdownWikiLinkScanner.h
+    src/core/MarkdownWikiLinkScanner.cpp
   )
   target_include_directories(emerald_broken_links_tests PRIVATE src)
   target_link_libraries(emerald_broken_links_tests PRIVATE Qt6::Core)
   emerald_enable_sanitizers(emerald_broken_links_tests)
   add_test(NAME emerald_broken_links_tests COMMAND emerald_broken_links_tests)
+
+  add_executable(emerald_link_graph_tests
+    tests/core/LinkGraphTests.cpp
+    src/core/Note.h
+    src/core/WikiLink.h
+    src/core/WikiLink.cpp
+    src/core/MarkdownWikiLinkScanner.h
+    src/core/MarkdownWikiLinkScanner.cpp
+    src/core/LinkGraphIndex.h
+    src/core/LinkGraphIndex.cpp
+  )
+  target_include_directories(emerald_link_graph_tests PRIVATE src)
+  target_link_libraries(emerald_link_graph_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_link_graph_tests)
+  add_test(NAME emerald_link_graph_tests COMMAND emerald_link_graph_tests)
 endif()
 
 # --- Security regression tests -------------------------------------------
@@ -364,6 +455,8 @@ if(EMERALD_BUILD_SECURITY_TESTS)
     src/core/Vault.cpp
     src/core/WikiLink.h
     src/core/WikiLink.cpp
+    src/core/MarkdownWikiLinkScanner.h
+    src/core/MarkdownWikiLinkScanner.cpp
     src/core/Perf.h
   )
   target_include_directories(emerald_security_tests PRIVATE src)

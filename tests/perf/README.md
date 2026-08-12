@@ -63,6 +63,13 @@ Metrics:
 - `startup_index_chunks`: number of startup batches needed.
 - `search_p50` / `search_p95`: repeated search latency.
 - `search_update_note`: incremental reindex time for one edited note.
+- `graph_index_rebuild`: full semantic wiki-link graph index construction.
+- `graph_snapshot`: compact resolved node/edge snapshot construction.
+- `graph_update_note`: incremental graph reindex time for one edited note.
+- `graph_initial_layout`: background force layout through its settled result.
+- `graph_render_viewport`: one stationary culled graph-canvas paint.
+- `rss_graph_index_delta`, `rss_after_graph_current`: memory added by the graph
+  index and retained after laying out/rendering the graph.
 - `editor_set_plain_text`: load a large note into the editor.
 - `editor_render_viewport`: render the editor viewport once.
 - `editor_build_read_document`: parse the same large Markdown note into the

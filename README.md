@@ -57,6 +57,7 @@ it opens or installs a download.
 - 🗂️ **Your notes are just files.** A vault is a folder of `.md` files — no database, no lock-in, fully Obsidian-compatible.
 - ✨ **Live preview, in place.** Markdown renders as you type; the syntax markers melt away on every line except the one you're editing.
 - 🔗 **Real `[[wiki-links]]`** with fuzzy autocomplete, auto-creation, and rename-aware backlink rewriting.
+- 🕸️ **A fast, in-pane Graph View** for exploring the links and neighborhoods across a vault without opening another window.
 - 🔍 **Instant full-text search** over the whole vault, backed by an in-memory inverted index.
 - 🧮 **Math, built in.** Inline `$…$` and display `$$…$$` LaTeX render live — fractions, roots, matrices, accents — with no extra dependencies.
 - 🐾 **A mascot per note.** Each note can grow its own little procedurally drawn creature in the corner — a memorable face to recall it by.
@@ -87,6 +88,7 @@ it opens or installs a download.
 - **External links** — `[text](https://…)` renders as a clickable link (the `](url)` melts away, leaving just the text) and opens in your browser.
 - **Title = filename** — the note's title is the first line above the body; editing it renames the file and rewrites every inbound `[[link]]`.
 - **Back / forward history** like a browser (`Alt+←` / `Alt+→`, mouse side buttons, or the sidebar arrows).
+- **Graph View** — `Ctrl+Shift+G` replaces the current note inside the normal workspace with an interactive, dependency-free map of the vault. Pan, zoom around the pointer, drag nodes, search titles, filter by folder/orphan/missing status and incoming/outgoing direction, reveal arrows, and double-click a node (or select it and press Enter) to open its note. Global and depth-1–3 Local modes share browser history with notes, so Back restores the graph's camera, search, filters, and selection. Layout runs off the UI thread and stops when settled.
 
 **Vault & search**
 - **Folder-tree sidebar** with drag-and-drop; right-click to create notes or sub-folders anywhere.
@@ -128,6 +130,7 @@ it opens or installs a download.
 | Find in note | `Ctrl+F` |
 | Search vault | `Ctrl+Shift+F` |
 | Review broken links | `Ctrl+Shift+B` |
+| Open Graph View | `Ctrl+Shift+G` |
 | Toggle Read Mode | `Ctrl+E` |
 | Settings | `Ctrl+,` |
 | Back / Forward | `Alt+←` / `Alt+→` |
@@ -187,9 +190,12 @@ core/   no GUI, unit-testable (depends only on QtCore)
   VaultSettings    per-vault preferences in the platform settings store
   SearchIndex      inverted index for fast full-text search
   WikiLink         the shared [[wiki-link]] pattern + target cleaning
+  MarkdownWikiLinkScanner semantic link discovery outside code spans/fences
+  LinkGraphIndex   compact incremental directed note graph
   Note             { path, title }
 ui/     Qt Widgets
-  MainWindow       folder tree + title + editor; autosave, history, rename
+  MainWindow       folder tree + in-pane note/graph pages; autosave, typed history, rename
+  GraphView        custom QPainter canvas + background force layout
   MarkdownEditor   QTextEdit + pixel scrolling, clickable links, [[ autocomplete, lists, folding
   MarkdownHighlighter   inline live preview (conceals markers off the active line)
   SearchPopup      centered Telescope-style search overlay

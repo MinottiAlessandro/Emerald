@@ -1,5 +1,6 @@
 #include "Vault.h"
 
+#include "MarkdownWikiLinkScanner.h"
 #include "MascotSeed.h"
 #include "Perf.h"
 #include "WikiLink.h"
@@ -215,89 +216,38 @@ QVector<Vault::BrokenLink> Vault::brokenLinks() const {
     QHash<QString, bool> emptyByPath;
     emptyByPath.reserve(m_notes.size());
     QVector<BrokenLink> issues;
-    static const QRegularExpression fenceRe(
-        QStringLiteral("^\\s*(```|~~~)\\s*(\\S*).*$"));
-    static const QRegularExpression inlineCodeRe(
-        QStringLiteral("`[^`]+`"));
-
     for (const Note &source : m_notes) {
         const QString content = read(source.path);
-        bool insideFence = false;
-        int lineStart = 0;
-        int lineNumber = 1;
-        while (lineStart <= content.size()) {
-            int lineEnd = content.indexOf(QLatin1Char('\n'), lineStart);
-            if (lineEnd < 0)
-                lineEnd = content.size();
-            const QString lineText = content.mid(lineStart, lineEnd - lineStart);
+        for (const MarkdownWikiLinkScanner::Link &link :
+             MarkdownWikiLinkScanner::scan(content)) {
+            const QString &target = link.target;
+            if (target.isEmpty())
+                continue;
 
-            if (fenceRe.match(lineText).hasMatch()) {
-                insideFence = !insideFence;
-            } else if (!insideFence) {
-                QList<QPair<int, int>> codeSpans;
-                auto codeIt = inlineCodeRe.globalMatch(lineText);
-                while (codeIt.hasNext()) {
-                    const auto code = codeIt.next();
-                    codeSpans.append(
-                        {int(code.capturedStart()), int(code.capturedEnd())});
+            const QString targetPath =
+                pathsByTitle.value(target.toCaseFolded());
+            BrokenLink::State state = BrokenLink::State::MissingNote;
+            if (!targetPath.isEmpty()) {
+                auto emptyIt = emptyByPath.constFind(targetPath);
+                bool empty = false;
+                if (emptyIt == emptyByPath.constEnd()) {
+                    const QString targetContent =
+                        targetPath == source.path ? content : read(targetPath);
+                    const qint64 targetBytes = QFileInfo(targetPath).size();
+                    empty = targetBytes == 0 ||
+                            (!targetContent.isEmpty() &&
+                             MascotSeed::strip(targetContent).trimmed().isEmpty());
+                    emptyByPath.insert(targetPath, empty);
+                } else {
+                    empty = emptyIt.value();
                 }
-                const auto overlapsCode = [&codeSpans](int start, int end) {
-                    return std::any_of(
-                        codeSpans.cbegin(), codeSpans.cend(),
-                        [start, end](const auto &span) {
-                            return start < span.second && end > span.first;
-                        });
-                };
-
-                auto linkIt = WikiLink::pattern().globalMatch(lineText);
-                while (linkIt.hasNext()) {
-                    const auto match = linkIt.next();
-                    const int matchStart = int(match.capturedStart());
-                    const int matchEnd = int(match.capturedEnd());
-                    if (overlapsCode(matchStart, matchEnd))
-                        continue;
-
-                    const QString target =
-                        WikiLink::cleanTarget(match.captured(1));
-                    if (target.isEmpty())
-                        continue; // [[#heading]] is local to the source note
-
-                    const QString targetPath =
-                        pathsByTitle.value(target.toCaseFolded());
-                    BrokenLink::State state = BrokenLink::State::MissingNote;
-                    if (!targetPath.isEmpty()) {
-                        auto emptyIt = emptyByPath.constFind(targetPath);
-                        bool empty = false;
-                        if (emptyIt == emptyByPath.constEnd()) {
-                            const QString targetContent =
-                                targetPath == source.path ? content
-                                                          : read(targetPath);
-                            const qint64 targetBytes =
-                                QFileInfo(targetPath).size();
-                            empty = targetBytes == 0 ||
-                                    (!targetContent.isEmpty() &&
-                                     MascotSeed::strip(targetContent)
-                                         .trimmed()
-                                         .isEmpty());
-                            emptyByPath.insert(targetPath, empty);
-                        } else {
-                            empty = emptyIt.value();
-                        }
-                        if (!empty)
-                            continue;
-                        state = BrokenLink::State::EmptyNote;
-                    }
-
-                    issues.push_back(
-                        {target, source.path, lineStart + matchStart,
-                         matchEnd - matchStart, lineNumber, state});
-                }
+                if (!empty)
+                    continue;
+                state = BrokenLink::State::EmptyNote;
             }
 
-            if (lineEnd == content.size())
-                break;
-            lineStart = lineEnd + 1;
-            ++lineNumber;
+            issues.push_back({target, source.path, link.position, link.length,
+                              link.line, state});
         }
     }
     return issues;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Note.h"
+#include "core/LinkGraphIndex.h"
 #include "core/SearchIndex.h"
 #include <QDateTime>
 #include <QHash>
@@ -13,6 +14,7 @@
 
 class Vault;
 class MarkdownEditor;
+class GraphPage;
 class Mascot;
 class SearchPopup;
 class Updater;
@@ -32,6 +34,7 @@ class QThread;
 class QImage;
 class QResizeEvent;
 class QToolButton;
+class QStackedWidget;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -55,6 +58,7 @@ private:
     void updateResponsiveLayout();
     void applyEditorColumnWidth();
     void applyMobileSplit();
+    void updateSplitterHandleWidth();
     void updateMobileNavigationControls();
     void showMobileNotes();
     void showMobileEditor();
@@ -71,6 +75,8 @@ private:
     void openVault(const QString &path);
     void updateVaultTitle();
     void startIndexRebuild();
+    void openGraphView();
+    void openLocalGraphView();
     void openInitialNote(); // open Home or the last-edited note on launch
     // Rebuild the sidebar from the vault. Folder expansion is preserved across
     // rebuilds (so a rename/move/new-note doesn't collapse the tree); a fresh
@@ -78,6 +84,10 @@ private:
     void refreshTree(bool preserveExpansion = true);
     void openNoteByPath(const QString &path, bool record = true,
                         bool saveBeforeOpen = true);
+    void showGraphView(bool local, const QString &rootPath, bool record = true,
+                       bool saveBeforeOpen = true);
+    void showNotePage();
+    void refreshGraphPage();
     void saveCurrent();
     // Resolve the configured default note folder, falling back to the vault
     // root when no folder is selected or the saved folder no longer exists.
@@ -158,7 +168,20 @@ private:
     void navigateBack();
     void navigateForward();
     bool hasUnsavedDraft() const;
-    void pushHistory(const QString &path);
+    struct PageLocation {
+        enum class Kind { Note, GlobalGraph, LocalGraph };
+        Kind kind = Kind::Note;
+        QString path;
+        QString viewState;
+
+        bool operator==(const PageLocation &other) const {
+            return kind == other.kind && path == other.path;
+        }
+    };
+    void captureCurrentPageState();
+    void openHistoryLocation(const PageLocation &location,
+                             bool saveBeforeOpen = true);
+    void pushHistory(const PageLocation &location);
     // Drop history entries whose file no longer exists (e.g. deleted notes),
     // keeping the index on the current note when it survived.
     void pruneHistory();
@@ -171,8 +194,12 @@ private:
 
     Vault *m_vault = nullptr;
     SearchIndex m_searchIndex;
+    LinkGraphIndex m_linkGraphIndex;
 
     MarkdownEditor *m_editor = nullptr;
+    GraphPage *m_graphPage = nullptr;
+    QStackedWidget *m_pageStack = nullptr;
+    QWidget *m_notePage = nullptr;
     QWidget *m_centerColumn = nullptr; // width-capped title + body column
     QWidget *m_centerPane = nullptr;   // editor-side pane; the mascot's parent
     QWidget *m_mobileEditorBar = nullptr;
@@ -199,6 +226,8 @@ private:
     QAction *m_backAction = nullptr;
     QAction *m_forwardAction = nullptr;
     QAction *m_readModeAction = nullptr;
+    QAction *m_graphAction = nullptr;
+    QAction *m_localGraphAction = nullptr;
     QAction *m_newNoteAction = nullptr;
     QAction *m_renameAction = nullptr;
     QAction *m_saveAction = nullptr;
@@ -207,6 +236,7 @@ private:
     QAction *m_insertImageAction = nullptr;
     QAction *m_genMascotAction = nullptr;
     QAction *m_delMascotAction = nullptr;
+    QAction *m_findAction = nullptr;
 
     Mascot *m_mascot = nullptr;   // per-note creature in the bottom-right corner
 
@@ -217,8 +247,9 @@ private:
     quint64 m_lastSavedFingerprint = 0; // body fingerprint as last written/loaded
     bool m_loading = false;
     bool m_readMode = false; // persisted independently for each open vault
+    PageLocation::Kind m_activePage = PageLocation::Kind::Note;
 
-    QStringList m_history; // visited note paths (browser-style)
+    QVector<PageLocation> m_history; // notes and graph pages (browser-style)
     int m_histIndex = -1;
     QHash<QString, int> m_cursorPositions; // note path -> last caret position
     QHash<QString, NoteFileMeta> m_noteMeta; // path -> title/size/mtime snapshot

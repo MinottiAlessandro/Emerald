@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "GraphPage.h"
 #include "MarkdownEditor.h"
 #include "Mascot.h"
 #include "MascotCatalog.h"
@@ -46,7 +47,9 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QSplitter>
+#include <QStyle>
 #include <QStringList>
 #include <QHash>
 #include <QSet>
@@ -81,6 +84,7 @@ constexpr int kPathRole = Qt::UserRole;     // leaf: the note's file path
 constexpr int kDirRole = Qt::UserRole + 1;  // folder: its absolute path
 constexpr int kMobileBreakpoint = 760;
 constexpr int kDesktopSplitterHandleWidth = 11;
+constexpr int kGraphSplitterHandleWidth = 2;
 constexpr int kDefaultSidebarWidth = 260;
 
 // Keep only paths that aren't nested inside another path in the list — moving
@@ -280,6 +284,18 @@ QString manualText() {
         "the mouse. **Ctrl+Shift+B** opens Broken Links, a filterable report of "
         "links whose target is missing or empty.\n"
         "\n"
+        "## Graph View\n"
+        "Press **Ctrl+Shift+G** (or use **Settings → Vault → Graph view**) to "
+        "replace this note with a map of every wiki-linked note in the vault — "
+        "it opens in the same workspace, never in another window. Drag empty "
+        "space to pan, use the wheel to zoom, click a node to inspect it, and "
+        "double-click or press Enter to open it. **F** fits the graph and **/** "
+        "focuses title search. Filter the global view by folder and orphan or "
+        "missing status; Local mode can follow both, incoming-only, or "
+        "outgoing-only links. Switch between Global and depth-1–3 Local views; "
+        "Back and Forward remember the graph's camera and filters alongside "
+        "normal notes.\n"
+        "\n"
         "## Read Mode\n"
         "Press **Ctrl+E** (or use **Settings → Vault → Read mode**) when you "
         "only want to read. Emerald removes the caret, fully renders every "
@@ -326,6 +342,7 @@ QString manualText() {
         "- **Ctrl+F** — Perform a file search\n"
         "- **Ctrl+Shift+F** — Perform a Vault search\n"
         "- **Ctrl+Shift+B** — Review broken links\n"
+        "- **Ctrl+Shift+G** — Open Graph View\n"
         "- **Ctrl+E** — Toggle Read Mode for this vault\n"
         "- **Ctrl+P** — Open the file picker\n"
         "- **Ctrl+,** — Open Settings\n"
@@ -1023,15 +1040,19 @@ void MainWindow::buildUi() {
         m_editor->setFocus();
     });
 
-    // Title + body stacked in a width-capped column, centered with stretch
-    // spacers. The fixed measure means resizing the side panels doesn't reflow
-    // or repaint the text.
-    m_centerColumn = new QWidget(this);
-    auto *colLayout = new QVBoxLayout(m_centerColumn);
-    colLayout->setContentsMargins(0, 0, 0, 0);
-    colLayout->setSpacing(0);
+    // The editor and graph are first-class pages in the same central pane. The
+    // note page keeps its comfortable width-capped text column; the graph page
+    // uses the complete pane and never opens an overlapping window.
+    auto *center = new QWidget(this);
+    m_centerPane = center;
+    center->setMinimumWidth(0);
+    center->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    center->installEventFilter(this); // re-pin the mascot when the pane resizes
+    auto *centerLayout = new QVBoxLayout(center);
+    centerLayout->setContentsMargins(0, 0, 0, 0);
+    centerLayout->setSpacing(0);
 
-    m_mobileEditorBar = new QWidget(m_centerColumn);
+    m_mobileEditorBar = new QWidget(center);
     m_mobileEditorBar->setObjectName(QStringLiteral("mobileEditorBar"));
     auto *mobileBarLayout = new QHBoxLayout(m_mobileEditorBar);
     mobileBarLayout->setContentsMargins(8, 4, 8, 4);
@@ -1067,22 +1088,43 @@ void MainWindow::buildUi() {
     mobileBarLayout->addWidget(mobileSearchButton);
     mobileBarLayout->addWidget(mobileMenuButton);
     m_mobileEditorBar->hide();
+    centerLayout->addWidget(m_mobileEditorBar);
 
-    colLayout->addWidget(m_mobileEditorBar);
+    m_centerColumn = new QWidget(this);
+    m_centerColumn->setObjectName(QStringLiteral("editorColumn"));
+    auto *colLayout = new QVBoxLayout(m_centerColumn);
+    colLayout->setContentsMargins(0, 0, 0, 0);
+    colLayout->setSpacing(0);
     colLayout->addWidget(m_titleEdit);
     colLayout->addWidget(m_editor, 1);
     m_centerColumn->setMaximumWidth(m_editorColumnWidth);
     m_centerColumn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    auto *center = new QWidget(this);
-    m_centerPane = center;
-    center->installEventFilter(this); // re-pin the mascot when the pane resizes
-    auto *row = new QHBoxLayout(center);
+    m_notePage = new QWidget(this);
+    m_notePage->setObjectName(QStringLiteral("notePage"));
+    auto *row = new QHBoxLayout(m_notePage);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(0);
     row->addStretch(0);
     row->addWidget(m_centerColumn, 1);
     row->addStretch(0);
+
+    m_graphPage = new GraphPage(this);
+    connect(m_graphPage, &GraphPage::noteActivated, this,
+            [this](const QString &path) { openNoteByPath(path); });
+    connect(m_graphPage, &GraphPage::stateChanged, this,
+            [this](const QString &state) {
+                if (m_vault)
+                    VaultSettings::setValue(m_vault->root(),
+                                            QStringLiteral("graphState"), state);
+            });
+    m_pageStack = new QStackedWidget(center);
+    m_pageStack->setObjectName(QStringLiteral("workspacePages"));
+    m_pageStack->setFrameShape(QFrame::NoFrame);
+    m_pageStack->addWidget(m_notePage);
+    m_pageStack->addWidget(m_graphPage);
+    m_pageStack->setCurrentWidget(m_notePage);
+    centerLayout->addWidget(m_pageStack, 1);
 
     m_noteTreeModel = new NoteTreeModel(this);
     auto *tree = new NoteTreeView(this);
@@ -1179,6 +1221,7 @@ void MainWindow::buildUi() {
     // dragging the handle back from the left edge reopens it.
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->setObjectName(QStringLiteral("mainSplitter"));
+    m_splitter->setProperty("graphActive", false);
     m_splitter->addWidget(side);
     m_splitter->addWidget(center);
     m_splitter->setCollapsible(0, true);
@@ -1234,7 +1277,7 @@ void MainWindow::buildUi() {
     // A transient toast for feedback (rename/delete/disk-change/errors). It
     // floats over the bottom of the editor and auto-hides, so there's no
     // permanent bar across the bottom of the window.
-    m_toast = new QLabel(m_editor);
+    m_toast = new QLabel(m_centerPane);
     m_toast->setObjectName(QStringLiteral("toast"));
     m_toast->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_toast->hide();
@@ -1269,8 +1312,14 @@ void MainWindow::positionToast() {
     if (!m_toast)
         return;
     m_toast->adjustSize();
-    const int x = (m_editor->width() - m_toast->width()) / 2;
-    const int y = m_editor->height() - m_toast->height() - 18;
+    QWidget *target = m_activePage == PageLocation::Kind::Note
+                          ? static_cast<QWidget *>(m_editor)
+                          : static_cast<QWidget *>(m_pageStack);
+    if (!target || !m_centerPane)
+        return;
+    const QPoint origin = target->mapTo(m_centerPane, QPoint());
+    const int x = origin.x() + (target->width() - m_toast->width()) / 2;
+    const int y = origin.y() + target->height() - m_toast->height() - 18;
     m_toast->move(qMax(8, x), qMax(8, y));
 }
 
@@ -1384,11 +1433,12 @@ void MainWindow::maybeAutoGenerateMascot() {
 }
 
 void MainWindow::updateMascotActions() {
+    const bool notePage = m_activePage == PageLocation::Kind::Note;
     if (m_genMascotAction)
-        m_genMascotAction->setEnabled(!m_readMode && m_vault &&
+        m_genMascotAction->setEnabled(notePage && !m_readMode && m_vault &&
                                       !m_currentPath.isEmpty());
     if (m_delMascotAction)
-        m_delMascotAction->setEnabled(!m_readMode && m_editor &&
+        m_delMascotAction->setEnabled(notePage && !m_readMode && m_editor &&
                                       m_editor->mascotSeed() != 0);
 }
 
@@ -1464,6 +1514,7 @@ void MainWindow::openMascotGallery() {
 
 void MainWindow::buildActions() {
     m_gearMenu = new QMenu(this);
+    m_gearMenu->setObjectName(QStringLiteral("gearMenu"));
 
     // Build each action; addAction() on the window keeps its shortcut live
     // without a menubar. The menu itself is assembled in a fixed order below.
@@ -1478,6 +1529,7 @@ void MainWindow::buildActions() {
     };
     auto *settings = make(tr("Settings…"), QKeySequence(Qt::CTRL | Qt::Key_Comma),
                           &MainWindow::openSettings);
+    settings->setObjectName(QStringLiteral("settingsAction"));
     auto *manual = make(tr("Manual"), {}, &MainWindow::openManual);
     auto *update = make(tr("Check for Updates…"), {}, &MainWindow::checkForUpdates);
     auto *toggleSide = make(tr("Toggle Sidebar"),
@@ -1525,14 +1577,24 @@ void MainWindow::buildActions() {
     // Context menus hide shortcut labels by default; show this one (the editor's
     // right-click menu offers Delete Note).
     m_deleteAction->setShortcutVisibleInContextMenu(true);
-    auto *findHere = make(tr("Find in Note…"), QKeySequence(QKeySequence::Find),
-                          &MainWindow::openFindInFile);
+    m_findAction = make(tr("Find in Note…"), QKeySequence(QKeySequence::Find),
+                        &MainWindow::openFindInFile);
     auto *search = make(tr("Search Vault…"),
                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F),
                         &MainWindow::openSearch);
     auto *brokenLinks = make(tr("Broken Links…"),
                              QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B),
                              &MainWindow::openBrokenLinks);
+    m_graphAction = make(tr("Graph View"),
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G),
+                         &MainWindow::openGraphView);
+    m_graphAction->setObjectName(QStringLiteral("graphViewAction"));
+    m_graphAction->setToolTip(tr("Graph View  (Ctrl+Shift+G)"));
+    m_graphAction->setEnabled(false);
+    m_localGraphAction =
+        make(tr("Local Graph"), {}, &MainWindow::openLocalGraphView);
+    m_localGraphAction->setObjectName(QStringLiteral("localGraphAction"));
+    m_localGraphAction->setEnabled(false);
     m_readModeAction = new QAction(tr("Read Mode"), this);
     m_readModeAction->setCheckable(true);
     m_readModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
@@ -1595,7 +1657,7 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(m_saveAction);
     m_gearMenu->addAction(m_deleteAction);
     m_gearMenu->addSeparator();
-    m_gearMenu->addAction(findHere);
+    m_gearMenu->addAction(m_findAction);
     m_gearMenu->addAction(search);
     m_gearMenu->addAction(brokenLinks);
     m_gearMenu->addSeparator();
@@ -1620,8 +1682,10 @@ void MainWindow::buildActions() {
     // Browser-style Alt+Arrow (Ctrl+[ / Ctrl+] were dropped — they're
     // indent/outdent in most editors).
     m_backAction = new QAction(this);
+    m_backAction->setObjectName(QStringLiteral("backAction"));
     m_backAction->setIcon(makeNavArrow(true));
     m_forwardAction = new QAction(this);
+    m_forwardAction->setObjectName(QStringLiteral("forwardAction"));
     m_forwardAction->setIcon(makeNavArrow(false));
 #ifdef Q_OS_MACOS
     // On macOS ⌥+Arrow is a text-editing key the QAction shortcut never receives
@@ -1706,7 +1770,8 @@ bool MainWindow::ensureVaultWritable() {
 
 void MainWindow::updateReadModeUi() {
     const bool hasVault = m_vault != nullptr;
-    const bool writable = hasVault && !m_readMode;
+    const bool notePage = m_activePage == PageLocation::Kind::Note;
+    const bool writable = hasVault && !m_readMode && notePage;
 
     if (m_editor)
         m_editor->setReadMode(m_readMode);
@@ -1718,6 +1783,12 @@ void MainWindow::updateReadModeUi() {
         m_readModeAction->setEnabled(hasVault);
         m_readModeAction->blockSignals(false);
     }
+    if (m_graphAction)
+        m_graphAction->setEnabled(hasVault);
+    if (m_localGraphAction)
+        m_localGraphAction->setEnabled(hasVault && !m_currentPath.isEmpty());
+    if (m_findAction)
+        m_findAction->setEnabled(hasVault && notePage);
     if (m_newNoteAction)
         m_newNoteAction->setEnabled(writable);
     if (m_renameAction)
@@ -1763,9 +1834,33 @@ void MainWindow::updateMobileNavigationControls() {
         m_mobileEditorBar->setVisible(m_mobileLayout);
     if (m_mobileEditorButton) {
         m_mobileEditorButton->setVisible(m_mobileLayout);
-        m_mobileEditorButton->setEnabled(!m_currentPath.isEmpty() ||
-                                         !m_pendingNoteDir.isEmpty());
+        m_mobileEditorButton->setEnabled(
+            m_activePage != PageLocation::Kind::Note ||
+            !m_currentPath.isEmpty() || !m_pendingNoteDir.isEmpty());
     }
+}
+
+void MainWindow::updateSplitterHandleWidth() {
+    if (!m_splitter)
+        return;
+    const bool graphActive = m_activePage != PageLocation::Kind::Note;
+    if (m_splitter->property("graphActive").toBool() != graphActive) {
+        m_splitter->setProperty("graphActive", graphActive);
+        // Dynamic properties do not automatically repolish existing widgets.
+        // Refresh only this splitter so the gap-free graph handle and the
+        // wider note-page drag target switch immediately during navigation.
+        m_splitter->style()->unpolish(m_splitter);
+        m_splitter->style()->polish(m_splitter);
+    }
+    if (m_mobileLayout)
+        m_splitter->setHandleWidth(0);
+    else if (m_activePage == PageLocation::Kind::Note)
+        m_splitter->setHandleWidth(kDesktopSplitterHandleWidth);
+    else
+        // Graph View paints edge-to-edge. Its handle is exactly as wide as the
+        // divider, so no transparent gutter remains beside its canvas even
+        // while the sidebar is fully collapsed.
+        m_splitter->setHandleWidth(kGraphSplitterHandleWidth);
 }
 
 void MainWindow::showMobileNotes() {
@@ -1782,14 +1877,17 @@ void MainWindow::showMobileNotes() {
 void MainWindow::showMobileEditor() {
     if (!m_mobileLayout)
         return;
-    if (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()) {
+    if (m_activePage == PageLocation::Kind::Note && m_currentPath.isEmpty() &&
+        m_pendingNoteDir.isEmpty()) {
         showMobileNotes();
         return;
     }
     m_mobileShowingNotes = false;
     updateMobileNavigationControls();
     applyMobileSplit();
-    if (m_currentPath.isEmpty())
+    if (m_activePage != PageLocation::Kind::Note && m_graphPage)
+        m_graphPage->focusGraph();
+    else if (m_currentPath.isEmpty())
         m_titleEdit->setFocus();
     else
         m_editor->setFocus();
@@ -1801,6 +1899,7 @@ void MainWindow::updateResponsiveLayout() {
 
     const bool mobile = width() > 0 && width() <= kMobileBreakpoint;
     if (mobile == m_mobileLayout) {
+        updateSplitterHandleWidth();
         updateMobileNavigationControls();
         applyEditorColumnWidth();
         if (mobile)
@@ -1811,7 +1910,7 @@ void MainWindow::updateResponsiveLayout() {
     if (mobile) {
         m_desktopSplitterSizes = m_splitter->sizes();
         m_mobileLayout = true;
-        m_splitter->setHandleWidth(0);
+        updateSplitterHandleWidth();
         m_splitter->setCollapsible(1, true);
         m_mobileShowingNotes =
             m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty();
@@ -1823,7 +1922,7 @@ void MainWindow::updateResponsiveLayout() {
 
     m_mobileLayout = false;
     updateMobileNavigationControls();
-    m_splitter->setHandleWidth(kDesktopSplitterHandleWidth);
+    updateSplitterHandleWidth();
     m_splitter->setCollapsible(1, false);
     applyEditorColumnWidth();
     if (!m_desktopSplitterSizes.isEmpty())
@@ -1967,6 +2066,20 @@ void MainWindow::openSettings() {
     readModeBox->setToolTip(tr("Shortcut: Ctrl+E"));
     auto *brokenLinksButton = new QPushButton(tr("Review…"), &dlg);
     brokenLinksButton->setToolTip(tr("Shortcut: Ctrl+Shift+B"));
+    auto *graphButtons = new QWidget(&dlg);
+    auto *graphButtonsLayout = new QHBoxLayout(graphButtons);
+    graphButtonsLayout->setContentsMargins(0, 0, 0, 0);
+    graphButtonsLayout->setSpacing(8);
+    auto *openGraphButton = new QPushButton(tr("Open global"), graphButtons);
+    openGraphButton->setObjectName(QStringLiteral("settingsOpenGraph"));
+    openGraphButton->setToolTip(tr("Shortcut: Ctrl+Shift+G"));
+    auto *openLocalGraphButton =
+        new QPushButton(tr("Open local"), graphButtons);
+    openLocalGraphButton->setObjectName(
+        QStringLiteral("settingsOpenLocalGraph"));
+    graphButtonsLayout->addWidget(openGraphButton);
+    graphButtonsLayout->addWidget(openLocalGraphButton);
+    graphButtonsLayout->addStretch();
     folderBox->addItem(tr("(Vault root)"), QString());
     homeBox->addItem(tr("(None)"), QString());
     templatesBox->addItem(tr("(None)"), QString());
@@ -1997,6 +2110,8 @@ void MainWindow::openSettings() {
         readModeBox->setEnabled(false);
         brokenLinksButton->setEnabled(false);
     }
+    openGraphButton->setEnabled(m_vault != nullptr);
+    openLocalGraphButton->setEnabled(m_vault && !m_currentPath.isEmpty());
 
     auto *editorForm =
         addSection(tr("Editor"), tr("Reading comfort and writing column size."));
@@ -2012,6 +2127,7 @@ void MainWindow::openSettings() {
     addSettingRow(vaultForm, tr("Templates folder"), templatesBox);
     addSettingRow(vaultForm, tr("Read mode"), readModeBox);
     addSettingRow(vaultForm, tr("Broken links"), brokenLinksButton);
+    addSettingRow(vaultForm, tr("Graph view"), graphButtons);
 
     auto *mascotForm = addSection(
         tr("Mascot"), tr("Optional automatic mascot generation for notes."));
@@ -2055,8 +2171,18 @@ void MainWindow::openSettings() {
     const int originalWidth = m_editorColumnWidth;
     const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
     bool openBrokenLinksAfterSettings = false;
+    enum class GraphToOpen { None, Global, Local };
+    GraphToOpen graphToOpen = GraphToOpen::None;
     connect(brokenLinksButton, &QPushButton::clicked, &dlg, [&] {
         openBrokenLinksAfterSettings = true;
+        dlg.reject();
+    });
+    connect(openGraphButton, &QPushButton::clicked, &dlg, [&] {
+        graphToOpen = GraphToOpen::Global;
+        dlg.reject();
+    });
+    connect(openLocalGraphButton, &QPushButton::clicked, &dlg, [&] {
+        graphToOpen = GraphToOpen::Local;
         dlg.reject();
     });
     dlg.setFocus(Qt::OtherFocusReason);
@@ -2093,6 +2219,10 @@ void MainWindow::openSettings() {
     }
     if (openBrokenLinksAfterSettings)
         QTimer::singleShot(0, this, &MainWindow::openBrokenLinks);
+    if (graphToOpen == GraphToOpen::Global)
+        QTimer::singleShot(0, this, &MainWindow::openGraphView);
+    else if (graphToOpen == GraphToOpen::Local)
+        QTimer::singleShot(0, this, &MainWindow::openLocalGraphView);
 }
 
 void MainWindow::changeFontSize(int delta) {
@@ -2200,6 +2330,8 @@ void MainWindow::openManual() {
         path = note.path;
         m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, manualText());
+        m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
+        m_linkGraphIndex.updateNote(note.path, note.title, manualText());
         markNoteMetaCurrent(note.path, note.title);
         refreshTree();
     }
@@ -2244,6 +2376,9 @@ void MainWindow::openVaultSwitcher() {
 
 void MainWindow::openVault(const QString &path) {
     saveCurrent();
+    if (m_vault && m_graphPage)
+        VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),
+                                m_graphPage->savedState());
     delete m_vault;
     m_vault = new Vault(path);
     updateVaultTitle();
@@ -2252,6 +2387,13 @@ void MainWindow::openVault(const QString &path) {
     LegacyMascotMigration::run(*m_vault);
     m_vault->scan();
     m_noteMeta = scannedNoteMeta();
+    m_linkGraphIndex.clear();
+    m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
+    if (m_graphPage) {
+        m_graphPage->clearGraph();
+        m_graphPage->restoreState(VaultSettings::value(
+            m_vault->root(), QStringLiteral("graphState")));
+    }
     startIndexRebuild();
 
     m_currentPath.clear();
@@ -2260,6 +2402,8 @@ void MainWindow::openVault(const QString &path) {
     m_lastSavedFingerprint = 0;
     m_history.clear();
     m_histIndex = -1;
+    m_activePage = PageLocation::Kind::Note;
+    showNotePage();
     updateNavActions();
     m_editor->clearFolds(); // drop the previous note's folds before clearing
     m_loading = true;
@@ -2320,36 +2464,56 @@ void MainWindow::startIndexRebuild() {
     }
 
     m_searchIndex.clear();
+    m_linkGraphIndex.clear();
     const QVector<Note> notes = m_vault ? m_vault->notes() : QVector<Note>();
-    if (notes.isEmpty())
+    const QString root = m_vault ? m_vault->root() : QString();
+    m_linkGraphIndex.setNotes(root, notes);
+    if (notes.isEmpty()) {
+        refreshGraphPage();
         return;
+    }
 
     const QPointer<MainWindow> guard(this);
-    QThread *thread = QThread::create([guard, notes, generation] {
-        auto *built = new SearchIndex;
+    QThread *thread = QThread::create([guard, notes, root, generation] {
+        auto *builtSearch = new SearchIndex;
+        auto *builtGraph = new LinkGraphIndex;
+        builtGraph->setNotes(root, notes);
         for (const Note &note : notes) {
             if (QThread::currentThread()->isInterruptionRequested()) {
-                delete built;
+                delete builtSearch;
+                delete builtGraph;
                 return;
             }
-            if (QFileInfo::exists(note.path))
-                built->updateNote(note.path, note.title, readNoteForIndex(note.path));
+            if (QFileInfo::exists(note.path)) {
+                const QString content = readNoteForIndex(note.path);
+                builtSearch->updateNote(note.path, note.title, content);
+                builtGraph->updateNote(note.path, note.title, content);
+            }
         }
         if (!guard) {
-            delete built;
+            delete builtSearch;
+            delete builtGraph;
             return;
         }
         QMetaObject::invokeMethod(
             guard,
-            [guard, built, generation] {
+            [guard, builtSearch, builtGraph, generation] {
                 if (guard && guard->m_indexGeneration == generation) {
-                    guard->m_searchIndex = std::move(*built);
-                    if (!guard->m_currentPath.isEmpty())
+                    guard->m_searchIndex = std::move(*builtSearch);
+                    guard->m_linkGraphIndex = std::move(*builtGraph);
+                    if (!guard->m_currentPath.isEmpty()) {
+                        const QString content = guard->m_editor->toPlainText();
                         guard->m_searchIndex.updateNote(
                             guard->m_currentPath, guard->m_currentTitle,
-                            guard->m_editor->toPlainText());
+                            content);
+                        guard->m_linkGraphIndex.updateNote(
+                            guard->m_currentPath, guard->m_currentTitle,
+                            content);
+                    }
+                    guard->refreshGraphPage();
                 }
-                delete built;
+                delete builtSearch;
+                delete builtGraph;
             },
             Qt::QueuedConnection);
     });
@@ -2448,20 +2612,32 @@ QHash<QString, MainWindow::NoteFileMeta> MainWindow::scannedNoteMeta() const {
 void MainWindow::updateIndexForScannedVault(
     const QHash<QString, NoteFileMeta> &previous) {
     const QHash<QString, NoteFileMeta> current = scannedNoteMeta();
+    m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
     for (const Note &note : m_vault->notes()) {
         const NoteFileMeta meta = current.value(note.path);
         const auto old = previous.constFind(note.path);
         if (old == previous.constEnd() || old.value().title != meta.title ||
             old.value().size != meta.size ||
             old.value().modified != meta.modified) {
-            m_searchIndex.updateNote(note.path, note.title,
-                                     readNoteForIndex(note.path));
+            const QString content = readNoteForIndex(note.path);
+            m_searchIndex.updateNote(note.path, note.title, content);
+            m_linkGraphIndex.updateNote(note.path, note.title, content);
         }
     }
     for (auto it = previous.constBegin(); it != previous.constEnd(); ++it)
-        if (!current.contains(it.key()))
+        if (!current.contains(it.key())) {
             m_searchIndex.removeNote(it.key());
+            m_linkGraphIndex.removeNote(it.key());
+        }
     m_noteMeta = current;
+    refreshGraphPage();
+}
+
+void MainWindow::refreshGraphPage() {
+    if (!m_graphPage || m_activePage == PageLocation::Kind::Note)
+        return;
+    m_graphPage->setSnapshot(m_linkGraphIndex.snapshot());
+    m_graphPage->setCurrentPath(m_currentPath);
 }
 
 void MainWindow::markNoteMetaCurrent(const QString &path, const QString &title) {
@@ -2475,6 +2651,8 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
                                 bool saveBeforeOpen) {
     if (!m_vault || path.isEmpty())
         return;
+    if (record)
+        captureCurrentPageState();
     if (!QFileInfo::exists(path)) {
         // A stale target (e.g. a note deleted outside the app but still in the
         // nav history): drop dangling entries and bail, rather than read an
@@ -2511,7 +2689,8 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     selectInTree(path);
     QSettings().setValue(QStringLiteral("lastNote"), path); // reopen on launch
     if (record)
-        pushHistory(path);
+        pushHistory({PageLocation::Kind::Note, path});
+    showNotePage();
     updateNavActions();
 
     // Always restore the caret to where it last sat in this note (remembered in
@@ -2535,6 +2714,71 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     MarkdownEditor *ed = m_editor;
     QTimer::singleShot(0, ed, [ed] { ed->centerCursor(); });
     refreshMascot(); // mirror this note's inline seed (the editor parsed it on load)
+    if (m_mobileLayout)
+        showMobileEditor();
+}
+
+void MainWindow::showNotePage() {
+    m_activePage = PageLocation::Kind::Note;
+    updateSplitterHandleWidth();
+    if (m_pageStack && m_notePage)
+        m_pageStack->setCurrentWidget(m_notePage);
+    if (m_findBar)
+        m_findBar->setVisible(false);
+    refreshMascot();
+    updateReadModeUi();
+}
+
+void MainWindow::openGraphView() {
+    showGraphView(false, QString(), true, true);
+}
+
+void MainWindow::openLocalGraphView() {
+    if (m_currentPath.isEmpty()) {
+        notify(tr("Open a note to view its local graph"), 2200);
+        return;
+    }
+    showGraphView(true, m_currentPath, true, true);
+}
+
+void MainWindow::showGraphView(bool local, const QString &rootPath, bool record,
+                               bool saveBeforeOpen) {
+    if (!m_vault || !m_graphPage)
+        return;
+    if (record)
+        captureCurrentPageState();
+    if (saveBeforeOpen)
+        saveCurrent();
+
+    const QString root = local ? (rootPath.isEmpty() ? m_currentPath : rootPath)
+                               : QString();
+    if (local && root.isEmpty()) {
+        notify(tr("Open a note to view its local graph"), 2200);
+        return;
+    }
+
+    m_activePage = local ? PageLocation::Kind::LocalGraph
+                         : PageLocation::Kind::GlobalGraph;
+    updateSplitterHandleWidth();
+    m_graphPage->setSnapshot(m_linkGraphIndex.snapshot());
+    if (local)
+        m_graphPage->openLocal(root);
+    else
+        m_graphPage->openGlobal(m_currentPath);
+    if (m_pageStack)
+        m_pageStack->setCurrentWidget(m_graphPage);
+    if (m_findBar)
+        m_findBar->hide();
+    if (m_mascot)
+        m_mascot->hide();
+    if (record)
+        pushHistory({m_activePage, root});
+    selectInTree(local ? root : QString());
+    setWindowTitle(local
+                       ? QStringLiteral("Emerald — Local Graph")
+                       : QStringLiteral("Emerald — Graph"));
+    updateReadModeUi();
+    updateNavActions();
     if (m_mobileLayout)
         showMobileEditor();
 }
@@ -2572,19 +2816,25 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     m_currentPath = newPath;
     m_currentTitle = newTitle;
     watchCurrent(); // follow the file to its new name
-    for (QString &p : m_history)
-        if (p == oldPath)
-            p = newPath;
+    for (PageLocation &location : m_history)
+        if (location.path == oldPath)
+            location.path = newPath;
     if (m_cursorPositions.contains(oldPath))
         m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
     m_searchIndex.renamePath(oldPath, newPath);
     m_searchIndex.updateNote(newPath, newTitle, m_editor->toPlainText());
+    m_linkGraphIndex.renamePath(oldPath, newPath, newTitle);
+    m_linkGraphIndex.updateNote(newPath, newTitle, m_editor->toPlainText());
     m_noteMeta.remove(oldPath);
     markNoteMetaCurrent(newPath, newTitle);
     for (const QString &p : changedLinks) {
-        m_searchIndex.updateNote(p, Vault::titleFromPath(p), m_vault->read(p));
+        const QString content = m_vault->read(p);
+        m_searchIndex.updateNote(p, Vault::titleFromPath(p), content);
+        m_linkGraphIndex.updateNote(p, Vault::titleFromPath(p), content);
         markNoteMetaCurrent(p, Vault::titleFromPath(p));
     }
+    m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
+    refreshGraphPage();
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
     notify(tr("Renamed to “%1”").arg(newTitle), 3000);
@@ -2618,13 +2868,15 @@ void MainWindow::saveCurrent() {
         m_editor->sourceDocument()->setModified(false);
         m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, content);
+        m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
+        m_linkGraphIndex.updateNote(note.path, note.title, content);
         markNoteMetaCurrent(note.path, note.title);
         refreshTree();
         watchCurrent();
         selectInTree(note.path);
         setWindowTitle(QStringLiteral("Emerald — %1").arg(title));
         QSettings().setValue(QStringLiteral("lastNote"), note.path);
-        pushHistory(note.path);
+        pushHistory({PageLocation::Kind::Note, note.path});
         updateNavActions();
         notify(tr("Created “%1”").arg(title), 2000);
         return;
@@ -2641,6 +2893,8 @@ void MainWindow::saveCurrent() {
     m_lastSavedFingerprint = fingerprint;
     m_editor->sourceDocument()->setModified(false);
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, content);
+    m_linkGraphIndex.updateNote(m_currentPath, m_currentTitle, content);
+    refreshGraphPage();
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
 }
 
@@ -2736,6 +2990,8 @@ void MainWindow::syncOpenNoteFromDisk() {
     m_loading = false;
     m_lastSavedFingerprint = diskFingerprint;
     m_searchIndex.updateNote(m_currentPath, m_currentTitle, disk);
+    m_linkGraphIndex.updateNote(m_currentPath, m_currentTitle, disk);
+    refreshGraphPage();
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
 
     QTextCursor c = m_editor->sourceTextCursor();
@@ -2798,6 +3054,8 @@ void MainWindow::onLinkClicked(const QString &target) {
         // tree and wiki-link completion list.
         m_vault->scan();
         m_searchIndex.updateNote(note.path, note.title, content);
+        m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
+        m_linkGraphIndex.updateNote(note.path, note.title, content);
         markNoteMetaCurrent(note.path, note.title);
         refreshTree();
         path = note.path;
@@ -2806,56 +3064,89 @@ void MainWindow::onLinkClicked(const QString &target) {
 }
 
 void MainWindow::navigateBack() {
+    captureCurrentPageState();
     if (hasUnsavedDraft()) {
         if (m_histIndex >= 0 && m_histIndex < m_history.size())
-            openNoteByPath(m_history.at(m_histIndex), false, false);
+            openHistoryLocation(m_history.at(m_histIndex), false);
         return;
     }
     if (m_histIndex > 0) {
         --m_histIndex;
-        openNoteByPath(m_history.at(m_histIndex), false);
+        openHistoryLocation(m_history.at(m_histIndex));
     }
 }
 
 void MainWindow::navigateForward() {
+    captureCurrentPageState();
     if (hasUnsavedDraft()) {
         if (m_histIndex >= 0 && m_histIndex < m_history.size() - 1) {
             ++m_histIndex;
-            openNoteByPath(m_history.at(m_histIndex), false, false);
+            openHistoryLocation(m_history.at(m_histIndex), false);
         }
         return;
     }
     if (m_histIndex >= 0 && m_histIndex < m_history.size() - 1) {
         ++m_histIndex;
-        openNoteByPath(m_history.at(m_histIndex), false);
+        openHistoryLocation(m_history.at(m_histIndex));
     }
+}
+
+void MainWindow::openHistoryLocation(const PageLocation &location,
+                                     bool saveBeforeOpen) {
+    if (location.kind == PageLocation::Kind::Note)
+        openNoteByPath(location.path, false, saveBeforeOpen);
+    else {
+        showGraphView(location.kind == PageLocation::Kind::LocalGraph,
+                      location.path, false, saveBeforeOpen);
+        if (m_graphPage && !location.viewState.isEmpty())
+            m_graphPage->restoreSessionState(location.viewState);
+    }
+}
+
+void MainWindow::captureCurrentPageState() {
+    if (!m_graphPage || !m_pageStack ||
+        m_pageStack->currentWidget() != m_graphPage || m_histIndex < 0 ||
+        m_histIndex >= m_history.size())
+        return;
+    PageLocation &location = m_history[m_histIndex];
+    location.kind = m_graphPage->isLocal()
+                        ? PageLocation::Kind::LocalGraph
+                        : PageLocation::Kind::GlobalGraph;
+    location.path = m_graphPage->isLocal() ? m_graphPage->localRoot()
+                                           : QString();
+    location.viewState = m_graphPage->sessionState();
+    m_activePage = location.kind;
 }
 
 bool MainWindow::hasUnsavedDraft() const {
     return m_currentPath.isEmpty() && !m_pendingNoteDir.isEmpty();
 }
 
-void MainWindow::pushHistory(const QString &path) {
-    if (m_histIndex >= 0 && m_history.at(m_histIndex) == path)
+void MainWindow::pushHistory(const PageLocation &location) {
+    if (m_histIndex >= 0 && m_history.at(m_histIndex) == location)
         return; // re-opening the current note shouldn't add an entry
     while (m_history.size() > m_histIndex + 1)
         m_history.removeLast(); // opening a note drops the forward branch
-    m_history.append(path);
+    m_history.append(location);
     m_histIndex = m_history.size() - 1;
 }
 
 void MainWindow::pruneHistory() {
     // The note the index currently points at; we keep the index on it if it
     // survives the prune (so deleting a *different* note doesn't move our spot).
-    const QString current = (m_histIndex >= 0 && m_histIndex < m_history.size())
-                                ? m_history.at(m_histIndex)
-                                : QString();
+    const PageLocation current =
+        (m_histIndex >= 0 && m_histIndex < m_history.size())
+            ? m_history.at(m_histIndex)
+            : PageLocation{};
     m_history.erase(
         std::remove_if(m_history.begin(), m_history.end(),
-                       [](const QString &p) { return !QFileInfo::exists(p); }),
+                       [](const PageLocation &location) {
+                           return location.kind !=
+                                      PageLocation::Kind::GlobalGraph &&
+                                  !QFileInfo::exists(location.path);
+                       }),
         m_history.end());
-    m_histIndex = current.isEmpty() ? m_history.size() - 1
-                                    : m_history.lastIndexOf(current);
+    m_histIndex = m_history.lastIndexOf(current);
     if (m_histIndex < 0)
         m_histIndex = m_history.size() - 1;
     updateNavActions();
@@ -3277,6 +3568,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     } else if (watched == m_centerPane && event->type() == QEvent::Resize) {
         if (m_mascot && m_mascot->isVisible())
             positionMascot();
+        if (m_toast && m_toast->isVisible())
+            positionToast();
     } else if (watched == m_splitHandle) {
         // A click (press + release without a drag) toggles the sidebar; a real
         // drag is left to the splitter.
@@ -3345,26 +3638,28 @@ void MainWindow::onTreeContextMenu(const QPoint &pos) {
         menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
     QAction *newFolder = menu.addAction(
         tr("New Folder"), this, [this, dir] { newFolderIn(dir); });
-    newNote->setEnabled(!m_readMode);
-    newFolder->setEnabled(!m_readMode);
+    const bool writablePage = !m_readMode &&
+                              m_activePage == PageLocation::Kind::Note;
+    newNote->setEnabled(writablePage);
+    newFolder->setEnabled(writablePage);
     if (bulk) {
         menu.addSeparator();
         QAction *remove = menu.addAction(
             tr("Delete %1 Items").arg(selPaths.size()), this,
             [this, selPaths] { deleteEntries(selPaths); });
-        remove->setEnabled(!m_readMode);
+        remove->setEnabled(writablePage);
     } else if (!notePath.isEmpty()) {
         menu.addSeparator();
         QAction *remove = menu.addAction(
             tr("Delete Note"), this,
             [this, notePath] { deleteEntries({notePath}); });
-        remove->setEnabled(!m_readMode);
+        remove->setEnabled(writablePage);
     } else if (!folderPath.isEmpty()) {
         menu.addSeparator();
         QAction *remove = menu.addAction(
             tr("Delete Folder"), this,
             [this, folderPath] { deleteEntries({folderPath}); });
-        remove->setEnabled(!m_readMode);
+        remove->setEnabled(writablePage);
     }
     menu.exec(m_noteTree->viewport()->mapToGlobal(pos));
 }
@@ -3436,7 +3731,12 @@ void MainWindow::reconcileAfterDeletion() {
             fallback = p;
     }
     if (fallback.isEmpty() && !m_history.isEmpty())
-        fallback = m_history.last();
+        for (auto it = m_history.crbegin(); it != m_history.crend(); ++it)
+            if (it->kind == PageLocation::Kind::Note &&
+                QFileInfo::exists(it->path)) {
+                fallback = it->path;
+                break;
+            }
     if (!fallback.isEmpty())
         openNoteByPath(fallback);
     else {
@@ -3553,9 +3853,13 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
                 const QString mapped = p == srcPath ? newPath
                                                     : newPath + p.mid(srcPath.length());
                 m_searchIndex.renamePath(p, mapped, Vault::titleFromPath(mapped));
+                m_linkGraphIndex.renamePath(p, mapped,
+                                            Vault::titleFromPath(mapped));
             }
         } else {
             m_searchIndex.renamePath(srcPath, newPath, Vault::titleFromPath(newPath));
+            m_linkGraphIndex.renamePath(srcPath, newPath,
+                                        Vault::titleFromPath(newPath));
         }
         // Follow the open note / history if they lived in what just moved.
         auto remap = [&](QString &p) {
@@ -3565,8 +3869,8 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
                 p = newPath + p.mid(srcPath.length());
         };
         remap(m_currentPath);
-        for (QString &p : m_history)
-            remap(p);
+        for (PageLocation &location : m_history)
+            remap(location.path);
         if (m_cursorPositions.contains(srcPath))
             m_cursorPositions[newPath] = m_cursorPositions.take(srcPath);
         ++moved;
@@ -3578,8 +3882,10 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
     watchCurrent(); // the open note may have moved with it
 
     m_vault->scan();
+    m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
     m_noteMeta = scannedNoteMeta();
     refreshTree();
+    refreshGraphPage();
     if (!m_currentPath.isEmpty()) {
         setWindowTitle(
             QStringLiteral("Emerald — %1").arg(Vault::titleFromPath(m_currentPath)));
@@ -3599,11 +3905,16 @@ void MainWindow::newFolderIn(const QString &dir) {
         return;
     }
     m_vault->scan();
+    m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
     refreshTree();
+    refreshGraphPage();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
     saveCurrent();
+    if (m_vault && m_graphPage)
+        VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),
+                                m_graphPage->savedState());
     saveCursorPositions(); // remember caret positions for the next launch
     if (m_mobileLayout && !m_desktopSplitterSizes.isEmpty()) {
         const QList<int> mobileSizes = m_splitter->sizes();
