@@ -1296,7 +1296,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
         return;
 
     stopSmoothScroll();
-    const qreal scrollRatio = currentScrollRatio();
+    const ScrollAnchor scrollAnchor = captureScrollAnchor();
     if (enabled) {
         m_sourceCursor = textCursor();
         m_editCursorWidth = qMax(1, cursorWidth());
@@ -1326,7 +1326,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
         // part of resetting its control. Presentation is derived state, never
         // a saveable edit, so normalize that Qt bookkeeping immediately.
         m_readDocument->setModified(false);
-        restoreScrollRatio(scrollRatio);
+        restoreScrollAnchor(scrollAnchor);
     } else {
         if (m_readCursorChanged) {
             m_sourceCursor = MarkdownReadRenderer::mapToSourceCursor(
@@ -1352,7 +1352,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
             m_highlighter->rehighlight();
         applyVisualBlockFormats();
         updateMascotLineState();
-        restoreScrollRatio(scrollRatio);
+        restoreScrollAnchor(scrollAnchor);
         // Release the rendered text promptly; edit mode keeps only the small
         // empty document shell until Read Mode is entered again.
         m_readDocument->clear();
@@ -1360,6 +1360,84 @@ void MarkdownEditor::setReadMode(bool enabled) {
     }
     viewport()->setCursor(Qt::IBeamCursor);
     viewport()->update();
+}
+
+MarkdownEditor::ScrollAnchor MarkdownEditor::captureScrollAnchor() const {
+    ScrollAnchor anchor;
+    anchor.fallbackRatio = currentScrollRatio();
+    if (!m_sourceDocument || !document())
+        return anchor;
+
+    // Anchor the visual line crossing the top of the viewport, not merely its
+    // block. A long list item can wrap differently after its Markdown marker
+    // is replaced in Read Mode; retaining the exact mapped character prevents
+    // that reflow from advancing to a neighbouring row on every round trip.
+    QTextCursor visible = cursorForPosition(
+        QPoint(qMax(0, viewport()->width() / 2), 0));
+    if (visible.isNull())
+        return anchor;
+    visible.clearSelection();
+
+    QTextCursor source = visible;
+    if (document() == m_readDocument) {
+        source = MarkdownReadRenderer::mapToSourceCursor(m_sourceDocument,
+                                                         visible);
+    }
+    if (source.isNull())
+        return anchor;
+
+    anchor.sourcePosition = qBound(
+        0, source.position(), qMax(0, m_sourceDocument->characterCount() - 1));
+    anchor.viewportOffset = cursorRect(visible).top();
+    return anchor;
+}
+
+void MarkdownEditor::restoreScrollAnchor(const ScrollAnchor &anchor) {
+    QTextDocument *const expected = document();
+    const quint64 generation = ++m_scrollRestoreGeneration;
+    const auto restore = [this, anchor, expected, generation] {
+        if (document() != expected ||
+            generation != m_scrollRestoreGeneration)
+            return;
+        if (anchor.sourcePosition < 0 || !m_sourceDocument) {
+            const qreal ratio = qBound(0.0, anchor.fallbackRatio, 1.0);
+            verticalScrollBar()->setValue(
+                qRound(ratio * verticalScrollBar()->maximum()));
+            m_smoothScrollTarget = verticalScrollBar()->value();
+            return;
+        }
+
+        QTextCursor source(m_sourceDocument);
+        source.setPosition(qBound(
+            0, anchor.sourcePosition,
+            qMax(0, m_sourceDocument->characterCount() - 1)));
+        const QTextCursor target = document() == m_readDocument
+                                       ? MarkdownReadRenderer::mapToReadCursor(
+                                             m_readDocument, source)
+                                       : source;
+        if (target.isNull() || !target.block().isValid() ||
+            !target.block().isVisible()) {
+            const qreal ratio = qBound(0.0, anchor.fallbackRatio, 1.0);
+            verticalScrollBar()->setValue(
+                qRound(ratio * verticalScrollBar()->maximum()));
+            m_smoothScrollTarget = verticalScrollBar()->value();
+            return;
+        }
+
+        // cursorRect() is viewport-relative. Applying its delta to the current
+        // scrollbar value avoids depending on QTextDocument's internal content
+        // offset and keeps the same mapped character at the same pixel.
+        const qreal currentOffset = cursorRect(target).top();
+        verticalScrollBar()->setValue(qRound(verticalScrollBar()->value() +
+                                             currentOffset -
+                                             anchor.viewportOffset));
+        m_smoothScrollTarget = verticalScrollBar()->value();
+    };
+    restore();
+    // QTextDocument lays out lazily after setDocument(). Repeat once after the
+    // event loop so a newly established scrollbar range cannot displace the
+    // anchor. The document guard makes rapid mode toggles cancel stale work.
+    QTimer::singleShot(0, this, restore);
 }
 
 qreal MarkdownEditor::currentScrollRatio() const {
@@ -1374,8 +1452,10 @@ void MarkdownEditor::restoreScrollRatio(qreal ratio) {
         return;
     ratio = qBound(0.0, ratio, 1.0);
     QTextDocument *expected = document();
-    const auto restore = [this, ratio, expected] {
-        if (document() != expected)
+    const quint64 generation = ++m_scrollRestoreGeneration;
+    const auto restore = [this, ratio, expected, generation] {
+        if (document() != expected ||
+            generation != m_scrollRestoreGeneration)
             return;
         verticalScrollBar()->setValue(
             qRound(ratio * verticalScrollBar()->maximum()));

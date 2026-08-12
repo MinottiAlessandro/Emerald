@@ -128,6 +128,12 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+    struct ScrollAnchor {
+        int sourcePosition = -1;
+        qreal viewportOffset = 0.0;
+        qreal fallbackRatio = 0.0;
+    };
+
     void updateActiveHighlight();
     QTextDocument *createReadDocument();
     void rebuildReadDocument(qreal scrollRatio = -1.0);
@@ -138,6 +144,8 @@ private:
     // remove == only when every selected word is highlighted; otherwise fill
     // every missing portion. Returns false when there is no eligible text.
     bool toggleReadHighlight();
+    ScrollAnchor captureScrollAnchor() const;
+    void restoreScrollAnchor(const ScrollAnchor &anchor);
     qreal currentScrollRatio() const;
     void restoreScrollRatio(qreal ratio);
     QTextCharFormat readObjectFormat(const QTextBlock &block) const;
@@ -340,6 +348,7 @@ private:
     int m_pendingVisualFormatEnd = -1;
     bool m_readMode = false;        // rendered document; task toggles allowed
     int m_editCursorWidth = 1;      // restored when leaving Read Mode
+    quint64 m_scrollRestoreGeneration = 0; // cancels stale deferred anchors
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
     quint64 m_mascotSeed = 0;    // last seen mascot seed, to detect changes
     QString m_mascotKind;        // last seen kind, so a kind-only change emits too

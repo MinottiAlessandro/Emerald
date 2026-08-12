@@ -1065,6 +1065,69 @@ int main(int argc, char **argv) {
                 QPoint(qMax(1, boundedMarker.left() - 8),
                        boundedMarker.center().y()));
 
+    // Edit and Read Mode use different fonts and marker widths, so a list can
+    // wrap into different visual lines in the two documents. Preserve the
+    // exact source character crossing the viewport top instead of a scrollbar
+    // ratio; repeated round trips must not accumulate vertical rounding drift.
+    {
+        MarkdownEditor driftEditor;
+        driftEditor.resize(260, 180);
+        driftEditor.show();
+        QStringList rows;
+        for (int i = 0; i < 90; ++i) {
+            const QString indent(i % 4 == 0 ? 4 : (i % 3 == 0 ? 2 : 0),
+                                 QLatin1Char(' '));
+            rows << QStringLiteral("%1- Item %2 with deliberately varied text "
+                                   "that wraps differently across modes %3")
+                        .arg(indent)
+                        .arg(i)
+                        .arg(QString(i % 5, QLatin1Char('x')));
+        }
+        driftEditor.setPlainText(rows.join(QLatin1Char('\n')));
+        settleLayout(driftEditor, driftEditor.document()->lastBlock());
+        driftEditor.verticalScrollBar()->setValue(
+            driftEditor.verticalScrollBar()->maximum() / 2 + 13);
+        QApplication::processEvents();
+
+        QTextCursor editTop = driftEditor.cursorForPosition(
+            QPoint(driftEditor.viewport()->width() / 2, 0));
+        editTop.clearSelection();
+        const int anchoredSourcePosition = editTop.position();
+        const int anchoredViewportOffset = driftEditor.cursorRect(editTop).top();
+
+        driftEditor.setReadMode(true);
+        QApplication::processEvents();
+        QTextCursor sourceAnchor(driftEditor.sourceDocument());
+        sourceAnchor.setPosition(anchoredSourcePosition);
+        const QTextCursor readAnchor = MarkdownReadRenderer::mapToReadCursor(
+            driftEditor.document(), sourceAnchor);
+        check(qAbs(driftEditor.cursorRect(readAnchor).top() -
+                       anchoredViewportOffset) <= 1,
+              QStringLiteral("entering Read Mode on a wrapped bullet list "
+                             "should retain the top visual source anchor"));
+
+        driftEditor.setReadMode(false);
+        QApplication::processEvents();
+        sourceAnchor = QTextCursor(driftEditor.document());
+        sourceAnchor.setPosition(anchoredSourcePosition);
+        check(qAbs(driftEditor.cursorRect(sourceAnchor).top() -
+                       anchoredViewportOffset) <= 1,
+              QStringLiteral("a list Read/Edit round trip should return to the "
+                             "same viewport pixel"));
+
+        for (int i = 0; i < 8; ++i) {
+            driftEditor.setReadMode(true);
+            driftEditor.setReadMode(false);
+        }
+        QApplication::processEvents();
+        sourceAnchor = QTextCursor(driftEditor.document());
+        sourceAnchor.setPosition(anchoredSourcePosition);
+        check(qAbs(driftEditor.cursorRect(sourceAnchor).top() -
+                       anchoredViewportOffset) <= 1,
+              QStringLiteral("rapid list mode switches should not accumulate "
+                             "vertical drift"));
+    }
+
     // Link hit testing now uses the same wrapped-range rectangles as Quick Jump.
     // Clicking blank space after the token must not inherit the nearest cursor.
     editor.resize(230, 220);
