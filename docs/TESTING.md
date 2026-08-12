@@ -2,8 +2,8 @@
 
 A full functional checklist for verifying a build on any machine (Linux ·
 macOS · Windows). Copy this file, tick the boxes, note the OS/version at the
-top. Items marked **★** are 1.4.2 regression checks; **◆** are new in 1.5.0 —
-verify those first on a fresh build.
+top. Items marked **★** or **◆** cover historically high-risk regressions. For
+2.0.0, prioritize Read Mode, Graph View, callouts, tables, lists, and scrolling.
 
 > Environment: OS ____________ · version ____________ · build/tag ____________
 
@@ -99,6 +99,12 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] A symbol command sample (Greek, arrows) renders.
 
 ## 7a. Images
+- [ ] **Insert Image** (`Ctrl+Shift+I`, gear menu, or editor context menu)
+      inserts selected images. A file outside the vault is copied to a unique
+      path under `_attachments`; a file already inside the vault is referenced
+      in place, and the inserted Markdown path is relative to the note.
+- [ ] Pasting image data saves a PNG under `_attachments`; pasting or dropping
+      one or more image files inserts each readable image and skips invalid files.
 - [ ] A standalone local image keeps its aspect ratio and grows/shrinks with the editor viewport without exceeding the viewport-height cap.
 - [ ] Moving the caret onto an image line reveals compact editable Markdown source; moving away restores the preview without an undo step.
 - [ ] A missing image shows a bounded fallback card with its target instead of leaving a large blank area.
@@ -170,6 +176,10 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Read Mode** (`Ctrl+E` or **Settings → Vault → Read mode**) removes the
       caret and renders the current line like the rest of the note. Plain ↑/↓
       smoothly scroll the page by one visual line without moving a text cursor. ◆
+- [ ] On a long list with several wrapped and nested items, scroll to the middle
+      and rapidly toggle Read/Edit Mode at least eight times. The same source
+      line remains at the same viewport height and the page does not accumulate
+      upward or downward drift. ◆
 - [ ] Read Mode strips a first-line callout marker, shows its generated or
       custom title with the type's unique emoji, propagates its background over
       the complete quote group without row gaps, and aligns the card left.
@@ -242,6 +252,7 @@ Verify each fires and that menu items show their shortcut label.
 | New note                           | `Ctrl+N`                       | [ ] |
 | Go to note (quick open)            | `Ctrl+P`                       | [ ] |
 | Insert template                    | `Ctrl+T`                       | [ ] |
+| Insert image attachment            | `Ctrl+Shift+I`                 | [ ] |
 | Save now                           | `Ctrl+S`                       | [ ] |
 | Rename note                        | `F2`                           | [ ] |
 | Delete note                        | `Ctrl+Shift+Backspace`         | [ ] |

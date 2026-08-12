@@ -76,7 +76,7 @@ it opens or installs a download.
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
 - **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).
 - **Folding** on heading sections, fenced blocks, and nested list trees.
-- **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block ordinary edits. Select text and press `Ctrl+Shift+H` to add or remove a persistent `==highlight==`; if any selected word is not highlighted, Emerald fills the gaps, otherwise it removes the selected highlight. Plain ↑/↓ scroll the page while search, links, folding and text selection remain available.
+- **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block ordinary edits. Select text and press `Ctrl+Shift+H` to add or remove a persistent `==highlight==`; if any part of the selection is not highlighted, Emerald fills the gaps, otherwise it removes the selected highlight. Plain ↑/↓ scroll the page while search, links, folding and text selection remain available. Switching between Read and Edit Mode preserves the same source-backed viewport anchor, so even rapidly toggling a wrapped list does not make the page drift.
 
 **Math** *(no dependencies — a small built-in TeX-subset typesetter)*
 - **Inline `$…$`** and **display `$$…$$`** render live in place; a `$$` block can span several lines (open/close on their own lines or carrying content), and the raw source reappears whenever the caret or selection is inside it. Bare dollars (`$5 and $12`) stay literal.
@@ -106,8 +106,9 @@ it opens or installs a download.
 
 **Polish**
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
+- **Responsive layout** — at narrow widths, the folder tree and editor become separate full-width views with compact Notes/Editor navigation and always-available new-note, search, and gear controls.
 - **Adjustable editor font** (family + size, persisted) and **line spacing**; heading sizes scale with the font.
-- **Smooth-scrolling prototype** — mouse-wheel steps ease between pixel positions; high-resolution trackpad deltas remain native and direct, and Read Mode's ↑/↓ movement uses the same pixel-based viewport.
+- **Smooth scrolling** — mouse-wheel steps ease between pixel positions; high-resolution trackpad deltas remain native and direct, and Read Mode's ↑/↓ movement uses the same pixel-based viewport.
 - **Self-updating** — **Check for Updates…** pulls the latest release from GitHub and installs in place on macOS and Linux AppImage builds.
 - **Dark theme**, embedded in the binary.
 
@@ -124,6 +125,7 @@ it opens or installs a download.
 | New note | `Ctrl+N` |
 | Go to note (quick open) | `Ctrl+P` |
 | Insert template | `Ctrl+T` |
+| Insert image attachment | `Ctrl+Shift+I` |
 | Save now | `Ctrl+S` |
 | Rename note | `F2` |
 | Delete note | `Ctrl+Shift+Backspace` |
