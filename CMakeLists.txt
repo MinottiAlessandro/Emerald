@@ -1,10 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(Emerald VERSION 1.6.1 LANGUAGES CXX)
 
-# This long-lived development branch deliberately identifies its binaries in
-# the UI and diagnostics. Keep PROJECT_VERSION numeric for CPack and native
-# bundle metadata; only the version compiled into Emerald carries the suffix.
-set(EMERALD_BUILD_VERSION "${PROJECT_VERSION}-smooth")
+# Keep the version shown in the UI and diagnostics aligned with the package
+# and native bundle metadata.
+set(EMERALD_BUILD_VERSION "${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -115,8 +114,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
 target_include_directories(emerald PRIVATE src)
 target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg)
 emerald_enable_sanitizers(emerald)
-# Surface the branch-specific build version to the app (shown in the sidebar
-# footer). The updater strips its channel suffix before release comparison.
+# Surface the build version to the app (shown in the sidebar footer).
 target_compile_definitions(emerald PRIVATE
   EMERALD_VERSION="${EMERALD_BUILD_VERSION}")
 
