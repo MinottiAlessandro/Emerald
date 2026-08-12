@@ -218,8 +218,13 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
     const QString tag = obj.value(QStringLiteral("tag_name")).toString();
     const QString latest = tag.startsWith(QLatin1Char('v')) ? tag.mid(1) : tag;
     const QString current = QApplication::applicationVersion();
+    // Development builds add a channel suffix (for example "-smooth") so the
+    // UI identifies their origin immediately. Release comparison remains based
+    // on the numeric package version; otherwise QString::toInt would interpret
+    // the suffixed patch component as zero and offer the current release again.
+    const QString currentRelease = current.section(QLatin1Char('-'), 0, 0);
 
-    if (latest.isEmpty() || compareVersions(latest, current) <= 0) {
+    if (latest.isEmpty() || compareVersions(latest, currentRelease) <= 0) {
         QMessageBox::information(
             m_window, tr("Check for Updates"),
             tr("You're on the latest version (v%1).").arg(current));
