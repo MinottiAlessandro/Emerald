@@ -470,8 +470,10 @@ void MarkdownEditor::setPlainText(const QString &text) {
         m_readCursorChanged = false;
         m_sourceDocument->clearUndoRedoStacks();
         m_sourceDocument->setModified(false);
-        if (m_highlighter)
-            m_highlighter->rehighlight();
+        // The source document is hidden in Read Mode. QTextDocument already
+        // notifies QSyntaxHighlighter about the replacement, so forcing a full
+        // synchronous rehighlight here only parses every wiki link a second
+        // time before the rendered document can be shown.
         rebuildReadDocument(0.0);
         updateMascotLineState();
         return;
@@ -1022,9 +1024,11 @@ void MarkdownEditor::setReadMode(bool enabled) {
             m_completer->popup()->hide();
         cancelQuickJump();
         m_readMode = true;
-        updateActiveHighlight();
+        // The source document is about to be detached and remains authoritative
+        // but invisible. Leave its existing highlighter formats alone instead
+        // of synchronously re-parsing the entire note before rendering it.
         if (m_highlighter)
-            m_highlighter->rehighlight();
+            m_highlighter->setSuspended(true);
         rebuildReadDocument();
 
         m_switchingDocuments = true;
@@ -1049,6 +1053,8 @@ void MarkdownEditor::setReadMode(bool enabled) {
         }
         m_readCursorChanged = false;
         m_readMode = false;
+        if (m_highlighter)
+            m_highlighter->setSuspended(false);
         m_switchingDocuments = true;
         setDocument(m_sourceDocument);
         setTextCursor(m_sourceCursor);

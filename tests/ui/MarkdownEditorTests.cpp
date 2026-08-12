@@ -1556,6 +1556,20 @@ int main(int argc, char **argv) {
           QStringLiteral("setPlainText in Read Mode should replace source and "
                          "rebuild the separate presentation document"));
     editor.setReadMode(false);
+    const QTextBlock replacedSourceBlock =
+        editor.document()->findBlockByNumber(1);
+    settleLayout(editor, replacedSourceBlock);
+    check(highlighterFormatAt(
+              replacedSourceBlock,
+              replacedSourceBlock.text().indexOf(QStringLiteral("old")))
+              .fontStrikeOut() &&
+              highlighterFormatAt(
+                  replacedSourceBlock,
+                  replacedSourceBlock.text().indexOf(QStringLiteral("code")))
+                      .foreground()
+                      .color() == QColor(QStringLiteral("#7ee0b0")),
+          QStringLiteral("leaving Read Mode after replacing a note should "
+                         "restore full source highlighting"));
 
     // Swapping documents must not discard the source document's undo stack.
     editor.setPlainText(QStringLiteral("undo survives"));

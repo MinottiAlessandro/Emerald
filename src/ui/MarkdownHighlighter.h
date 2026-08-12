@@ -43,6 +43,11 @@ public:
     // changes so heading sizes track it.
     void setBaseSize(double pt);
 
+    // Read Mode keeps the Markdown source authoritative but hidden. Suspend
+    // parsing while notes are replaced there; resuming followed by rehighlight
+    // restores the complete live-preview formatting before Edit Mode is shown.
+    void setSuspended(bool suspended) { m_suspended = suspended; }
+
 protected:
     void highlightBlock(const QString &text) override;
 
@@ -148,6 +153,7 @@ private:
     int m_selFirst = 0;    // first/last block of the selection (== m_activeBlock
     int m_selLast = 0;     // when there's no selection); math reveals if touched
     double m_baseSize = 12.0;
+    bool m_suspended = false;
 
     QTextCharFormat m_heading;
     QTextCharFormat m_bold;

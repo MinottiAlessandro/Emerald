@@ -298,7 +298,8 @@ void MarkdownHighlighter::rehighlightAround(int blockNumber) {
 void MarkdownHighlighter::setBaseSize(double pt) {
     if (pt > 0 && !qFuzzyCompare(pt, m_baseSize)) {
         m_baseSize = pt;
-        rehighlight();
+        if (!m_suspended)
+            rehighlight();
     }
 }
 
@@ -872,6 +873,11 @@ void MarkdownHighlighter::applyMath(const QString &text, QList<bool> &consumed,
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
+    if (m_suspended) {
+        setCurrentBlockState(StateNormal);
+        return;
+    }
+
     // Inline overlays normally start from the document's default character
     // format. Table rows temporarily replace this with their monospace base.
     m_hasInlineBase = false;

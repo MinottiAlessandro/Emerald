@@ -598,6 +598,28 @@ int main(int argc, char **argv) {
                   editor.render(&p);
               }),
               QStringLiteral("ms"));
+    const QString nextReadDoc = noteBody(
+        4243, qMax(words * 8, 2000), qMax(notes, 4244), profile, QString());
+    addMetric(metrics, QStringLiteral("editor_switch_read_note"),
+              timeMs([&] {
+                  editor.setPlainText(nextReadDoc);
+                  app.processEvents();
+              }),
+              QStringLiteral("ms"));
+    QString wikiDenseReadDoc;
+    wikiDenseReadDoc.reserve(140000);
+    for (int i = 0; i < 2000; ++i) {
+        wikiDenseReadDoc +=
+            QStringLiteral("Navigate through [[Note %1|linked note %1]] and "
+                           "continue reading.\n")
+                .arg(i);
+    }
+    addMetric(metrics, QStringLiteral("editor_switch_read_wiki_dense_note"),
+              timeMs([&] {
+                  editor.setPlainText(wikiDenseReadDoc);
+                  app.processEvents();
+              }),
+              QStringLiteral("ms"));
     editor.setReadMode(false);
     app.processEvents();
     addCurrentRssMetric(QStringLiteral("rss_after_editor_current"));
