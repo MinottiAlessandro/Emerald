@@ -152,7 +152,8 @@ private:
     QRectF imagePreviewArea(const QTextBlock &block) const;
     void applyImagePreviewFormats();
     void applyVisualBlockFormats(int position = 0, int charsChanged = -1);
-    void scheduleVisualBlockFormats(int position, int charsChanged);
+    void scheduleVisualBlockFormats(int position, int charsChanged,
+                                    bool preserveModification = false);
     void smoothScrollBy(qreal pixels, int durationMs = 140);
     void stopSmoothScroll();
     QString linkAt(const QPoint &pos) const;
@@ -321,6 +322,7 @@ private:
     bool m_adjustingScroll = false; // guard the over-scroll range extension
     bool m_applyingVisualBlockFormats = false;
     bool m_visualFormatQueued = false;
+    bool m_pendingVisualPreserveModification = false;
     int m_pendingVisualFormatStart = -1;
     int m_pendingVisualFormatEnd = -1;
     bool m_readMode = false;        // rendered document; task toggles allowed

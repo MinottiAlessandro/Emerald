@@ -1,5 +1,6 @@
 #include "MarkdownEditor.h"
 
+#include "MarkdownCallout.h"
 #include "MarkdownHighlighter.h"
 #include "MarkdownReadObjectRenderer.h"
 #include "MarkdownReadRenderer.h"
@@ -40,6 +41,7 @@
 #include <QTextLayout>
 #include <QTimer>
 #include <QVariantAnimation>
+#include <QVector>
 #include <QWheelEvent>
 #include <QtMath>
 #include <QUrl>
@@ -66,6 +68,13 @@ const QRegularExpression &mdLinkRe() {
 constexpr auto QuickJumpKeys = "QWERTYUIOPASDFGHJKLZXCVBNM";
 constexpr int QuickJumpKeyCount = 26;
 constexpr int QuickJumpHoldMs = 100;
+
+// Derived, presentation-only block properties. Keeping callout ancestry here
+// makes paintEvent O(visible rows), even when the viewport is near the end of a
+// quote containing thousands of source lines.
+constexpr int CalloutTypeProperty = QTextFormat::UserProperty + 520;
+constexpr int CalloutDepthProperty = QTextFormat::UserProperty + 521;
+constexpr int CalloutTitleProperty = QTextFormat::UserProperty + 522;
 
 QString quickJumpHint(int index, int width) {
     QString hint(width, QLatin1Char('Q'));
@@ -252,30 +261,10 @@ ListPrefix listPrefix(const QString &text) {
             (columns + 1) / 2};
 }
 
-struct QuotePrefix {
-    int depth = 0;
-    int contentStart = -1;
-};
+using QuotePrefix = MarkdownCallout::QuotePrefix;
 
 QuotePrefix quotePrefix(const QString &text) {
-    int pos = 0;
-    while (pos < text.size() &&
-           (text.at(pos) == QLatin1Char(' ') ||
-            text.at(pos) == QLatin1Char('\t')))
-        ++pos;
-
-    QuotePrefix result;
-    while (pos < text.size() && text.at(pos) == QLatin1Char('>')) {
-        ++result.depth;
-        ++pos;
-        while (pos < text.size() &&
-               (text.at(pos) == QLatin1Char(' ') ||
-                text.at(pos) == QLatin1Char('\t')))
-            ++pos;
-    }
-    if (result.depth > 0)
-        result.contentStart = pos;
-    return result;
+    return MarkdownCallout::quotePrefix(text);
 }
 
 struct HeadingSpacing {
@@ -448,7 +437,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     });
     connect(document(), &QTextDocument::contentsChange, this,
             [this](int position, int charsRemoved, int charsAdded) {
-                if (m_readMode)
+                if (m_readMode || m_applyingVisualBlockFormats)
                     return;
                 Q_UNUSED(charsRemoved);
                 scheduleVisualBlockFormats(position, qMax(1, charsAdded));
@@ -497,6 +486,11 @@ void MarkdownEditor::setPlainText(const QString &text) {
     applyVisualBlockFormats();
     document()->clearUndoRedoStacks();
     document()->setModified(false);
+    // QTextEdit emitted replacement signals before the synchronous layout pass
+    // above. Any already-queued pass is now presentation-only and must retain
+    // this freshly-reset source state.
+    if (m_visualFormatQueued)
+        m_pendingVisualPreserveModification = true;
 }
 
 void MarkdownEditor::clear() { setPlainText(QString()); }
@@ -606,7 +600,8 @@ void MarkdownEditor::applyLineSpacing() {
         applyVisualBlockFormats();
 }
 
-void MarkdownEditor::scheduleVisualBlockFormats(int position, int charsChanged) {
+void MarkdownEditor::scheduleVisualBlockFormats(int position, int charsChanged,
+                                                bool preserveModification) {
     if (m_readMode)
         return;
     const int start = qMax(0, position);
@@ -615,23 +610,35 @@ void MarkdownEditor::scheduleVisualBlockFormats(int position, int charsChanged) 
                                      ? start
                                      : qMin(m_pendingVisualFormatStart, start);
     m_pendingVisualFormatEnd = qMax(m_pendingVisualFormatEnd, end);
-    if (m_visualFormatQueued)
+    if (m_visualFormatQueued) {
+        m_pendingVisualPreserveModification =
+            m_pendingVisualPreserveModification && preserveModification;
         return;
+    }
 
     m_visualFormatQueued = true;
+    m_pendingVisualPreserveModification = preserveModification;
     QTimer::singleShot(0, this, [this] {
         m_visualFormatQueued = false;
         const int pendingStart = m_pendingVisualFormatStart;
         const int pendingEnd = m_pendingVisualFormatEnd;
+        const bool preserveModification =
+            m_pendingVisualPreserveModification;
         m_pendingVisualFormatStart = -1;
         m_pendingVisualFormatEnd = -1;
+        m_pendingVisualPreserveModification = false;
         // The callback may have been queued by the source document immediately
         // before Read Mode swapped in its presentation document.
         if (m_readMode)
             return;
-        if (pendingStart >= 0)
+        if (pendingStart >= 0) {
+            QTextDocument *const formattedDocument = document();
+            const bool wasModified = formattedDocument->isModified();
             applyVisualBlockFormats(pendingStart,
                                     qMax(1, pendingEnd - pendingStart));
+            if (preserveModification && document() == formattedDocument)
+                formattedDocument->setModified(wasModified);
+        }
     });
 }
 
@@ -653,6 +660,18 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                    position + qMax(1, charsChanged));
     QTextBlock last = document()->findBlock(endPosition);
     if (charsChanged >= 0 && last.next().isValid())
+        last = last.next();
+
+    // A callout title controls every subsequent quote row in its contiguous
+    // group. Recompute that group as one unit after an edit, then cache the
+    // result on each block for constant-time painting.
+    while (first.previous().isValid() &&
+           quotePrefix(first.previous().text()).depth > 0 &&
+           !insideCodeBlock(first.previous()))
+        first = first.previous();
+    while (last.next().isValid() && quotePrefix(last.text()).depth > 0 &&
+           quotePrefix(last.next().text()).depth > 0 &&
+           !insideCodeBlock(last.next()))
         last = last.next();
 
     static const QRegularExpression fenceRe(
@@ -681,6 +700,7 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     const qreal bodyLineHeight = QFontMetricsF(font()).lineSpacing();
     const qreal available =
         qMax(qreal(0), viewport()->width() - document()->documentMargin() * 2);
+    QVector<QString> calloutTypes(1);
     for (QTextBlock block = first; block.isValid(); block = block.next()) {
         const auto fenceMatch = fenceRe.match(block.text());
         const bool insideFence = inFence;
@@ -701,6 +721,34 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
 
         const QuotePrefix quote =
             codeRegion ? QuotePrefix{} : quotePrefix(block.text());
+        if (quote.depth == 0) {
+            calloutTypes.resize(1);
+            calloutTypes[0].clear();
+        } else {
+            calloutTypes.resize(quote.depth + 1);
+        }
+        const int previousCalloutQuoteDepth =
+            block.previous().isValid() && !codeRegion
+                ? quotePrefix(block.previous().text()).depth
+                : 0;
+        const MarkdownCallout::TitleLine calloutTitle =
+            quote.depth > 0
+                ? MarkdownCallout::titleLine(block.text(),
+                                             previousCalloutQuoteDepth)
+                : MarkdownCallout::TitleLine{};
+        if (calloutTitle.valid())
+            calloutTypes[quote.depth] = calloutTitle.type;
+        int calloutDepth = 0;
+        QString calloutType;
+        for (int candidate = quote.depth; candidate > 0; --candidate) {
+            if (!calloutTypes.at(candidate).isEmpty()) {
+                calloutDepth = candidate;
+                calloutType = calloutTypes.at(candidate);
+                break;
+            }
+        }
+        const bool isCalloutTitle =
+            calloutTitle.valid() && calloutTitle.quote.depth == calloutDepth;
         const ListPrefix list = codeRegion || quote.depth > 0
                                     ? ListPrefix{}
                                     : listPrefix(block.text());
@@ -743,7 +791,11 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const qreal leftMargin =
             codeRegion ? codePadding
             : quote.depth > 0
-                ? quote.depth * quoteIndent
+                ? (quote.depth - 1) * quoteIndent +
+                      (block.blockNumber() >= m_visualSelectionFirst &&
+                               block.blockNumber() <= m_visualSelectionLast
+                           ? prefixWidth
+                           : 0.0)
                 : list.valid() ? list.depth * listIndent + markerWidth : 0.0;
         const qreal rightMargin = codeRegion ? codePadding : 0.0;
         const qreal textIndent = codeRegion ? 0.0 : -prefixWidth;
@@ -798,7 +850,13 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                              !qFuzzyCompare(format.topMargin() + 1.0,
                                             topMargin + 1.0) ||
                              !qFuzzyCompare(format.bottomMargin() + 1.0,
-                                            bottomMargin + 1.0);
+                                            bottomMargin + 1.0) ||
+                             format.property(CalloutTypeProperty).toString() !=
+                                 calloutType ||
+                             format.property(CalloutDepthProperty).toInt() !=
+                                 calloutDepth ||
+                             format.property(CalloutTitleProperty).toBool() !=
+                                 isCalloutTitle;
         if (changed) {
             if (!formatEditOpen) {
                 // Paragraph layout is derived from the source edit that caused
@@ -813,6 +871,15 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
             format.setLineHeight(imageLineHeight, lineHeightType);
             format.setTopMargin(topMargin);
             format.setBottomMargin(bottomMargin);
+            if (calloutDepth > 0) {
+                format.setProperty(CalloutTypeProperty, calloutType);
+                format.setProperty(CalloutDepthProperty, calloutDepth);
+                format.setProperty(CalloutTitleProperty, isCalloutTitle);
+            } else {
+                format.clearProperty(CalloutTypeProperty);
+                format.clearProperty(CalloutDepthProperty);
+                format.clearProperty(CalloutTitleProperty);
+            }
             formatCursor.setPosition(block.position());
             formatCursor.setBlockFormat(format);
         }
@@ -1380,7 +1447,8 @@ void MarkdownEditor::updateActiveHighlight() {
         if (first.isValid() && last.isValid())
             scheduleVisualBlockFormats(first.position(),
                                        last.position() + last.length() -
-                                           first.position());
+                                           first.position(),
+                                       true);
     }
 }
 
@@ -3419,12 +3487,13 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         });
     }
 
-    // Quote guides sit behind the document glyphs. Each nesting level gets its
-    // own rail; consecutive quote blocks meet through their paragraph margins
-    // so the quote reads as one visual region rather than unrelated lines.
+    // Quote surfaces and guides sit behind the document glyphs. Callout context
+    // is cached by applyVisualBlockFormats on every row in the quote group, so
+    // painting remains proportional to visible content even in a huge callout.
     {
         QPainter quotePainter(viewport());
         quotePainter.setRenderHint(QPainter::Antialiasing);
+        quotePainter.setFont(font());
         QColor accent = palette().color(QPalette::Highlight);
         if (!accent.isValid())
             accent = QColor(0x2b, 0xbf, 0x74);
@@ -3432,35 +3501,98 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         const qreal quoteIndent = lineHeight * 1.18;
         const qreal documentMargin = document()->documentMargin();
 
+        const auto effectiveQuoteDepth = [this](const QTextBlock &block) {
+            return block.isValid() && !insideCodeBlock(block)
+                       ? quotePrefix(block.text()).depth
+                       : 0;
+        };
         for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
              block = block.next()) {
-            if (!block.isVisible() || insideCodeBlock(block))
+            const int depth = effectiveQuoteDepth(block);
+            if (depth == 0) {
+                if (block.isVisible() &&
+                    blockViewportRect(block).top() > event->rect().bottom())
+                    break;
+                continue;
+            }
+
+            const QTextBlockFormat cachedFormat = block.blockFormat();
+            const int calloutDepth =
+                cachedFormat.property(CalloutDepthProperty).toInt();
+            const QString calloutType =
+                cachedFormat.property(CalloutTypeProperty).toString();
+            const bool isCalloutTitle =
+                cachedFormat.property(CalloutTitleProperty).toBool();
+            const MarkdownCallout::TitleLine title =
+                isCalloutTitle
+                    ? MarkdownCallout::titleLine(
+                          block.text(), effectiveQuoteDepth(block.previous()))
+                    : MarkdownCallout::TitleLine{};
+
+            if (!block.isVisible())
                 continue;
             const QRectF geo = blockViewportRect(block);
             if (geo.top() > event->rect().bottom())
                 break;
             if (geo.bottom() < event->rect().top())
                 continue;
-            const QuotePrefix quote = quotePrefix(block.text());
-            if (quote.depth == 0)
-                continue;
 
-            QColor wash = accent;
-            wash.setAlpha(10);
-            quotePainter.fillRect(
-                QRectF(documentMargin, geo.top(),
-                       qMax(qreal(0), viewport()->width() - documentMargin * 2),
-                       geo.height()),
-                wash);
-            for (int depth = 0; depth < quote.depth; ++depth) {
-                QColor rail = accent;
-                rail.setAlpha(qMax(70, 170 - depth * 35));
-                QPen pen(rail, depth == 0 ? 2.2 : 1.6);
+            const QColor lineAccent = calloutDepth > 0
+                                          ? MarkdownCallout::accent(calloutType)
+                                          : accent;
+            QColor wash = calloutDepth > 0
+                              ? MarkdownCallout::surface(
+                                    calloutType, isCalloutTitle)
+                              : lineAccent;
+            if (calloutDepth == 0)
+                wash.setAlpha(10);
+
+            // Extend a row through the inter-paragraph space before the next
+            // quoted row. This removes the unpainted hairline that otherwise
+            // appears between a callout title and its body.
+            qreal bottom = geo.bottom();
+            const QTextBlock next = block.next();
+            if (effectiveQuoteDepth(next) > 0 && next.isVisible())
+                bottom = qMax(bottom, blockViewportRect(next).top());
+            const qreal surfaceIndent =
+                calloutDepth > 0 ? (calloutDepth - 1) * quoteIndent : 0.0;
+            const QRectF washRect(
+                documentMargin + surfaceIndent,
+                geo.top(),
+                qMax(qreal(0),
+                     viewport()->width() - documentMargin * 2 - surfaceIndent),
+                qMax(qreal(0), bottom - geo.top()));
+            quotePainter.fillRect(washRect, wash);
+
+            for (int railDepth = 0; railDepth < depth; ++railDepth) {
+                QColor rail = lineAccent;
+                rail.setAlpha(qMax(70, 170 - railDepth * 35));
+                QPen pen(rail, railDepth == 0 ? 2.2 : 1.6);
                 pen.setCapStyle(Qt::SquareCap);
                 quotePainter.setPen(pen);
-                const qreal x = documentMargin + depth * quoteIndent + 3.0;
+                // Rails live in the document gutter, leaving top-level quote
+                // text on the same left content edge as an ordinary paragraph.
+                const qreal x =
+                    documentMargin + railDepth * quoteIndent - 2.0;
                 quotePainter.drawLine(QPointF(x, geo.top()),
-                                      QPointF(x, geo.bottom()));
+                                      QPointF(x, bottom));
+            }
+
+            const bool sourceRevealed =
+                block.blockNumber() >= m_visualSelectionFirst &&
+                block.blockNumber() <= m_visualSelectionLast;
+            if (title.valid() && !sourceRevealed) {
+                const QList<QRectF> markerRects = textRangeViewportRects(
+                    block, title.markerStart, 1);
+                if (!markerRects.isEmpty()) {
+                    QRectF iconRect = markerRects.first();
+                    iconRect.setTop(geo.top());
+                    iconRect.setHeight(geo.height());
+                    quotePainter.setPen(lineAccent);
+                    quotePainter.drawText(
+                        iconRect, Qt::AlignLeft | Qt::AlignVCenter,
+                        MarkdownCallout::emoji(title.type));
+                }
             }
         }
     }

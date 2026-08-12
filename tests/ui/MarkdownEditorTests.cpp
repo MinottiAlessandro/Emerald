@@ -1,4 +1,5 @@
 #include "ui/MarkdownEditor.h"
+#include "ui/MarkdownCallout.h"
 #include "ui/MarkdownHighlighter.h"
 #include "ui/MarkdownReadObjectRenderer.h"
 #include "ui/MarkdownReadRenderer.h"
@@ -16,6 +17,7 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QSet>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFragment>
@@ -1124,6 +1126,129 @@ int main(int argc, char **argv) {
                   QStringLiteral("\nafter quote"),
           QStringLiteral("blockquote layout must preserve Markdown source"));
 
+    // An Obsidian callout marker decorates only the first line of a quote
+    // group. Off the active line its source marker melts into a bold title;
+    // custom titles replace the type label and keep the type-specific accent.
+    const QString calloutSource = QStringLiteral(
+        "> [!tip]\n"
+        "> A useful detail\n"
+        "\n"
+        "> [!warning] Read this first\n"
+        "> Be careful\n"
+        "> [!danger] continuation, not a new callout\n"
+        "plain trailing line");
+    editor.setPlainText(calloutSource);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock tipCallout = editor.document()->findBlockByNumber(0);
+    const QTextBlock tipBody = editor.document()->findBlockByNumber(1);
+    const QTextBlock warningCallout = editor.document()->findBlockByNumber(3);
+    const QTextBlock continuationMarker =
+        editor.document()->findBlockByNumber(5);
+    settleLayout(editor, continuationMarker);
+    const QTextCharFormat concealedCalloutOpen =
+        highlighterFormatAt(tipCallout, 2);
+    const QTextCharFormat renderedTip = highlighterFormatAt(tipCallout, 4);
+    const QTextCharFormat warningTitle =
+        highlighterFormatAt(warningCallout,
+                            warningCallout.text().indexOf(
+                                QStringLiteral("Read")));
+    const QTextCharFormat ordinaryContinuation =
+        highlighterFormatAt(continuationMarker, 4);
+    check(concealedCalloutOpen.foreground().color().alpha() == 0 &&
+              concealedCalloutOpen.fontLetterSpacingType() ==
+                  QFont::AbsoluteSpacing &&
+              concealedCalloutOpen.fontLetterSpacing() > 0.0,
+          QStringLiteral("an inactive callout should reserve its [ marker for "
+                         "the rendered emoji"));
+    check(renderedTip.fontWeight() >= QFont::Bold &&
+              !renderedTip.fontItalic() &&
+              renderedTip.foreground().color() ==
+                  MarkdownCallout::accent(QStringLiteral("tip")) &&
+              renderedTip.fontCapitalization() == QFont::Capitalize,
+          QStringLiteral("a marker-only callout should render its type as a "
+                         "decorated title"));
+    check(warningTitle.fontWeight() >= QFont::Bold &&
+              !warningTitle.fontItalic() &&
+              warningTitle.foreground().color() ==
+                  MarkdownCallout::accent(QStringLiteral("warning")),
+          QStringLiteral("a custom callout title should use the warning "
+                         "decoration"));
+    check(ordinaryContinuation.fontItalic() &&
+              ordinaryContinuation.fontWeight() < QFont::Bold,
+          QStringLiteral("a callout-looking marker after the first quote line "
+                         "should remain ordinary quoted text"));
+    check(editor.toPlainText() == calloutSource,
+          QStringLiteral("callout decoration must preserve Markdown source"));
+    check(!editor.document()->isModified(),
+          QStringLiteral("derived callout grouping and palette properties must "
+                         "not mark source modified"));
+    check(qFuzzyIsNull(tipCallout.blockFormat().leftMargin()) &&
+              qFuzzyIsNull(tipBody.blockFormat().leftMargin()),
+          QStringLiteral("a top-level Edit Mode callout should share the normal "
+                         "left content edge"));
+
+    QSet<QString> supportedEmojis;
+    bool everyCalloutHasEmoji = true;
+    for (const QString &type : MarkdownCallout::supportedTypes()) {
+        const QString icon = MarkdownCallout::emoji(type);
+        everyCalloutHasEmoji = everyCalloutHasEmoji && !icon.isEmpty();
+        supportedEmojis.insert(icon);
+    }
+    check(everyCalloutHasEmoji &&
+              supportedEmojis.size() ==
+                  MarkdownCallout::supportedTypes().size(),
+          QStringLiteral("every supported callout type should have a unique "
+                         "emoji"));
+
+    // The editor painter extends each callout row through the paragraph space
+    // before the next. Sample an empty strip on the right from the title's
+    // visual center through the body's center: every pixel must be one of the
+    // two callout surface colors, never the editor background.
+    QImage calloutRender(editor.viewport()->size(),
+                         QImage::Format_ARGB32_Premultiplied);
+    calloutRender.fill(Qt::transparent);
+    editor.viewport()->render(&calloutRender);
+    QTextCursor tipCursor(tipCallout);
+    QTextCursor tipBodyCursor(tipBody);
+    const int titleY = editor.cursorRect(tipCursor).center().y();
+    const int bodyY = editor.cursorRect(tipBodyCursor).center().y();
+    const int sampleX = qMax(0, calloutRender.width() - 20);
+    const QRgb tipTitleSurface =
+        MarkdownCallout::surface(QStringLiteral("tip"), true).rgb();
+    const QRgb tipBodySurface =
+        MarkdownCallout::surface(QStringLiteral("tip"), false).rgb();
+    bool continuousCalloutSurface = bodyY > titleY;
+    for (int y = titleY; y <= bodyY && y < calloutRender.height(); ++y) {
+        const QRgb pixel = calloutRender.pixel(sampleX, y);
+        if (qRgb(qRed(pixel), qGreen(pixel), qBlue(pixel)) != tipTitleSurface &&
+            qRgb(qRed(pixel), qGreen(pixel), qBlue(pixel)) != tipBodySurface) {
+            continuousCalloutSurface = false;
+            break;
+        }
+    }
+    check(continuousCalloutSurface,
+          QStringLiteral("the Edit Mode callout surface should have no gap "
+                         "between its title and body"));
+
+    // Recognition changes immediately when editing the previous line turns a
+    // prospective title into a continuation of the same quote group.
+    editor.setPlainText(QStringLiteral("plain\n> [!tip]"));
+    editor.moveCursor(QTextCursor::Start);
+    QApplication::processEvents();
+    QTextBlock prospectiveCallout = editor.document()->findBlockByNumber(1);
+    check(highlighterFormatAt(prospectiveCallout, 4).fontWeight() >= QFont::Bold,
+          QStringLiteral("a callout after plain text should start a quote group"));
+    QTextCursor makePreviousQuote(editor.document()->firstBlock());
+    makePreviousQuote.insertText(QStringLiteral("> "));
+    QApplication::processEvents();
+    prospectiveCallout = editor.document()->findBlockByNumber(1);
+    check(highlighterFormatAt(prospectiveCallout, 4).fontItalic() &&
+              highlighterFormatAt(prospectiveCallout, 4).fontWeight() <
+                  QFont::Bold,
+          QStringLiteral("changing the previous quote depth should immediately "
+                         "remove continuation-line callout decoration"));
+
     editor.setPlainText(QStringLiteral("```\n> literal quote\n```"));
     const QTextBlock fencedQuote = editor.document()->findBlockByNumber(1);
     const QTextBlock fencedQuoteOpen = editor.document()->firstBlock();
@@ -1178,7 +1303,12 @@ int main(int argc, char **argv) {
         QStringLiteral("A **bold** paragraph with [[Target|wiki label]] and "
                        "[site](https://example.com), plus ==marked== and "
                        "$x^2$."),
+        QStringLiteral("> [!tip]"),
+        QStringLiteral("> A useful callout body"), QString(),
+        QStringLiteral("> [!warning] Read this first"),
+        QStringLiteral("> Be careful"), QString(),
         QStringLiteral("> A quoted paragraph"),
+        QStringLiteral("> [!danger] continuation, not a title"),
         QStringLiteral("- A list item"),
         QStringLiteral("- [x] A completed task"), QStringLiteral("---"),
         QStringLiteral("![Wide preview](wide.png)"),
@@ -1227,12 +1357,21 @@ int main(int argc, char **argv) {
     check(renderedReading.contains(QStringLiteral("Rendered heading")) &&
               renderedReading.contains(QStringLiteral("bold")) &&
               renderedReading.contains(QStringLiteral("wiki label")) &&
+              renderedReading.contains(QStringLiteral("Tip")) &&
+              renderedReading.contains(
+                  MarkdownCallout::emoji(QStringLiteral("tip")) +
+                  QStringLiteral(" Tip")) &&
+              renderedReading.contains(QStringLiteral("Read this first")) &&
+              renderedReading.contains(
+                  QStringLiteral("[!danger] continuation, not a title")) &&
               !renderedReading.contains(QStringLiteral("# Rendered")) &&
               !renderedReading.contains(QStringLiteral("**bold**")) &&
               !renderedReading.contains(QStringLiteral("[[Target")) &&
               !renderedReading.contains(QStringLiteral("```")) &&
               !renderedReading.contains(QStringLiteral("$x^2$")) &&
               !renderedReading.contains(QStringLiteral("$$")) &&
+              !renderedReading.contains(QStringLiteral("[!tip]")) &&
+              !renderedReading.contains(QStringLiteral("[!warning]")) &&
               !renderedReading.contains(QStringLiteral("| :---")),
           QStringLiteral("the Read Mode document should contain presentation "
                          "text without Markdown source markers"));
@@ -1263,6 +1402,42 @@ int main(int argc, char **argv) {
                   editHighlight.foreground(),
           QStringLiteral("Read Mode highlights should use the same foreground "
                          "and background colors as Edit Mode"));
+
+    QTextCursor renderedCallout = editor.document()->find(QStringLiteral("Tip"));
+    renderedCallout.setPosition(renderedCallout.selectionStart());
+    renderedCallout.movePosition(QTextCursor::NextCharacter,
+                                 QTextCursor::KeepAnchor);
+    check(renderedCallout.charFormat().fontWeight() >= QFont::Bold &&
+              !renderedCallout.charFormat().fontItalic() &&
+              renderedCallout.charFormat().foreground().color() ==
+                  MarkdownCallout::accent(QStringLiteral("tip")) &&
+              renderedCallout.blockFormat().background().color() ==
+                  MarkdownCallout::surface(QStringLiteral("tip"), true),
+          QStringLiteral("Read Mode should render a marker-only callout as a "
+                         "bold, tinted title row"));
+    const QTextBlock renderedCalloutTitle = renderedCallout.block();
+    const QTextBlock renderedCalloutBody = renderedCalloutTitle.next();
+    check(renderedCalloutBody.isValid() &&
+              renderedCalloutBody.blockFormat().background().color() ==
+                  MarkdownCallout::surface(QStringLiteral("tip"), false) &&
+              qFuzzyIsNull(renderedCalloutTitle.blockFormat().leftMargin()) &&
+              qFuzzyIsNull(renderedCalloutBody.blockFormat().leftMargin()),
+          QStringLiteral("Read Mode should propagate the callout palette "
+                         "through its body and align the group left"));
+    const QRectF readTitleGeometry =
+        editor.document()->documentLayout()->blockBoundingRect(
+            renderedCalloutTitle);
+    const QRectF readBodyGeometry =
+        editor.document()->documentLayout()->blockBoundingRect(
+            renderedCalloutBody);
+    check(qFuzzyIsNull(renderedCalloutTitle.blockFormat().bottomMargin()) &&
+              qAbs(readTitleGeometry.bottom() - readBodyGeometry.top()) < 0.1,
+          QStringLiteral("Read Mode should leave no unpainted paragraph gap "
+                         "between a callout title and body"));
+    editor.setTextCursor(renderedCallout);
+    check(editor.sourceTextCursor().selectedText() == QStringLiteral("t"),
+          QStringLiteral("a generated callout title should map back to its "
+                         "exact source type"));
 
     bool sawImageObject = false;
     bool sawInlineMathObject = false;

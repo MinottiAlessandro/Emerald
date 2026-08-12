@@ -57,7 +57,12 @@ private:
     // lines). The closing line is StateNormal (like a code block's closing
     // fence), so a region is "StateMath… then a normal line". The editor reads
     // these states to paint the formula and to know which lines to leave alone.
-    enum BlockState { StateNormal = 0, StateCode = 1, StateMath = 2 };
+    enum BlockState {
+        StateNormal = 0,
+        StateCode = 1,
+        StateMath = 2,
+        StateQuoteBase = 100
+    };
 
     // Inline emphasis that *accumulates*: a character can be bold and italic and
     // struck and highlighted at once (nested markers like ==a ~~b *c **d***~~==).
@@ -161,6 +166,7 @@ private:
     QTextCharFormat m_highlight;
     QTextCharFormat m_link;
     QTextCharFormat m_quote;
+    QTextCharFormat m_calloutTitle;
     QTextCharFormat m_rule;
     QTextCharFormat m_listMarker;
     QTextCharFormat m_taskDone;

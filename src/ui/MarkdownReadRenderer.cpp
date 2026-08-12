@@ -1,6 +1,7 @@
 #include "MarkdownReadRenderer.h"
 
 #include "MathRender.h"
+#include "MarkdownCallout.h"
 #include "MarkdownReadObjectRenderer.h"
 #include "MarkdownStyle.h"
 #include "core/ContentSecurity.h"
@@ -735,6 +736,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
 
     bool firstOutput = true;
     bool reuseCurrentBlock = false;
+    QVector<QString> calloutTypes(1);
     for (int sourceBlock = 0; sourceBlock < lines.size(); ++sourceBlock) {
         const QString line = lines.at(sourceBlock);
         const int lineStart = lineStarts.at(sourceBlock);
@@ -742,6 +744,33 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
 
         if (sourceBlock == 0 && MascotSeed::fromLine(line) != 0)
             continue;
+
+        const MarkdownCallout::QuotePrefix sourceQuote =
+            MarkdownCallout::quotePrefix(line);
+        const int previousQuoteDepth =
+            sourceBlock > 0
+                ? MarkdownCallout::quotePrefix(lines.at(sourceBlock - 1)).depth
+                : 0;
+        MarkdownCallout::TitleLine calloutTitle;
+        if (sourceQuote.depth == 0) {
+            calloutTypes.resize(1);
+            calloutTypes[0].clear();
+        } else {
+            calloutTypes.resize(sourceQuote.depth + 1);
+            calloutTitle =
+                MarkdownCallout::titleLine(line, previousQuoteDepth);
+            if (calloutTitle.valid())
+                calloutTypes[sourceQuote.depth] = calloutTitle.type;
+        }
+        int calloutDepth = 0;
+        QString calloutType;
+        for (int candidate = sourceQuote.depth; candidate > 0; --candidate) {
+            if (!calloutTypes.at(candidate).isEmpty()) {
+                calloutDepth = candidate;
+                calloutType = calloutTypes.at(candidate);
+                break;
+            }
+        }
 
         if (isPipeTableRow(line) && sourceBlock + 1 < lines.size()) {
             const ReadTableRow header = splitMarkdownTableRow(line);
@@ -867,29 +896,66 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
             block.setTopMargin(baseSize * (level == 1 ? 0.9 : 0.55));
             block.setBottomMargin(baseSize * (level <= 2 ? 0.42 : 0.28));
         } else {
-            int quoteDepth = 0;
-            int quoteEnd = 0;
-            while (quoteEnd < content.size()) {
-                while (quoteEnd < content.size() &&
-                       content.at(quoteEnd).isSpace())
-                    ++quoteEnd;
-                if (quoteEnd >= content.size() ||
-                    content.at(quoteEnd) != QLatin1Char('>'))
-                    break;
-                ++quoteDepth;
-                ++quoteEnd;
-            }
+            const int quoteDepth = sourceQuote.depth;
+            int quoteEnd = sourceQuote.contentStart;
             if (quoteDepth > 0) {
-                while (quoteEnd < content.size() &&
-                       content.at(quoteEnd).isSpace())
-                    ++quoteEnd;
                 content = content.mid(quoteEnd);
                 contentSourceOffset = lineStart + quoteEnd;
-                block.setLeftMargin(14.0 + quoteDepth * 16.0);
-                block.setRightMargin(8.0);
+                // Top-level quotes share the normal left content edge. Only
+                // real nesting adds indentation; unlike Edit Mode, no raw '>'
+                // marker needs horizontal space in this presentation document.
+                block.setLeftMargin((quoteDepth - 1) * 16.0);
+                block.setRightMargin(0.0);
                 block.setBackground(QColor(0x19, 0x26, 0x1f));
                 text.setForeground(QColor(0xb9, 0xd6, 0xc7));
                 text.setFontItalic(true);
+
+                const int nextQuoteDepth =
+                    sourceBlock + 1 < lines.size()
+                        ? MarkdownCallout::quotePrefix(lines.at(sourceBlock + 1))
+                              .depth
+                        : 0;
+                // No bottom margin inside a quote group: QTextDocument does
+                // not paint block backgrounds through paragraph margins, which
+                // used to leave a bare stripe below the callout title.
+                block.setBottomMargin(nextQuoteDepth > 0 ? 0.0 : 5.0);
+
+                if (calloutDepth > 0) {
+                    const bool isTitle =
+                        calloutTitle.valid() &&
+                        calloutTitle.quote.depth == calloutDepth;
+                    block.setBackground(
+                        MarkdownCallout::surface(calloutType, isTitle));
+                    text.setFontItalic(false);
+                    if (isTitle) {
+                        renderedPrefix =
+                            MarkdownCallout::emoji(calloutType) +
+                            QLatin1Char(' ');
+                        // The icon is presentation-only. Keep it at the marker
+                        // boundary without claiming the type's source range, so
+                        // selecting the generated title still maps to [!type].
+                        prefixSourceStart =
+                            lineStart + calloutTitle.markerStart;
+                        prefixSourceLength = 0;
+                    }
+                }
+
+                if (calloutTitle.valid()) {
+                    if (calloutTitle.hasCustomTitle()) {
+                        content = line.mid(calloutTitle.titleStart);
+                        contentSourceOffset =
+                            lineStart + calloutTitle.titleStart;
+                    } else {
+                        content =
+                            MarkdownCallout::defaultTitle(calloutTitle.type);
+                        contentSourceOffset =
+                            lineStart + calloutTitle.typeStart;
+                    }
+                    text.setForeground(
+                        MarkdownCallout::accent(calloutTitle.type));
+                    text.setFontWeight(QFont::Bold);
+                    text.setFontItalic(false);
+                }
             } else if (const auto list = listRe.match(content);
                        list.hasMatch()) {
                 int columns = 0;

@@ -1,5 +1,6 @@
 #include "MarkdownHighlighter.h"
 
+#include "MarkdownCallout.h"
 #include "MarkdownStyle.h"
 
 #include "MathRender.h"
@@ -98,6 +99,10 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
 
     m_quote.setForeground(QColor("#92b3a2"));
     m_quote.setFontItalic(true);
+
+    m_calloutTitle.setForeground(QColor("#2bbf74"));
+    m_calloutTitle.setFontWeight(QFont::Bold);
+    m_calloutTitle.setFontItalic(false);
 
     m_rule.setForeground(QColor("#4f7565"));
 
@@ -937,7 +942,13 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         setCurrentBlockState(StateMath);
         return;
     }
-    setCurrentBlockState(StateNormal);
+    const MarkdownCallout::QuotePrefix quote =
+        MarkdownCallout::quotePrefix(text);
+    // Encode quote depth in the block state so changing the previous line's
+    // quote prefix automatically makes QSyntaxHighlighter revisit this line.
+    // Code/math retain their compact historic states used by the editor.
+    setCurrentBlockState(quote.depth > 0 ? StateQuoteBase + quote.depth
+                                         : StateNormal);
 
     QList<bool> consumed(text.size(), false);
     int doneStart = -1, doneEnd = -1; // a completed task's label, struck below
@@ -999,6 +1010,75 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
             setFormat(0, q.capturedLength(1), hiddenMarker);
         }
         setFormat(q.capturedStart(2), q.capturedLength(2), m_quote);
+
+        const int previousQuoteDepth =
+            previousBlockState() > StateQuoteBase
+                ? previousBlockState() - StateQuoteBase
+                : 0;
+        const MarkdownCallout::TitleLine callout =
+            MarkdownCallout::titleLine(text, previousQuoteDepth);
+        if (callout.valid()) {
+            QTextCharFormat titleFormat = m_calloutTitle;
+            titleFormat.setForeground(MarkdownCallout::accent(callout.type));
+            if (reveal) {
+                // Keep the exact marker visible and editable on the active
+                // line, but tint it so recognition is immediate while typing.
+                setFormat(callout.markerStart,
+                          callout.markerEnd - callout.markerStart,
+                          titleFormat);
+            } else if (callout.hasCustomTitle()) {
+                // Reserve one invisible source character for the custom-painted
+                // emoji, then collapse the rest of the type marker and gap.
+                QTextCharFormat iconReserve;
+                iconReserve.setForeground(QColor(0, 0, 0, 0));
+                const QFont base = document() ? document()->defaultFont()
+                                              : QFont();
+                const QFontMetricsF metrics(base);
+                const qreal reserved = metrics.horizontalAdvance(
+                                           MarkdownCallout::emoji(callout.type)) +
+                                       5.0;
+                const qreal glyph = metrics.horizontalAdvance(
+                    text.at(callout.markerStart));
+                iconReserve.setFontLetterSpacingType(QFont::AbsoluteSpacing);
+                iconReserve.setFontLetterSpacing(
+                    qMax(qreal(0), reserved - glyph));
+                setFormat(callout.markerStart, 1, iconReserve);
+                if (callout.titleStart > callout.markerStart + 1)
+                    setFormat(callout.markerStart + 1,
+                              callout.titleStart - callout.markerStart - 1,
+                              conceal());
+            } else {
+                // With no explicit title, reserve '[' for the emoji, retain the
+                // type letters as the label, and collapse the other syntax.
+                QTextCharFormat iconReserve;
+                iconReserve.setForeground(QColor(0, 0, 0, 0));
+                const QFont base = document() ? document()->defaultFont()
+                                              : QFont();
+                const QFontMetricsF metrics(base);
+                const qreal reserved = metrics.horizontalAdvance(
+                                           MarkdownCallout::emoji(callout.type)) +
+                                       5.0;
+                const qreal glyph = metrics.horizontalAdvance(
+                    text.at(callout.markerStart));
+                iconReserve.setFontLetterSpacingType(QFont::AbsoluteSpacing);
+                iconReserve.setFontLetterSpacing(
+                    qMax(qreal(0), reserved - glyph));
+                setFormat(callout.markerStart, 1, iconReserve);
+                setFormat(callout.markerStart + 1, 1, conceal());
+                QTextCharFormat typeFormat = titleFormat;
+                typeFormat.setFontCapitalization(QFont::Capitalize);
+                setFormat(callout.typeStart, callout.typeLength, typeFormat);
+                setFormat(callout.markerEnd - 1,
+                          text.size() - (callout.markerEnd - 1), conceal());
+            }
+            if (callout.hasCustomTitle()) {
+                setFormat(callout.titleStart,
+                          text.size() - callout.titleStart, titleFormat);
+            }
+            for (int i = callout.markerStart;
+                 i < callout.markerEnd && i < consumed.size(); ++i)
+                consumed[i] = true;
+        }
     }
 
     // Task list: "- [ ] ..." / "- [x] ...". Off the active line the editor

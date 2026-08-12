@@ -33,6 +33,12 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Bold** `**x**`, *italic* `*x*`, ***both*** `***x***`.
 - [ ] `inline code`, ~~strike~~ `~~x~~`, ==highlight== `==x==`.
 - [ ] Blockquote `> x`, horizontal rule `---`.
+- [ ] Start a quote group with `> [!tip]` — off the active line, `[!tip]`
+      becomes a bold **💡 Tip** title and every quoted body line shares its
+      green surface. `> [!warning] Custom` shows its unique warning emoji and
+      colors the complete group orange. There is no background gap between
+      title/body rows, and a top-level callout aligns with ordinary paragraphs.
+      A `[!type]` marker on a later line remains ordinary quoted text.
 - [ ] Task list `- [ ]` / `- [x]` — clicking the rendered checkbox toggles it.
 - [ ] **Overlapping emphasis** — `==dog ~~cat *horse **elephant***~~==` stacks all four styles.
 - [ ] **Selecting across lines reveals raw markup on every selected line.** Select several rendered lines (a heading, **bold**, a `[link](url)`, a list item, a table row, a `$…$` formula, a code block) — each selected line shows its actual source, not the rendered form; lines outside the selection stay rendered. Collapsing/shrinking the selection re-renders the deselected lines. ◆
@@ -143,6 +149,9 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Read Mode** (`Ctrl+E` or **Settings → Vault → Read mode**) removes the
       caret and renders the current line like the rest of the note. Plain ↑/↓
       smoothly scroll the page by one visual line without moving a text cursor. ◆
+- [ ] Read Mode strips a first-line callout marker, shows its generated or
+      custom title with the type's unique emoji, propagates its background over
+      the complete quote group without row gaps, and aligns the card left.
 - [ ] **Smooth mouse-wheel scrolling** — each ordinary wheel notch eases to its
       target without visible line-sized jumps. Spin several notches quickly and
       confirm they accumulate into one continuous movement rather than restarting
