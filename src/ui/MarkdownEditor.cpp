@@ -9,6 +9,7 @@
 #include "core/ContentSecurity.h"
 #include "core/MascotSeed.h"
 #include "core/Perf.h"
+#include "core/SpellChecker.h"
 #include "core/WikiLink.h"
 
 #include <QAbstractItemView>
@@ -521,6 +522,8 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     m_highlighter = new MarkdownHighlighter(document());
+    m_spellChecker = new SpellChecker(this);
+    m_highlighter->setSpellChecker(m_spellChecker);
 
     m_quickJumpTimer = new QTimer(this);
     m_quickJumpTimer->setSingleShot(true);
@@ -2053,7 +2056,7 @@ void MarkdownEditor::updateActiveHighlight() {
     const int oldLast = m_visualSelectionLast;
     if (m_readMode) {
         // No active editing line: conceal Markdown source markers everywhere.
-        m_highlighter->setActiveBlock(-1, -1);
+        m_highlighter->setActiveBlock(-1, -1, -1, false);
         m_visualSelectionFirst = -1;
         m_visualSelectionLast = -1;
         return;
@@ -2063,9 +2066,10 @@ void MarkdownEditor::updateActiveHighlight() {
             tc.blockNumber(), document()->findBlock(tc.anchor()).blockNumber());
         m_visualSelectionLast = qMax(
             tc.blockNumber(), document()->findBlock(tc.anchor()).blockNumber());
-        m_highlighter->setActiveBlock(tc.blockNumber(),
-                                      document()->findBlock(tc.anchor())
-                                          .blockNumber());
+        m_highlighter->setActiveBlock(
+            tc.blockNumber(),
+            document()->findBlock(tc.anchor()).blockNumber(),
+            tc.position() - tc.block().position(), tc.hasSelection());
     }
 
     // Revealing or concealing list markup changes the rendered width of its
@@ -2087,6 +2091,110 @@ void MarkdownEditor::updateActiveHighlight() {
                                            first.position(),
                                        true);
     }
+}
+
+void MarkdownEditor::setSpellCheckingEnabled(bool enabled) {
+    if (!m_spellChecker || m_spellChecker->isEnabled() == enabled)
+        return;
+    m_spellChecker->setEnabled(enabled);
+    if (m_highlighter)
+        m_highlighter->rehighlight();
+}
+
+bool MarkdownEditor::spellCheckingEnabled() const {
+    return m_spellChecker && m_spellChecker->isEnabled();
+}
+
+bool MarkdownEditor::setSpellCheckingLanguage(const QString &locale,
+                                              QString *error) {
+    if (!m_spellChecker)
+        return false;
+    if (m_spellChecker->language() == locale && m_spellChecker->isReady())
+        return true;
+    if (!m_spellChecker->setLanguage(locale, error))
+        return false;
+    if (m_highlighter)
+        m_highlighter->rehighlight();
+    return true;
+}
+
+QString MarkdownEditor::spellCheckingLanguage() const {
+    return m_spellChecker ? m_spellChecker->language() : QString();
+}
+
+void MarkdownEditor::setSpellCheckingOptions(bool ignoreWordsWithNumbers,
+                                             bool ignoreAllCaps) {
+    if (!m_spellChecker)
+        return;
+    m_spellChecker->setOptions(ignoreWordsWithNumbers, ignoreAllCaps);
+    if (m_highlighter)
+        m_highlighter->rehighlight();
+}
+
+QString MarkdownEditor::misspelledWordAt(const QPoint &viewportPosition) const {
+    if (m_readMode || !m_spellChecker || !m_spellChecker->isEnabled() ||
+        !m_spellChecker->isReady())
+        return {};
+    const QTextCursor cursor = cursorForPosition(viewportPosition);
+    const QTextBlock block = cursor.block();
+    if (!block.isValid() || block.userState() == 1 || block.userState() == 2)
+        return {};
+    const int column = cursor.position() - block.position();
+    for (const SpellChecker::WordRange &range :
+         SpellChecker::wordsInMarkdown(block.text())) {
+        if (column >= range.start && column <= range.start + range.length &&
+            !m_spellChecker->isCorrect(range.word))
+            return range.word;
+    }
+    return {};
+}
+
+QStringList MarkdownEditor::spellingSuggestions(const QString &word) const {
+    return m_spellChecker ? m_spellChecker->suggestions(word) : QStringList{};
+}
+
+bool MarkdownEditor::replaceMisspelledWordAt(
+    const QPoint &viewportPosition, const QString &expectedWord,
+    const QString &replacement) {
+    if (m_readMode || expectedWord.isEmpty() || replacement.isEmpty())
+        return false;
+    QTextCursor point = cursorForPosition(viewportPosition);
+    const QTextBlock block = point.block();
+    if (!block.isValid())
+        return false;
+    const int column = point.position() - block.position();
+    for (const SpellChecker::WordRange &range :
+         SpellChecker::wordsInMarkdown(block.text())) {
+        if (column < range.start || column > range.start + range.length ||
+            range.word != expectedWord)
+            continue;
+        QTextCursor edit(document());
+        edit.setPosition(block.position() + range.start);
+        edit.setPosition(block.position() + range.start + range.length,
+                         QTextCursor::KeepAnchor);
+        edit.insertText(replacement);
+        setTextCursor(edit);
+        return true;
+    }
+    return false;
+}
+
+bool MarkdownEditor::addToPersonalDictionary(const QString &word,
+                                             QString *error) {
+    if (!m_spellChecker ||
+        !m_spellChecker->addToPersonalDictionary(word, error))
+        return false;
+    if (m_highlighter)
+        m_highlighter->rehighlight();
+    return true;
+}
+
+void MarkdownEditor::ignoreSpellingForSession(const QString &word) {
+    if (!m_spellChecker)
+        return;
+    m_spellChecker->ignoreForSession(word);
+    if (m_highlighter)
+        m_highlighter->rehighlight();
 }
 
 QTextBlock MarkdownEditor::mascotBlock() const {

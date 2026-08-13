@@ -37,7 +37,13 @@ public:
     // edits (e.g. Ctrl+Backspace joining two lines) relocate the caret without a
     // cursorPositionChanged. `anchorBlock < 0` means "no selection" (anchor =
     // caret).
-    void setActiveBlock(int caretBlock, int anchorBlock = -1);
+    void setActiveBlock(int caretBlock, int anchorBlock = -1,
+                        int caretColumn = -1, bool hasSelection = false);
+
+    // The checker is owned by MarkdownEditor. Rehighlighting remains explicit
+    // so settings changes can update the whole note once, while ordinary edits
+    // retain QSyntaxHighlighter's incremental one-block behavior.
+    void setSpellChecker(class SpellChecker *checker);
 
     // The base point size headings scale from; call when the editor font size
     // changes so heading sizes track it.
@@ -127,6 +133,7 @@ private:
     // task's `code`/$math$ reads as struck like the surrounding text.
     void strikeConsumedInline(const QString &text, bool reveal, int doneStart,
                               int doneEnd);
+    void applySpelling(const QString &text);
     // Dim a marker off the active line, reveal it (dimmed) on it. Marks the
     // span consumed either way.
     void markup(int start, int len, QList<bool> &consumed, bool reveal);
@@ -154,8 +161,11 @@ private:
     int m_activeBlock = 0; // block number of the cursor's line
     int m_selFirst = 0;    // first/last block of the selection (== m_activeBlock
     int m_selLast = 0;     // when there's no selection); math reveals if touched
+    int m_caretColumn = -1;
+    bool m_hasSelection = false;
     double m_baseSize = 12.0;
     bool m_suspended = false;
+    class SpellChecker *m_spellChecker = nullptr;
 
     QTextCharFormat m_heading;
     QTextCharFormat m_bold;

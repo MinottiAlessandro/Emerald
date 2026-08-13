@@ -5,6 +5,7 @@
 
 #include "MathRender.h"
 #include "core/MascotSeed.h"
+#include "core/SpellChecker.h"
 #include "core/WikiLink.h"
 #include <QFont>
 #include <QFontMetricsF>
@@ -137,19 +138,33 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     m_reLink = internetLinkRe();
 }
 
-void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
+void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock,
+                                         int caretColumn,
+                                         bool hasSelection) {
     if (anchorBlock < 0)
         anchorBlock = caretBlock;
     const int newFirst = qMin(caretBlock, anchorBlock);
     const int newLast = qMax(caretBlock, anchorBlock);
-    if (caretBlock == m_activeBlock && newFirst == m_selFirst &&
-        newLast == m_selLast)
+    const bool sameBlockState =
+        caretBlock == m_activeBlock && newFirst == m_selFirst &&
+        newLast == m_selLast && hasSelection == m_hasSelection;
+    if (sameBlockState && caretColumn == m_caretColumn)
         return;
     const int oldCaret = m_activeBlock, oldFirst = m_selFirst,
               oldLast = m_selLast;
     m_activeBlock = caretBlock;
     m_selFirst = newFirst;
     m_selLast = newLast;
+    m_caretColumn = caretColumn;
+    m_hasSelection = hasSelection;
+    // Moving within one source line cannot change which Markdown markers are
+    // revealed. It can only move into/out of the word spelling deliberately
+    // suppresses under the caret, so revisit this one block exactly once.
+    if (sameBlockState) {
+        if (QTextDocument *doc = document())
+            rehighlightBlock(doc->findBlockByNumber(caretBlock));
+        return;
+    }
     // A $$ math region reveals/conceals as a whole, so rehighlight every line of
     // the region the caret left and the one it entered — not just the two lines.
     rehighlightAround(oldCaret);
@@ -206,6 +221,13 @@ void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock) {
             ++n;
         }
     }
+}
+
+void MarkdownHighlighter::setSpellChecker(SpellChecker *checker) {
+    if (m_spellChecker == checker)
+        return;
+    m_spellChecker = checker;
+    rehighlight();
 }
 
 void MarkdownHighlighter::rehighlightAround(int blockNumber) {
@@ -971,6 +993,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         } else {
             setFormat(0, contentStart, conceal());
         }
+        applySpelling(text);
         return;
     }
 
@@ -1177,6 +1200,37 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // active line the editor paints the formula, so it strikes the math itself
     // (MarkdownEditor::paintEvent) and here we only need the revealed source.
     strikeConsumedInline(text, reveal, doneStart, doneEnd);
+    applySpelling(text);
+}
+
+void MarkdownHighlighter::applySpelling(const QString &text) {
+    if (!m_spellChecker || !m_spellChecker->isEnabled() ||
+        !m_spellChecker->isReady())
+        return;
+
+    const int blockNumber = currentBlock().blockNumber();
+    for (const SpellChecker::WordRange &word :
+         SpellChecker::wordsInMarkdown(text)) {
+        // Avoid the distracting red flash beneath a word while it is still
+        // being typed. It is checked as soon as the caret leaves its range.
+        if (!m_hasSelection && blockNumber == m_activeBlock &&
+            m_caretColumn >= word.start &&
+            m_caretColumn <= word.start + word.length)
+            continue;
+        if (m_spellChecker->isCorrect(word.word))
+            continue;
+
+        // Preserve every Markdown property already applied to the character
+        // (bold, link colour, highlight, strike, etc.) and add only Qt's native
+        // spell-check underline. Per-character merging also handles a word that
+        // crosses an emphasis-format boundary correctly.
+        for (int i = word.start; i < word.start + word.length; ++i) {
+            QTextCharFormat misspelled = format(i);
+            misspelled.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
+            misspelled.setUnderlineColor(QColor(QStringLiteral("#ef6b73")));
+            setFormat(i, 1, misspelled);
+        }
+    }
 }
 
 // Characters that should carry a strikethrough: a completed task's whole label,

@@ -7,6 +7,10 @@ on:
       - 'tests/core/**'
       - 'tests/security/**'
       - 'tests/fuzz/**'
+      - 'third_party/hunspell/**'
+      - 'resources/dictionaries/**'
+      - 'packaging/spelling-packs/**'
+      - 'tools/update_spelling_assets.py'
       - 'CMakeLists.txt'
       - '.github/workflows/security.yml'
   push:
@@ -42,6 +46,9 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           cache: true
+
+      - name: Verify vendored spelling assets
+        run: python3 tools/update_spelling_assets.py verify
 
       - name: Configure sanitizer tests
         run: |

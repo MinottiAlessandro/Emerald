@@ -5,9 +5,11 @@
 #include "Mascot.h"
 #include "MascotCatalog.h"
 #include "SearchPopup.h"
+#include "SpellLanguageDialog.h"
 #include "Updater.h"
 #include "core/LegacyMascotMigration.h"
 #include "core/MascotSeed.h"
+#include "core/SpellChecker.h"
 #include "core/Vault.h"
 #include "core/VaultSettings.h"
 
@@ -393,7 +395,8 @@ QString manualText() {
         "\n"
         "## Settings\n"
         "Open the gear in the bottom-left for **Settings**: the editor font, its "
-        "size and width, the line spacing between rows, the folder new notes are "
+        "size and width, the line spacing between rows, local spell checking, "
+        "the folder new notes are "
         "created in, a Home note to open at launch, a Templates folder, Read "
         "Mode, Broken Links, Graph View, and automatic mascot controls. Vault "
         "choices are stored separately for each vault without adding metadata "
@@ -404,6 +407,18 @@ QString manualText() {
         "folder, and **Insert Template…** drops in a template — both live in the "
         "menu. Edits save themselves a moment after you stop typing — Ctrl+S "
         "forces a save.\n"
+        "\n"
+        "### Spelling\n"
+        "US English is included and works offline. Misspelled prose is "
+        "underlined after the caret leaves the word; code, math, URLs, HTML, "
+        "images, and wiki-link targets are ignored. Right-click an underlined "
+        "word for suggestions, **Add to personal dictionary**, or **Ignore for "
+        "this session**. Under **Settings → Spelling**, **Manage…** can download "
+        "verified Italian, German, French, and Spanish dictionaries from "
+        "versioned Emerald releases. Packs whose verified content changed are "
+        "shown as **Update available**. Language "
+        "packs and personal words are stored in Emerald's application-data "
+        "folder, never in the vault.\n"
         "\n"
         "## Other shortcuts\n"
         "More keys to control the app workflow (on macOS, Ctrl is ⌘):\n"
@@ -2047,6 +2062,31 @@ void MainWindow::loadSettings() {
     if (!split.isEmpty())
         m_splitter->restoreState(split);
     updateResponsiveLayout();
+
+    const bool ignoreNumbers =
+        s.value(QStringLiteral("spellIgnoreNumbers"), true).toBool();
+    const bool ignoreAllCaps =
+        s.value(QStringLiteral("spellIgnoreAllCaps"), true).toBool();
+    m_editor->setSpellCheckingOptions(ignoreNumbers, ignoreAllCaps);
+    QString language =
+        s.value(QStringLiteral("spellLanguage"), QStringLiteral("en_US"))
+            .toString();
+    QString spellError;
+    if (!m_editor->setSpellCheckingLanguage(language, &spellError) &&
+        language != QLatin1String("en_US")) {
+        language = QStringLiteral("en_US");
+        s.setValue(QStringLiteral("spellLanguage"), language);
+        m_editor->setSpellCheckingLanguage(language, &spellError);
+    }
+    const bool spellEnabled =
+        s.value(QStringLiteral("spellCheckEnabled"), true).toBool() &&
+        !m_editor->spellCheckingLanguage().isEmpty();
+    m_editor->setSpellCheckingEnabled(spellEnabled);
+    if (!spellError.isEmpty() && m_editor->spellCheckingLanguage().isEmpty())
+        QTimer::singleShot(0, this, [this, spellError] {
+            notify(tr("Spell checker unavailable: %1").arg(spellError), 4000);
+        });
+
     // With no custom font saved, keep the editor's built-in monospace fallback
     // chain (SF Mono / Menlo / Cascadia / Consolas / … -> monospace) untouched.
     if (!s.contains(QStringLiteral("editorFontFamily")) &&
@@ -2288,7 +2328,8 @@ void MainWindow::openSettings() {
     auto *heading = new QLabel(tr("Settings"), content);
     heading->setObjectName(QStringLiteral("settingsTitle"));
     auto *subtitle = new QLabel(
-        tr("Tune the editor, vault defaults, and mascot behavior."), content);
+        tr("Tune the editor, spelling, vault defaults, and mascot behavior."),
+        content);
     subtitle->setObjectName(QStringLiteral("settingsSubtitle"));
     subtitle->setWordWrap(true);
     contentLayout->addWidget(heading);
@@ -2369,6 +2410,76 @@ void MainWindow::openSettings() {
     spacingBox->setSuffix(tr(" %"));
     spacingBox->setValue(s.value(QStringLiteral("lineSpacing"), 100).toInt());
 
+    // Spelling is checked incrementally in the Markdown highlighter. English
+    // ships with Emerald; Manage languages installs/removes verified optional
+    // packs outside the vault.
+    auto *spellEnabledBox = new QCheckBox(tr("Underline misspelled words"), &dlg);
+    spellEnabledBox->setObjectName(QStringLiteral("spellCheckEnabled"));
+    spellEnabledBox->setChecked(
+        s.value(QStringLiteral("spellCheckEnabled"), true).toBool());
+    auto *spellLanguageWidget = new QWidget(&dlg);
+    auto *spellLanguageLayout = new QHBoxLayout(spellLanguageWidget);
+    spellLanguageLayout->setContentsMargins(0, 0, 0, 0);
+    spellLanguageLayout->setSpacing(8);
+    auto *spellLanguageBox = new QComboBox(spellLanguageWidget);
+    spellLanguageBox->setObjectName(QStringLiteral("spellLanguage"));
+    auto *manageSpellLanguages =
+        new QPushButton(tr("Manage…"), spellLanguageWidget);
+    manageSpellLanguages->setObjectName(QStringLiteral("manageSpellLanguages"));
+    spellLanguageLayout->addWidget(spellLanguageBox, 1);
+    spellLanguageLayout->addWidget(manageSpellLanguages);
+    auto *ignoreNumbersBox =
+        new QCheckBox(tr("Ignore words containing numbers"), &dlg);
+    ignoreNumbersBox->setObjectName(QStringLiteral("spellIgnoreNumbers"));
+    ignoreNumbersBox->setChecked(
+        s.value(QStringLiteral("spellIgnoreNumbers"), true).toBool());
+    auto *ignoreCapsBox = new QCheckBox(tr("Ignore ALL-CAPS words"), &dlg);
+    ignoreCapsBox->setObjectName(QStringLiteral("spellIgnoreAllCaps"));
+    ignoreCapsBox->setChecked(
+        s.value(QStringLiteral("spellIgnoreAllCaps"), true).toBool());
+
+    auto refreshSpellLanguages = [spellLanguageBox] {
+        QString selected = spellLanguageBox->currentData().toString();
+        if (selected.isEmpty())
+            selected = QStringLiteral("en_US");
+        spellLanguageBox->clear();
+        const QStringList installed = SpellChecker::installedLanguages();
+        for (const SpellLanguage &language :
+             SpellChecker::availableLanguages())
+            if (installed.contains(language.locale))
+                spellLanguageBox->addItem(language.name, language.locale);
+        int index = spellLanguageBox->findData(selected);
+        if (index < 0)
+            index = spellLanguageBox->findData(QStringLiteral("en_US"));
+        spellLanguageBox->setCurrentIndex(qMax(0, index));
+    };
+    refreshSpellLanguages();
+    const QString savedSpellLanguage =
+        s.value(QStringLiteral("spellLanguage"), QStringLiteral("en_US"))
+            .toString();
+    if (const int index = spellLanguageBox->findData(savedSpellLanguage);
+        index >= 0)
+        spellLanguageBox->setCurrentIndex(index);
+    auto updateSpellControlState = [spellEnabledBox, spellLanguageBox,
+                                    ignoreNumbersBox, ignoreCapsBox] {
+        const bool enabled = spellEnabledBox->isChecked();
+        spellLanguageBox->setEnabled(enabled);
+        ignoreNumbersBox->setEnabled(enabled);
+        ignoreCapsBox->setEnabled(enabled);
+    };
+    connect(spellEnabledBox, &QCheckBox::toggled, &dlg,
+            updateSpellControlState);
+    connect(manageSpellLanguages, &QPushButton::clicked, &dlg,
+            [this, &dlg, refreshSpellLanguages] {
+                SpellLanguageDialog manager(m_editor->spellCheckingLanguage(),
+                                            &dlg);
+                connect(&manager, &SpellLanguageDialog::languagesChanged, &dlg,
+                        refreshSpellLanguages);
+                manager.exec();
+                refreshSpellLanguages();
+            });
+    updateSpellControlState();
+
     // Mascots: auto-generate once a note crosses a character count.
     auto *mascotAutoBox = new QCheckBox(tr("Generate one automatically"), &dlg);
     mascotAutoBox->setChecked(s.value(QStringLiteral("mascotAuto"), false).toBool());
@@ -2445,6 +2556,14 @@ void MainWindow::openSettings() {
     addSettingRow(editorForm, tr("Font size"), sizeBox);
     addSettingRow(editorForm, tr("Column width"), widthBox);
     addSettingRow(editorForm, tr("Line spacing"), spacingBox);
+
+    auto *spellingForm = addSection(
+        tr("Spelling"),
+        tr("Fast local checking with English included and optional languages."));
+    addSettingRow(spellingForm, tr("Spell check"), spellEnabledBox);
+    addSettingRow(spellingForm, tr("Language"), spellLanguageWidget);
+    addSettingRow(spellingForm, tr("Numbers"), ignoreNumbersBox);
+    addSettingRow(spellingForm, tr("Capitals"), ignoreCapsBox);
 
     auto *vaultForm = addSection(
         tr("Vault"), tr("Defaults and maintenance tools for this vault."));
@@ -2525,6 +2644,34 @@ void MainWindow::openSettings() {
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
         s.setValue(QStringLiteral("editorWidth"), widthBox->value());
         s.setValue(QStringLiteral("lineSpacing"), spacingBox->value());
+        QString spellLanguage =
+            spellLanguageBox->currentData().toString();
+        QString spellError;
+        bool languageReady =
+            m_editor->setSpellCheckingLanguage(spellLanguage, &spellError);
+        if (!languageReady && spellLanguage != QLatin1String("en_US")) {
+            const QString selectedError = spellError;
+            spellLanguage = QStringLiteral("en_US");
+            languageReady =
+                m_editor->setSpellCheckingLanguage(spellLanguage, &spellError);
+            spellError = selectedError;
+        }
+        m_editor->setSpellCheckingOptions(ignoreNumbersBox->isChecked(),
+                                          ignoreCapsBox->isChecked());
+        m_editor->setSpellCheckingEnabled(spellEnabledBox->isChecked() &&
+                                          languageReady);
+        s.setValue(QStringLiteral("spellCheckEnabled"),
+                   spellEnabledBox->isChecked() && languageReady);
+        s.setValue(QStringLiteral("spellLanguage"), spellLanguage);
+        s.setValue(QStringLiteral("spellIgnoreNumbers"),
+                   ignoreNumbersBox->isChecked());
+        s.setValue(QStringLiteral("spellIgnoreAllCaps"),
+                   ignoreCapsBox->isChecked());
+        if (!languageReady)
+            QTimer::singleShot(0, this, [this, spellError] {
+                notify(tr("Could not load spelling language: %1").arg(spellError),
+                       4000);
+            });
         s.setValue(QStringLiteral("mascotAuto"), mascotAutoBox->isChecked());
         s.setValue(QStringLiteral("mascotThreshold"), mascotThreshBox->value());
         if (m_vault) {
@@ -2620,6 +2767,46 @@ void MainWindow::deleteCurrentNote() {
 
 void MainWindow::onEditorContextMenu(const QPoint &pos) {
     QMenu *menu = m_editor->createStandardContextMenu();
+    const QString misspelled = m_editor->misspelledWordAt(pos);
+    if (!misspelled.isEmpty()) {
+        auto *spelling = new QMenu(tr("Spelling: “%1”").arg(misspelled), menu);
+        spelling->setObjectName(QStringLiteral("spellingSuggestions"));
+        const QStringList suggestions =
+            m_editor->spellingSuggestions(misspelled);
+        if (suggestions.isEmpty()) {
+            QAction *none = spelling->addAction(tr("No suggestions"));
+            none->setEnabled(false);
+        } else {
+            for (const QString &suggestion : suggestions) {
+                QAction *replace = spelling->addAction(suggestion);
+                connect(replace, &QAction::triggered, menu,
+                        [this, pos, misspelled, suggestion] {
+                            m_editor->replaceMisspelledWordAt(
+                                pos, misspelled, suggestion);
+                        });
+            }
+        }
+        spelling->addSeparator();
+        QAction *add = spelling->addAction(
+            tr("Add “%1” to personal dictionary").arg(misspelled));
+        connect(add, &QAction::triggered, menu, [this, misspelled] {
+            QString error;
+            if (m_editor->addToPersonalDictionary(misspelled, &error))
+                notify(tr("Added “%1” to your dictionary").arg(misspelled));
+            else
+                notify(error.isEmpty() ? tr("Could not add that word") : error,
+                       3000);
+        });
+        QAction *ignore = spelling->addAction(tr("Ignore for this session"));
+        connect(ignore, &QAction::triggered, menu, [this, misspelled] {
+            m_editor->ignoreSpellingForSession(misspelled);
+        });
+
+        QAction *before = menu->actions().isEmpty() ? nullptr
+                                                     : menu->actions().first();
+        menu->insertMenu(before, spelling);
+        menu->insertSeparator(before);
+    }
     // Drop the standard "Delete" entry — it only removes a text selection, so it
     // reads as a broken delete-the-file. Offer the real "Delete Note" instead,
     // which carries its Ctrl+Shift+Backspace shortcut label.

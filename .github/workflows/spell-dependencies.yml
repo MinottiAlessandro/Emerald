@@ -1,0 +1,74 @@
+name: Spell dependencies
+
+# Upstream changes are never shipped automatically. This job refreshes the
+# reviewed snapshots, verifies every asset, and opens (or updates) a pull
+# request containing the exact source, dictionary, hash, and notice changes.
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  refresh:
+    name: Propose upstream spelling updates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refresh and verify snapshots
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/update_spelling_assets.py update
+          python3 tools/update_spelling_assets.py verify
+
+      - name: Prepare update
+        id: changes
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          echo 'branch=automation/spell-dependencies' >> "$GITHUB_OUTPUT"
+
+      - name: Push reviewed update branch
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_BRANCH: ${{ steps.changes.outputs.branch }}
+        run: |
+          gh auth setup-git
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$UPDATE_BRANCH"
+          git add third_party/hunspell resources/dictionaries packaging/spelling-packs
+          git commit -m 'chore: update spelling dependencies'
+          git push --force origin "HEAD:refs/heads/$UPDATE_BRANCH"
+
+      - name: Open update pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_BRANCH: ${{ steps.changes.outputs.branch }}
+        run: |
+          existing="$(gh pr list --head "$UPDATE_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            gh pr comment "$existing" --body 'Upstream spelling snapshots were refreshed by the latest scheduled audit.'
+          else
+            gh pr create \
+              --base main \
+              --head "$UPDATE_BRANCH" \
+              --title 'chore: update spelling dependencies' \
+              --body 'Automated, review-required refresh of vendored Hunspell and dictionary assets. CI verifies file hashes, size caps, licenses, and the application build. If the dictionary pack version changed, publish it only after merge by creating the matching `spell-dictionaries-v*` tag.'
+          fi

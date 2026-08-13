@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "packVersion": "1.0.0",
+  "releaseTag": "spell-dictionaries-v1.0.0",
+  "releaseBaseUrl": "https://github.com/MinottiAlessandro/Emerald/releases/download/spell-dictionaries-v1.0.0",
+  "upstream": {
+    "repository": "https://github.com/LibreOffice/dictionaries",
+    "commit": "f2ff99058268502bdcf4cad25c1ca2935ad8aa7d"
+  },
+  "languages": [
+    {
+      "locale": "en_US",
+      "builtIn": true,
+      "files": {
+        "affix": {
+          "name": "en_US.aff",
+          "sha256": "e746c882dd6f303c2c46e7452804b9201115a6942cfeb15f18f8edf774d2e24e",
+          "maximumBytes": 100000,
+          "upstreamPath": "en/en_US.aff"
+        },
+        "dictionary": {
+          "name": "en_US.dic",
+          "sha256": "f0b1a234bd178bdd01875b2a392a9647f888b8fe879f79c52aae62c2759b3647",
+          "maximumBytes": 1000000,
+          "upstreamPath": "en/en_US.dic"
+        },
+        "notice": {
+          "name": "en_US.NOTICE.txt",
+          "sha256": "168b4c01cb841f766a72f310b065c04d09cff46376c37a81d799593ce751c371",
+          "maximumBytes": 50000,
+          "upstreamPath": "en/README_en_US.txt"
+        }
+      }
+    },
+    {
+      "locale": "it_IT",
+      "builtIn": false,
+      "files": {
+        "affix": {
+          "name": "it_IT.aff",
+          "sha256": "951afaa19272f13555b8823e8bcf9ccf78f8fe1a07835bdfb912ab3e4d537c2b",
+          "maximumBytes": 100000,
+          "upstreamPath": "it_IT/it_IT.aff"
+        },
+        "dictionary": {
+          "name": "it_IT.dic",
+          "sha256": "bae1e3501dcd2a923669592493b3fde6c02aae7c7aab83bf5e5b49077e73dd64",
+          "maximumBytes": 1500000,
+          "upstreamPath": "it_IT/it_IT.dic"
+        },
+        "notice": {
+          "name": "it_IT.NOTICE.txt",
+          "sha256": "34c3e93595cf3cf5f3afc9bc0d98eea12593750383f1e82ed1d3ca29f9681283",
+          "maximumBytes": 50000,
+          "upstreamPath": "it_IT/README_it_IT.txt"
+        }
+      }
+    },
+    {
+      "locale": "de_DE",
+      "builtIn": false,
+      "files": {
+        "affix": {
+          "name": "de_DE.aff",
+          "sha256": "646bf3333ac69c23e9d794533ee5241d6f755c359e8fe10a648f87613743d594",
+          "maximumBytes": 50000,
+          "upstreamPath": "de/de_DE_frami.aff"
+        },
+        "dictionary": {
+          "name": "de_DE.dic",
+          "sha256": "4ca3c958b0e5545910999bc246f668840bf8ede3df8e5e6790d05edd5a586c38",
+          "maximumBytes": 5000000,
+          "upstreamPath": "de/de_DE_frami.dic"
+        },
+        "notice": {
+          "name": "de_DE.NOTICE.txt",
+          "sha256": "c141f4f79c428b7348b5012836f4ad3db4d124f288f15effc22696dc876512ae",
+          "maximumBytes": 10000,
+          "upstreamPath": "de/README_de_DE_frami.txt"
+        }
+      }
+    },
+    {
+      "locale": "fr_FR",
+      "builtIn": false,
+      "files": {
+        "affix": {
+          "name": "fr_FR.aff",
+          "sha256": "c176610cd5dc4846806a65ddd029f422d87978bf58f224aa44222662a16a2de5",
+          "maximumBytes": 250000,
+          "upstreamPath": "fr_FR/dictionaries/fr.aff"
+        },
+        "dictionary": {
+          "name": "fr_FR.dic",
+          "sha256": "b78a868e31dd6e373b6c3217969afb898a9acde828a5e7ef97308da42218c88c",
+          "maximumBytes": 1500000,
+          "upstreamPath": "fr_FR/dictionaries/fr.dic"
+        },
+        "notice": {
+          "name": "fr_FR.NOTICE.txt",
+          "sha256": "4a25abf740ad6ba5e8d0cfc0d2ffadc3c13c303f8fe389f323b061a389350f83",
+          "maximumBytes": 10000,
+          "upstreamPath": "fr_FR/dictionaries/README_dict_fr.txt"
+        }
+      }
+    },
+    {
+      "locale": "es_ES",
+      "builtIn": false,
+      "files": {
+        "affix": {
+          "name": "es_ES.aff",
+          "sha256": "e73a9bf8e1383f4986a5dc9e2fbed49371c0c61f511c626d15586bd433c1cad9",
+          "maximumBytes": 250000,
+          "upstreamPath": "es/es_ES.aff"
+        },
+        "dictionary": {
+          "name": "es_ES.dic",
+          "sha256": "6975dddec3d5d2c676069537bc67b4b5f786c65c5d4cf6703a82acf779ac9ec1",
+          "maximumBytes": 1000000,
+          "upstreamPath": "es/es_ES.dic"
+        },
+        "notice": {
+          "name": "es_ES.NOTICE.txt",
+          "sha256": "0b5c39a863ecb61f5c5631ec1cd977667ef9bda6da6f90e80e9fc0edcbfadd97",
+          "maximumBytes": 10000,
+          "upstreamPath": "es/README_hunspell_es.txt"
+        }
+      }
+    }
+  ]
+}
