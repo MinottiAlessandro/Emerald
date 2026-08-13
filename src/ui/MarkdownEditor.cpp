@@ -67,16 +67,26 @@ const QRegularExpression &mdLinkRe() {
 
 // Hint labels follow the physical rows of a QWERTY keyboard rather than
 // alphabetical order, keeping the most convenient keys spatially grouped.
-constexpr auto QuickJumpKeys = "QWERTYUIOPASDFGHJKLZXCVBNM";
-constexpr int QuickJumpKeyCount = 26;
+// X belongs to the application-wide Alt+X shortcut cheatsheet. Keeping it out
+// of this alphabet means Quick Jump never advertises or resolves the reserved
+// chord as a link hint.
+constexpr char QuickJumpKeys[] = "QWERTYUIOPASDFGHJKLZCVBNM";
+constexpr int QuickJumpKeyCount = int(sizeof(QuickJumpKeys)) - 1;
 constexpr int QuickJumpHoldMs = 100;
 
-// Derived, presentation-only block properties. Keeping callout ancestry here
-// makes paintEvent O(visible rows), even when the viewport is near the end of a
-// quote containing thousands of source lines.
-constexpr int CalloutTypeProperty = QTextFormat::UserProperty + 520;
-constexpr int CalloutDepthProperty = QTextFormat::UserProperty + 521;
-constexpr int CalloutTitleProperty = QTextFormat::UserProperty + 522;
+QColor ordinaryQuoteSurface(const QPalette &palette) {
+    QColor accent = palette.color(QPalette::Highlight);
+    if (!accent.isValid())
+        accent = QColor(0x2b, 0xbf, 0x74);
+    const QColor base = palette.color(QPalette::Base);
+    const auto blend = [](int background, int foreground) {
+        constexpr int alpha = 10;
+        return (background * (255 - alpha) + foreground * alpha + 127) / 255;
+    };
+    return QColor(blend(base.red(), accent.red()),
+                  blend(base.green(), accent.green()),
+                  blend(base.blue(), accent.blue()));
+}
 
 QString quickJumpHint(int index, int width) {
     QString hint(width, QLatin1Char('Q'));
@@ -1013,9 +1023,20 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const qreal topMargin =
             (level > 0 ? bodyLineHeight * spacing.topLines : 0.0) + quoteTop +
             listTop + codeTop;
+        // Consecutive quote rows are one visual panel. Ordinary paragraph
+        // bottom margins are outside QTextBlock backgrounds, so retaining the
+        // configurable inter-row margin here would expose the editor canvas.
+        const qreal rowExtra =
+            quote.depth > 0 && nextQuoteDepth > 0 ? 0.0 : extra;
         const qreal bottomMargin =
-            extra + (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0) +
+            rowExtra +
+            (level > 0 ? bodyLineHeight * spacing.bottomLines : 0.0) +
             quoteBottom + listBottom + codeBottom;
+        // Quote surfaces are painted against the document content edge in
+        // drawQuotePanels(). QTextDocument expands a block background all the
+        // way to the viewport edge in Edit Mode, which makes a quote appear to
+        // begin before the line itself.
+        const QBrush blockBackground(Qt::NoBrush);
         const bool listMetadataChanged =
             list.valid()
                 ? !format.hasProperty(MarkdownStyle::ListDepthProperty) ||
@@ -1042,11 +1063,15 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                                             topMargin + 1.0) ||
                              !qFuzzyCompare(format.bottomMargin() + 1.0,
                                             bottomMargin + 1.0) ||
-                             format.property(CalloutTypeProperty).toString() !=
+                             format.background() != blockBackground ||
+                             format.property(MarkdownStyle::CalloutTypeProperty)
+                                     .toString() !=
                                  calloutType ||
-                             format.property(CalloutDepthProperty).toInt() !=
+                             format.property(MarkdownStyle::CalloutDepthProperty)
+                                     .toInt() !=
                                  calloutDepth ||
-                             format.property(CalloutTitleProperty).toBool() !=
+                             format.property(MarkdownStyle::CalloutTitleProperty)
+                                     .toBool() !=
                                  isCalloutTitle ||
                              listMetadataChanged;
         if (changed) {
@@ -1063,14 +1088,18 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
             format.setLineHeight(imageLineHeight, lineHeightType);
             format.setTopMargin(topMargin);
             format.setBottomMargin(bottomMargin);
+            format.setBackground(blockBackground);
             if (calloutDepth > 0) {
-                format.setProperty(CalloutTypeProperty, calloutType);
-                format.setProperty(CalloutDepthProperty, calloutDepth);
-                format.setProperty(CalloutTitleProperty, isCalloutTitle);
+                format.setProperty(MarkdownStyle::CalloutTypeProperty,
+                                   calloutType);
+                format.setProperty(MarkdownStyle::CalloutDepthProperty,
+                                   calloutDepth);
+                format.setProperty(MarkdownStyle::CalloutTitleProperty,
+                                   isCalloutTitle);
             } else {
-                format.clearProperty(CalloutTypeProperty);
-                format.clearProperty(CalloutDepthProperty);
-                format.clearProperty(CalloutTitleProperty);
+                format.clearProperty(MarkdownStyle::CalloutTypeProperty);
+                format.clearProperty(MarkdownStyle::CalloutDepthProperty);
+                format.clearProperty(MarkdownStyle::CalloutTitleProperty);
             }
             if (list.valid()) {
                 format.setProperty(MarkdownStyle::ListDepthProperty,
@@ -2297,6 +2326,11 @@ void MarkdownEditor::cancelQuickJump() {
     m_quickJumpPrefix.clear();
     m_quickJumpTargets.clear();
     viewport()->update();
+}
+
+void MarkdownEditor::suppressQuickJump() {
+    m_quickJumpAltHeld = false;
+    cancelQuickJump();
 }
 
 QRectF MarkdownEditor::visibleLinkRect(const QTextBlock &block, int startCol,
@@ -3675,9 +3709,7 @@ bool MarkdownEditor::listItemFoldable(const QTextBlock &item) const {
 }
 
 bool MarkdownEditor::foldAnchorFoldable(const QTextBlock &block) const {
-    // Read Mode historically leaves headings expanded, but nested lists are
-    // deliberately interactive in both representations.
-    return listItemFoldable(block) || (!m_readMode && headingFoldable(block));
+    return listItemFoldable(block) || headingFoldable(block);
 }
 
 QTextBlock MarkdownEditor::sourceBlockForDisplay(
@@ -3773,10 +3805,6 @@ void MarkdownEditor::reapplyFolds() {
             b.setVisible(true);
 
     for (const Fold &f : m_folds) {
-        // Heading folds remain an Edit Mode feature. Nested-list folds are
-        // source-backed and therefore carry cleanly across both documents.
-        if (m_readMode && f.kind == Fold::Kind::Heading)
-            continue;
         // Use the extent captured when the fold was made. If that block was
         // deleted since, fall back to recomputing so the fold still holds.
         QTextBlock end =
@@ -4240,11 +4268,137 @@ void MarkdownEditor::drawFoldControls(QPainter &painter,
     }
 }
 
+void MarkdownEditor::drawQuotePanels(QPainter &painter,
+                                     const QRect &clip,
+                                     bool drawRails) const {
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setFont(font());
+    QColor accent = palette().color(QPalette::Highlight);
+    if (!accent.isValid())
+        accent = QColor(0x2b, 0xbf, 0x74);
+    const qreal lineHeight = QFontMetricsF(font()).lineSpacing();
+    const qreal quoteIndent = lineHeight * 1.18;
+    const qreal documentMargin = document()->documentMargin();
+
+    const auto effectiveQuoteDepth = [this](const QTextBlock &block) {
+        const QTextBlock source =
+            m_readMode ? sourceBlockForDisplay(block) : block;
+        return source.isValid() && !insideCodeBlock(source)
+                   ? quotePrefix(source.text()).depth
+                   : 0;
+    };
+    for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
+         block = block.next()) {
+        const int depth = effectiveQuoteDepth(block);
+        if (depth == 0) {
+            if (block.isVisible() &&
+                blockViewportRect(block).top() > clip.bottom())
+                break;
+            continue;
+        }
+
+        if (!block.isVisible())
+            continue;
+        const QRectF geo = blockViewportRect(block);
+        if (geo.top() > clip.bottom())
+            break;
+
+        const QTextBlockFormat cachedFormat = block.blockFormat();
+        const int calloutDepth =
+            cachedFormat.property(MarkdownStyle::CalloutDepthProperty).toInt();
+        const QString calloutType =
+            cachedFormat.property(MarkdownStyle::CalloutTypeProperty).toString();
+        const bool isCalloutTitle =
+            cachedFormat.property(MarkdownStyle::CalloutTitleProperty).toBool();
+
+        const QColor lineAccent = calloutDepth > 0
+                                      ? MarkdownCallout::accent(calloutType)
+                                      : accent;
+        QColor wash;
+        if (m_readMode &&
+            cachedFormat.background().style() != Qt::NoBrush) {
+            wash = cachedFormat.background().color();
+        } else if (calloutDepth > 0) {
+            wash = MarkdownCallout::surface(calloutType, isCalloutTitle);
+        } else {
+            wash = ordinaryQuoteSurface(palette());
+        }
+
+        // Adjacent QTextBlock rectangles can land on opposing sides of a
+        // fractional device pixel. Paint through the next row's top edge plus
+        // one logical pixel so raster rounding can never expose the viewport.
+        qreal bottom = geo.bottom();
+        const QTextBlock next = block.next();
+        if (effectiveQuoteDepth(next) > 0 && next.isVisible())
+            bottom = qMax(bottom, blockViewportRect(next).top() + 1.0);
+        if (bottom < clip.top())
+            continue;
+
+        const qreal surfaceIndent =
+            calloutDepth > 0 ? (calloutDepth - 1) * quoteIndent : 0.0;
+        const QRectF washRect(
+            documentMargin + surfaceIndent, geo.top(),
+            qMax(qreal(0), viewport()->width() - documentMargin * 2 -
+                                   surfaceIndent),
+            qMax(qreal(0), bottom - geo.top()));
+        painter.fillRect(washRect, wash);
+
+        if (drawRails) {
+            for (int railDepth = 0; railDepth < depth; ++railDepth) {
+                QColor rail = lineAccent;
+                rail.setAlpha(qMax(70, 170 - railDepth * 35));
+                QPen pen(rail, railDepth == 0 ? 2.2 : 1.6);
+                pen.setCapStyle(Qt::FlatCap);
+                painter.setPen(pen);
+                // Align the stroke's outer edge with the panel boundary.
+                // Centering it before documentMargin made the top-level rail
+                // protrude into the gutter before the quote surface began.
+                const qreal x =
+                    documentMargin + railDepth * quoteIndent +
+                    pen.widthF() / 2.0;
+                painter.drawLine(QPointF(x, geo.top()),
+                                 QPointF(x, bottom));
+            }
+        }
+
+        // Read Mode emits its emoji as actual presentation text. Edit Mode
+        // keeps source untouched and paints the icon over its reserved marker.
+        if (!m_readMode && isCalloutTitle) {
+            const MarkdownCallout::TitleLine title =
+                MarkdownCallout::titleLine(
+                    block.text(), effectiveQuoteDepth(block.previous()));
+            const bool sourceRevealed =
+                block.blockNumber() >= m_visualSelectionFirst &&
+                block.blockNumber() <= m_visualSelectionLast;
+            if (title.valid() && !sourceRevealed) {
+                const QList<QRectF> markerRects = textRangeViewportRects(
+                    block, title.markerStart, 1);
+                if (!markerRects.isEmpty()) {
+                    QRectF iconRect = markerRects.first();
+                    iconRect.setTop(geo.top());
+                    iconRect.setHeight(geo.height());
+                    painter.setPen(lineAccent);
+                    painter.drawText(
+                        iconRect, Qt::AlignLeft | Qt::AlignVCenter,
+                        MarkdownCallout::emoji(title.type));
+                }
+            }
+        }
+    }
+}
+
 void MarkdownEditor::paintEvent(QPaintEvent *event) {
     EMERALD_PROFILE_SCOPE("MarkdownEditor::paintEvent");
     if (m_readMode) {
         // The Read Mode document already contains presentation formats. None of
         // the source editor's regex-driven overlays may inspect or repaint it.
+        // Fill only the spaces between its block-owned quote surfaces. Drawing
+        // the Edit Mode rail underneath those opaque backgrounds left only the
+        // stroke caps visible as stray upper- and lower-left corner pixels.
+        {
+            QPainter quotePainter(viewport());
+            drawQuotePanels(quotePainter, event->rect(), false);
+        }
         QTextEdit::paintEvent(event);
         QPainter overlay(viewport());
         drawFoldControls(overlay, event->rect());
@@ -4288,109 +4442,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
     // painting remains proportional to visible content even in a huge callout.
     {
         QPainter quotePainter(viewport());
-        quotePainter.setRenderHint(QPainter::Antialiasing);
-        quotePainter.setFont(font());
-        QColor accent = palette().color(QPalette::Highlight);
-        if (!accent.isValid())
-            accent = QColor(0x2b, 0xbf, 0x74);
-        const qreal lineHeight = QFontMetricsF(font()).lineSpacing();
-        const qreal quoteIndent = lineHeight * 1.18;
-        const qreal documentMargin = document()->documentMargin();
-
-        const auto effectiveQuoteDepth = [this](const QTextBlock &block) {
-            return block.isValid() && !insideCodeBlock(block)
-                       ? quotePrefix(block.text()).depth
-                       : 0;
-        };
-        for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
-             block = block.next()) {
-            const int depth = effectiveQuoteDepth(block);
-            if (depth == 0) {
-                if (block.isVisible() &&
-                    blockViewportRect(block).top() > event->rect().bottom())
-                    break;
-                continue;
-            }
-
-            const QTextBlockFormat cachedFormat = block.blockFormat();
-            const int calloutDepth =
-                cachedFormat.property(CalloutDepthProperty).toInt();
-            const QString calloutType =
-                cachedFormat.property(CalloutTypeProperty).toString();
-            const bool isCalloutTitle =
-                cachedFormat.property(CalloutTitleProperty).toBool();
-            const MarkdownCallout::TitleLine title =
-                isCalloutTitle
-                    ? MarkdownCallout::titleLine(
-                          block.text(), effectiveQuoteDepth(block.previous()))
-                    : MarkdownCallout::TitleLine{};
-
-            if (!block.isVisible())
-                continue;
-            const QRectF geo = blockViewportRect(block);
-            if (geo.top() > event->rect().bottom())
-                break;
-            if (geo.bottom() < event->rect().top())
-                continue;
-
-            const QColor lineAccent = calloutDepth > 0
-                                          ? MarkdownCallout::accent(calloutType)
-                                          : accent;
-            QColor wash = calloutDepth > 0
-                              ? MarkdownCallout::surface(
-                                    calloutType, isCalloutTitle)
-                              : lineAccent;
-            if (calloutDepth == 0)
-                wash.setAlpha(10);
-
-            // Extend a row through the inter-paragraph space before the next
-            // quoted row. This removes the unpainted hairline that otherwise
-            // appears between a callout title and its body.
-            qreal bottom = geo.bottom();
-            const QTextBlock next = block.next();
-            if (effectiveQuoteDepth(next) > 0 && next.isVisible())
-                bottom = qMax(bottom, blockViewportRect(next).top());
-            const qreal surfaceIndent =
-                calloutDepth > 0 ? (calloutDepth - 1) * quoteIndent : 0.0;
-            const QRectF washRect(
-                documentMargin + surfaceIndent,
-                geo.top(),
-                qMax(qreal(0),
-                     viewport()->width() - documentMargin * 2 - surfaceIndent),
-                qMax(qreal(0), bottom - geo.top()));
-            quotePainter.fillRect(washRect, wash);
-
-            for (int railDepth = 0; railDepth < depth; ++railDepth) {
-                QColor rail = lineAccent;
-                rail.setAlpha(qMax(70, 170 - railDepth * 35));
-                QPen pen(rail, railDepth == 0 ? 2.2 : 1.6);
-                pen.setCapStyle(Qt::SquareCap);
-                quotePainter.setPen(pen);
-                // Rails live in the document gutter, leaving top-level quote
-                // text on the same left content edge as an ordinary paragraph.
-                const qreal x =
-                    documentMargin + railDepth * quoteIndent - 2.0;
-                quotePainter.drawLine(QPointF(x, geo.top()),
-                                      QPointF(x, bottom));
-            }
-
-            const bool sourceRevealed =
-                block.blockNumber() >= m_visualSelectionFirst &&
-                block.blockNumber() <= m_visualSelectionLast;
-            if (title.valid() && !sourceRevealed) {
-                const QList<QRectF> markerRects = textRangeViewportRects(
-                    block, title.markerStart, 1);
-                if (!markerRects.isEmpty()) {
-                    QRectF iconRect = markerRects.first();
-                    iconRect.setTop(geo.top());
-                    iconRect.setHeight(geo.height());
-                    quotePainter.setPen(lineAccent);
-                    quotePainter.drawText(
-                        iconRect, Qt::AlignLeft | Qt::AlignVCenter,
-                        MarkdownCallout::emoji(title.type));
-                }
-            }
-        }
+        drawQuotePanels(quotePainter, event->rect());
     }
 
     // Inline code keeps real monospace text, with a rounded span painted behind

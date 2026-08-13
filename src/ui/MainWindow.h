@@ -19,6 +19,7 @@ class Mascot;
 class SearchPopup;
 class Updater;
 class QAbstractItemModel;
+class QBoxLayout;
 class QTreeView;
 class QModelIndex;
 class QLineEdit;
@@ -142,6 +143,10 @@ private:
     void openFindInFile();
     void findInFile(bool forward);
     void positionFindBar();
+    void buildShortcutCheatsheet();
+    void positionShortcutCheatsheet();
+    void showShortcutCheatsheet();
+    void hideShortcutCheatsheet();
     void positionToast(); // re-center the toast over the editor's bottom edge
     void positionMascot(); // pin the mascot to the editor's bottom-right corner
     void refreshMascot();  // sync the corner mascot to the open note's seed
@@ -214,6 +219,9 @@ private:
     QTimer *m_toastTimer = nullptr;
     QFrame *m_findBar = nullptr;       // in-note find overlay
     QLineEdit *m_findInput = nullptr;
+    QFrame *m_shortcutCheatsheet = nullptr; // visible only while Alt+X is held
+    QBoxLayout *m_shortcutColumnsLayout = nullptr;
+    QTimer *m_shortcutReleaseTimer = nullptr; // filters native repeat releases
     QTreeView *m_noteTree = nullptr;
     QAbstractItemModel *m_noteTreeModel = nullptr;
     SearchPopup *m_searchPopup = nullptr;
@@ -258,4 +266,5 @@ private:
     QList<int> m_desktopSplitterSizes;
     bool m_mobileLayout = false;
     bool m_mobileShowingNotes = true;
+    bool m_shortcutCheatsheetHeld = false;
 };

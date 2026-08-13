@@ -1330,6 +1330,111 @@ int main(int argc, char **argv) {
                   QStringLiteral("\nafter quote"),
           QStringLiteral("blockquote layout must preserve Markdown source"));
 
+    // Consecutive quote rows form one painted panel. Check an empty strip far
+    // from the text at every physical row between the two line centres; this
+    // catches the one-pixel viewport seam caused by fractional block geometry.
+    const QString joinedQuoteSource =
+        QStringLiteral("> First quote line\n> Second quote line\nafter quote");
+    editor.resize(360, 180);
+    editor.setLineSpacing(135);
+    editor.setPlainText(joinedQuoteSource);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const auto quotePanelIsContinuous = [&editor](const QTextBlock &first,
+                                                   const QTextBlock &second) {
+        settleLayout(editor, second);
+        QImage rendered(editor.viewport()->size(),
+                        QImage::Format_ARGB32_Premultiplied);
+        rendered.fill(Qt::transparent);
+        editor.viewport()->render(&rendered);
+        const int x = qMax(0, rendered.width() - 20);
+        const int firstY = editor.cursorRect(QTextCursor(first)).center().y();
+        const int secondY =
+            editor.cursorRect(QTextCursor(second)).center().y();
+        if (firstY < 0 || secondY <= firstY || secondY >= rendered.height())
+            return false;
+        const QRgb expected = rendered.pixel(x, firstY);
+        for (int y = firstY; y <= secondY; ++y) {
+            const QRgb pixel = rendered.pixel(x, y);
+            if (qRgb(qRed(pixel), qGreen(pixel), qBlue(pixel)) !=
+                qRgb(qRed(expected), qGreen(expected), qBlue(expected)))
+                return false;
+        }
+        return true;
+    };
+    check(quotePanelIsContinuous(editor.document()->firstBlock(),
+                                 editor.document()->findBlockByNumber(1)),
+          QStringLiteral("consecutive Edit Mode quote rows should have one "
+                         "continuous painted surface"));
+
+    QImage quoteRailRender(editor.viewport()->size(),
+                           QImage::Format_ARGB32_Premultiplied);
+    quoteRailRender.fill(Qt::transparent);
+    editor.viewport()->render(&quoteRailRender);
+    const int panelLeft = qCeil(editor.document()->documentMargin());
+    const int quoteRailY = editor.cursorRect(
+        QTextCursor(editor.document()->firstBlock())).center().y();
+    const QRgb beforeRail = quoteRailRender.pixel(panelLeft - 1, quoteRailY);
+    const QRgb plainGutter =
+        quoteRailRender.pixel(qMax(0, panelLeft - 8), quoteRailY);
+    const QRgb onRail = quoteRailRender.pixel(panelLeft + 1, quoteRailY);
+    const QRgb insideSurface =
+        quoteRailRender.pixel(quoteRailRender.width() - 20, quoteRailY);
+    check(qRgb(qRed(beforeRail), qGreen(beforeRail), qBlue(beforeRail)) ==
+              qRgb(qRed(plainGutter), qGreen(plainGutter),
+                   qBlue(plainGutter)) &&
+              qRgb(qRed(onRail), qGreen(onRail), qBlue(onRail)) !=
+                  qRgb(qRed(plainGutter), qGreen(plainGutter),
+                       qBlue(plainGutter)) &&
+              qRgb(qRed(insideSurface), qGreen(insideSurface),
+                   qBlue(insideSurface)) !=
+                  qRgb(qRed(plainGutter), qGreen(plainGutter),
+                       qBlue(plainGutter)),
+          QStringLiteral("the Edit Mode quote surface and rail should begin "
+                         "at the line edge without painting the gutter"));
+
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    const QTextBlock firstReadQuote =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 0);
+    const QTextBlock secondReadQuote =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 1);
+    QImage readQuoteRender(editor.viewport()->size(),
+                           QImage::Format_ARGB32_Premultiplied);
+    readQuoteRender.fill(Qt::transparent);
+    editor.viewport()->render(&readQuoteRender);
+    const QRectF firstReadGeo =
+        editor.document()->documentLayout()->blockBoundingRect(firstReadQuote);
+    const QRectF secondReadGeo =
+        editor.document()->documentLayout()->blockBoundingRect(secondReadQuote);
+    const int upperCornerY =
+        qBound(0, qFloor(firstReadGeo.top()) - 1,
+               readQuoteRender.height() - 1);
+    const int lowerCornerY =
+        qBound(0, qCeil(secondReadGeo.bottom()),
+               readQuoteRender.height() - 1);
+    const int readGutterX = qMax(0, panelLeft - 8);
+    const auto sameRenderedRgb = [&readQuoteRender](const QPoint &lhs,
+                                                    const QPoint &rhs) {
+        const QRgb left = readQuoteRender.pixel(lhs);
+        const QRgb right = readQuoteRender.pixel(rhs);
+        return qRgb(qRed(left), qGreen(left), qBlue(left)) ==
+               qRgb(qRed(right), qGreen(right), qBlue(right));
+    };
+    check(sameRenderedRgb(QPoint(panelLeft, upperCornerY),
+                          QPoint(readGutterX, upperCornerY)) &&
+              sameRenderedRgb(QPoint(panelLeft, lowerCornerY),
+                              QPoint(readGutterX, lowerCornerY)),
+          QStringLiteral("Read Mode quote rails must not leak isolated pixels "
+                         "past the quote surface corners"));
+    check(quotePanelIsContinuous(firstReadQuote, secondReadQuote),
+          QStringLiteral("consecutive Read Mode quote rows should have one "
+                         "continuous painted surface"));
+    editor.setReadMode(false);
+    check(editor.toPlainText() == joinedQuoteSource,
+          QStringLiteral("painting a joined quote panel must preserve source"));
+    editor.setLineSpacing(100);
+
     // An Obsidian callout marker decorates only the first line of a quote
     // group. Off the active line its source marker melts into a bold title;
     // custom titles replace the type label and keep the type-specific accent.
@@ -1507,6 +1612,8 @@ int main(int argc, char **argv) {
         QStringLiteral("A **bold** paragraph with [[Target|wiki label]] and "
                        "[site](https://example.com), plus ==marked== and "
                        "$x^2$."),
+        QStringLiteral("==word1 **word2== word3** and "
+                       "~~asd[[Roadmap]]asd~~"),
         QStringLiteral("> [!tip]"),
         QStringLiteral("> A useful callout body"), QString(),
         QStringLiteral("> [!warning] Read this first"),
@@ -1542,6 +1649,16 @@ int main(int argc, char **argv) {
         sourceInlineBlock.text().indexOf(QStringLiteral("marked"));
     const QTextCharFormat editHighlight =
         highlighterFormatAt(sourceInlineBlock, sourceHighlightOffset);
+    const QTextBlock sourceMixedBlock =
+        sourceDocument->findBlockByNumber(2);
+    settleLayout(editor, sourceMixedBlock);
+    const int sourceWikiOffset =
+        sourceMixedBlock.text().indexOf(QStringLiteral("Roadmap"));
+    check(sourceWikiOffset >= 0 &&
+              highlighterFormatAt(sourceMixedBlock, sourceWikiOffset)
+                  .fontStrikeOut(),
+          QStringLiteral("a wiki link inside strikethrough should be struck "
+                         "in Edit Mode"));
     editor.setReadMode(true);
     QApplication::processEvents();
     check(editor.readMode() && editor.isReadOnly(),
@@ -1606,6 +1723,34 @@ int main(int argc, char **argv) {
                   editHighlight.foreground(),
           QStringLiteral("Read Mode highlights should use the same foreground "
                          "and background colors as Edit Mode"));
+
+    QTextCursor renderedMixedBold =
+        editor.document()->find(QStringLiteral("word2"));
+    renderedMixedBold.setPosition(renderedMixedBold.selectionStart());
+    renderedMixedBold.movePosition(QTextCursor::NextCharacter,
+                                   QTextCursor::KeepAnchor);
+    QTextCursor renderedTrailingBold =
+        editor.document()->find(QStringLiteral("word3"));
+    renderedTrailingBold.setPosition(renderedTrailingBold.selectionStart());
+    renderedTrailingBold.movePosition(QTextCursor::NextCharacter,
+                                      QTextCursor::KeepAnchor);
+    QTextCursor renderedStruckWiki =
+        editor.document()->find(QStringLiteral("Roadmap"));
+    renderedStruckWiki.setPosition(renderedStruckWiki.selectionStart());
+    renderedStruckWiki.movePosition(QTextCursor::NextCharacter,
+                                    QTextCursor::KeepAnchor);
+    check(renderedMixedBold.charFormat().fontWeight() >= QFont::Bold &&
+              renderedMixedBold.charFormat().background().color() ==
+                  MarkdownStyle::highlightBackground() &&
+              renderedTrailingBold.charFormat().fontWeight() >= QFont::Bold &&
+              renderedTrailingBold.charFormat().background().style() ==
+                  Qt::NoBrush,
+          QStringLiteral("Read Mode should preserve crossing highlight and "
+                         "bold spans"));
+    check(renderedStruckWiki.charFormat().isAnchor() &&
+              renderedStruckWiki.charFormat().fontStrikeOut(),
+          QStringLiteral("Read Mode should strike a semantic wiki link inside "
+                         "strikethrough"));
 
     QTextCursor renderedCallout = editor.document()->find(QStringLiteral("Tip"));
     renderedCallout.setPosition(renderedCallout.selectionStart());
@@ -2257,6 +2402,37 @@ int main(int argc, char **argv) {
           QStringLiteral("source undo should still work after a Read Mode "
                          "document swap"));
 
+    // Read Mode headings use the same source-backed section boundaries as the
+    // editor, so their gutter control can collapse and expand rendered blocks
+    // without changing Markdown source.
+    const QString readFoldSource = QStringLiteral(
+        "# Read fold\nbody\n## Child\nchild body\n# Next\nnext body");
+    editor.setPlainText(readFoldSource);
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    const QTextBlock readFoldHeading =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 0);
+    const QTextBlock readFoldBody =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 1);
+    const QTextBlock readFoldChildBody =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 3);
+    const QTextBlock readFoldNext =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 4);
+    settleLayout(editor, readFoldHeading);
+    const QPoint readFoldPoint(
+        5, editor.cursorRect(QTextCursor(readFoldHeading)).center().y());
+    clickEditor(editor, readFoldPoint);
+    check(readFoldHeading.isVisible() && !readFoldBody.isVisible() &&
+              !readFoldChildBody.isVisible() && readFoldNext.isVisible(),
+          QStringLiteral("clicking a Read Mode heading should collapse its "
+                         "rendered section only"));
+    clickEditor(editor, readFoldPoint);
+    check(readFoldBody.isVisible() && readFoldChildBody.isVisible() &&
+              editor.toPlainText() == readFoldSource,
+          QStringLiteral("clicking a folded Read Mode heading should restore "
+                         "its section without changing source"));
+    editor.setReadMode(false);
+
     // Ctrl+Shift+H edits highlights through the rendered selection while the
     // Markdown source remains authoritative. If every selected word is already
     // highlighted it removes only that selected portion; otherwise it fills
@@ -2515,6 +2691,20 @@ int main(int argc, char **argv) {
           QStringLiteral("Quick Jump W should open the second visible link"));
     endQuickJump(editor);
 
+    jumpedTo.clear();
+    beginQuickJump(editor);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+            QStringLiteral("x"));
+    check(jumpedTo.isEmpty(),
+          QStringLiteral("Quick Jump must reserve X for the shortcut "
+                         "cheatsheet"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
+            QStringLiteral("q"));
+    check(jumpedTo == QStringLiteral("First"),
+          QStringLiteral("a reserved X should not poison the next valid Quick "
+                         "Jump hint"));
+    endQuickJump(editor);
+
     // Code-looking links and Markdown images are not navigable targets; an
     // external target after them still participates in the same ordering.
     QString notice;
@@ -2542,10 +2732,11 @@ int main(int argc, char **argv) {
                          "security"));
     endQuickJump(editor);
 
-    // More than 26 visible links switch the whole overlay to fixed-width
-    // hints. The first is QQ; index 26 rolls over to WQ in the same key order.
+    // X is reserved, leaving 25 hint keys. More than 25 visible links switch
+    // the whole overlay to fixed-width hints; the first is QQ and item 26 is
+    // WQ in the same physical-key order.
     QStringList manyLinks;
-    for (int i = 1; i <= 27; ++i)
+    for (int i = 1; i <= 26; ++i)
         manyLinks << QStringLiteral("[[Note %1]]").arg(i);
     editor.setPlainText(manyLinks.join(QLatin1Char('\n')));
     QApplication::processEvents();
@@ -2555,7 +2746,8 @@ int main(int argc, char **argv) {
     sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
             QStringLiteral("q"));
     check(jumpedTo.isEmpty(),
-          QStringLiteral("a fixed-width Quick Jump hint should wait for key two"));
+          QStringLiteral("a fixed-width Quick Jump hint should wait for key "
+                         "two"));
     sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
             QStringLiteral("q"));
     check(jumpedTo == QStringLiteral("Note 1"),
@@ -2568,8 +2760,8 @@ int main(int argc, char **argv) {
             QStringLiteral("w"));
     sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
             QStringLiteral("q"));
-    check(jumpedTo == QStringLiteral("Note 27"),
-          QStringLiteral("Quick Jump WQ should open link 27"));
+    check(jumpedTo == QStringLiteral("Note 26"),
+          QStringLiteral("Quick Jump WQ should open link 26"));
     endQuickJump(editor);
 
     // A key pressed before the hold delay cancels Quick Jump and remains an

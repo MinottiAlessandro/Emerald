@@ -2,6 +2,7 @@
 #include "ui/GraphPage.h"
 #include "ui/GraphView.h"
 #include "ui/MainWindow.h"
+#include "ui/MarkdownEditor.h"
 
 #include <QAction>
 #include <QApplication>
@@ -10,6 +11,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFrame>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -40,6 +43,13 @@ bool writeFile(const QString &path, const QString &content) {
   const QByteArray bytes = content.toUtf8();
   return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
          file.write(bytes) == bytes.size();
+}
+
+void sendKey(QWidget *receiver, QEvent::Type type, int key,
+             Qt::KeyboardModifiers modifiers,
+             const QString &text = QString(), bool autoRepeat = false) {
+  QKeyEvent event(type, key, modifiers, text, autoRepeat, 1);
+  QApplication::sendEvent(receiver, &event);
 }
 
 template <typename Predicate>
@@ -101,14 +111,88 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   auto *gearMenu = window.findChild<QMenu *>(QStringLiteral("gearMenu"));
   auto *settingsAction =
       window.findChild<QAction *>(QStringLiteral("settingsAction"));
+  auto *editor = window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+  auto *cheatsheet =
+      window.findChild<QFrame *>(QStringLiteral("shortcutCheatsheet"));
   check(pages && graphPage && graphView && graphAction && localGraphAction &&
             backAction && forwardAction && title && sidebar && sideTitle &&
-            splitter && gearMenu && settingsAction,
+            splitter && gearMenu && settingsAction && editor && cheatsheet,
         QStringLiteral("graph page and navigation controls are discoverable"));
   if (!pages || !graphPage || !graphView || !graphAction || !localGraphAction ||
       !backAction || !forwardAction || !title || !sidebar || !sideTitle ||
-      !splitter || !gearMenu || !settingsAction)
+      !splitter || !gearMenu || !settingsAction || !editor || !cheatsheet)
     return;
+
+  check(!cheatsheet->isVisible(),
+        QStringLiteral("shortcut cheatsheet starts hidden"));
+  check(cheatsheet->findChildren<QLabel *>(
+                           QStringLiteral("shortcutSectionTitle"))
+                    .size() == 4 &&
+            cheatsheet->findChildren<QLabel *>(QStringLiteral("shortcutKey"))
+                    .size() >= 30,
+        QStringLiteral("shortcut cheatsheet is grouped and comprehensive"));
+
+  editor->setFocus();
+  const QString sourceBeforeCheatsheet = editor->toPlainText();
+  sendKey(editor, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+  sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"));
+  QApplication::processEvents();
+  check(cheatsheet->isVisible() && editor->hasFocus() &&
+            editor->toPlainText() == sourceBeforeCheatsheet,
+        QStringLiteral("Alt+X shows the cheatsheet without focus or text edits"));
+  check((cheatsheet->geometry().center() - window.rect().center())
+                .manhattanLength() <= 2,
+        QStringLiteral("shortcut cheatsheet is centered in the app window"));
+
+  sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"), true);
+  sendKey(editor, QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"), true);
+  QThread::msleep(220);
+  QApplication::processEvents();
+  check(cheatsheet->isVisible(),
+        QStringLiteral("native repeat release/press pairs do not flash the "
+                       "held shortcut cheatsheet"));
+  sendKey(editor, QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"));
+  check(waitUntil([cheatsheet] { return !cheatsheet->isVisible(); }, 200),
+        QStringLiteral("releasing X closes the shortcut cheatsheet"));
+  sendKey(editor, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
+
+  // Let Quick Jump become active first, then claim Alt with the cheatsheet.
+  // Once X is released, Q must not open the first visible wiki link: the
+  // application shortcut should have cancelled the link-hint mode completely.
+  sendKey(editor, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+  QThread::msleep(220);
+  QApplication::processEvents();
+  sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"));
+  QApplication::processEvents();
+  check(cheatsheet->isVisible(),
+        QStringLiteral("Alt+X replaces an already-visible Quick Jump overlay"));
+  sendKey(editor, QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"));
+  check(waitUntil([cheatsheet] { return !cheatsheet->isVisible(); }, 200),
+        QStringLiteral("the replacement cheatsheet closes after X release"));
+  sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier);
+  QApplication::processEvents();
+  check(title->text() == QStringLiteral("Alpha") &&
+            editor->toPlainText() == sourceBeforeCheatsheet,
+        QStringLiteral("Alt+X suppresses Quick Jump instead of leaving link "
+                       "hints active behind the cheatsheet"));
+  sendKey(editor, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
+
+  sendKey(editor, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+  sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"));
+  QApplication::processEvents();
+  sendKey(editor, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
+  QApplication::processEvents();
+  check(!cheatsheet->isVisible(),
+        QStringLiteral("releasing Alt closes the shortcut cheatsheet"));
+  sendKey(editor, QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier,
+          QStringLiteral("x"));
 
   check(title->text() == QStringLiteral("Alpha"),
         QStringLiteral("fixture starts on Alpha"));
@@ -331,6 +415,20 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
             .arg(window.width())
             .arg(graphPage->width())
             .arg(filters ? filters->isVisible() : false));
+  sendKey(graphView, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+  sendKey(graphView, QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"));
+  QApplication::processEvents();
+  const QList<QWidget *> shortcutColumns =
+      cheatsheet->findChildren<QWidget *>(QStringLiteral("shortcutColumn"));
+  check(shortcutColumns.size() == 2 &&
+            shortcutColumns.at(1)->geometry().top() >
+                shortcutColumns.at(0)->geometry().bottom(),
+        QStringLiteral("narrow cheatsheet stacks its columns for readable "
+                       "shortcut labels"));
+  sendKey(graphView, QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
+          QStringLiteral("x"));
+  sendKey(graphView, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
   const QString narrowScreenshot =
       QString::fromLocal8Bit(qgetenv("EMERALD_TEST_NARROW_SCREENSHOT"));
   if (!narrowScreenshot.isEmpty())

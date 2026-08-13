@@ -41,6 +41,7 @@
 #include <QMouseEvent>
 #include <QInputDialog>
 #include <QItemSelectionModel>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -330,8 +331,9 @@ QString manualText() {
         "vault's **New notes in** folder. Standard `[label](https://…)` links "
         "open in the system browser. Hold **Alt** briefly to label "
         "the links currently on screen, then type a hint to open one without "
-        "the mouse. **Ctrl+Shift+B** opens Broken Links, a filterable report of "
-        "links whose target is missing or empty.\n"
+        "the mouse (X is reserved for the shortcuts panel). "
+        "**Ctrl+Shift+B** opens Broken Links, a filterable report of links "
+        "whose target is missing or empty.\n"
         "\n"
         "## Graph View\n"
         "Press **Ctrl+Shift+G** (or **Settings → Vault → Graph view → Open "
@@ -429,6 +431,8 @@ QString manualText() {
         "glance)\n"
         "- **Ctrl+M** — Generate (or re-roll) this note's mascot\n"
         "- **Ctrl+Shift+M** — Delete this note's mascot\n"
+        "- Hold **Alt+X** — Show the keyboard shortcut cheatsheet; release "
+        "either key to close it\n"
         "- **Alt+←** — Back in the history\n"
         "- **Alt+→** — Next in the history\n");
 }
@@ -986,6 +990,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     VaultSettings::migrateLegacyForLastVault();
     buildActions();
     buildUi();
+    // A QApplication-level filter sees the hold chord before whichever child
+    // currently owns focus (editor, title, sidebar, or graph). The same filter
+    // continues to handle the handful of child-specific events below.
+    qApp->installEventFilter(this);
     loadSettings();
     loadCursorPositions(); // remembered per-note caret positions, across restarts
 
@@ -1046,6 +1054,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    if (qApp)
+        qApp->removeEventFilter(this);
     if (m_indexThread) {
         m_indexThread->requestInterruption();
         m_indexThread->wait();
@@ -1083,7 +1093,6 @@ void MainWindow::buildUi() {
     m_titleEdit->setPlaceholderText(tr("Untitled"));
     m_titleEdit->setFrame(false);
     m_titleEdit->setAlignment(Qt::AlignCenter);
-    m_titleEdit->installEventFilter(this);
     connect(m_titleEdit, &QLineEdit::editingFinished, this,
             [this] { renameCurrent(m_titleEdit->text()); });
     // Enter on the title drops the caret onto the first body line, ready to type.
@@ -1122,7 +1131,6 @@ void MainWindow::buildUi() {
     m_centerPane = center;
     center->setMinimumWidth(0);
     center->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    center->installEventFilter(this); // re-pin the mascot when the pane resizes
     auto *centerLayout = new QVBoxLayout(center);
     centerLayout->setContentsMargins(0, 0, 0, 0);
     centerLayout->setSpacing(0);
@@ -1310,8 +1318,6 @@ void MainWindow::buildUi() {
     setCentralWidget(m_splitter);
     // Clicking (not dragging) the handle collapses / reopens the sidebar.
     m_splitHandle = m_splitter->handle(1);
-    if (m_splitHandle)
-        m_splitHandle->installEventFilter(this);
 
     m_searchPopup = new SearchPopup(&m_searchIndex, this);
     connect(m_searchPopup, &SearchPopup::openRequested, this,
@@ -1339,8 +1345,6 @@ void MainWindow::buildUi() {
     m_findInput->setPlaceholderText(tr("Find in note…  (Enter / Shift+Enter)"));
     fh->addWidget(m_findInput);
     m_findBar->hide();
-    m_findInput->installEventFilter(this);
-    m_editor->installEventFilter(this); // reposition the bar on editor resize
     connect(m_findInput, &QLineEdit::textChanged, this, [this] {
         // Incremental: search from the start of the current selection.
         QTextCursor c = m_editor->textCursor();
@@ -1371,6 +1375,253 @@ void MainWindow::buildUi() {
     // step with the file.
     connect(m_editor, &MarkdownEditor::mascotSeedChanged, this,
             &MainWindow::onMascotSeedChanged);
+
+    buildShortcutCheatsheet();
+}
+
+void MainWindow::buildShortcutCheatsheet() {
+    struct ShortcutRow {
+        QString action;
+        QString keys;
+    };
+    using ShortcutRows = QList<ShortcutRow>;
+
+    const auto key = [](const QKeySequence &sequence) {
+        return sequence.toString(QKeySequence::NativeText);
+    };
+    const auto chord = [&key](Qt::KeyboardModifiers modifiers, Qt::Key value) {
+        return key(QKeySequence(modifiers | value));
+    };
+    const auto joined = [](const QString &left, const QString &right) {
+        return left + QStringLiteral("  /  ") + right;
+    };
+
+    const ShortcutRows workspace = {
+        {tr("New note"), key(QKeySequence(QKeySequence::New))},
+        {tr("Open vault"), key(QKeySequence(QKeySequence::Open))},
+        {tr("Switch vault"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_O)},
+        {tr("Save now"), key(QKeySequence(QKeySequence::Save))},
+        {tr("Rename note"), key(QKeySequence(Qt::Key_F2))},
+        {tr("Delete note"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_Backspace)},
+        {tr("Insert template"), chord(Qt::ControlModifier, Qt::Key_T)},
+        {tr("Insert image"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_I)},
+        {tr("Settings"), chord(Qt::ControlModifier, Qt::Key_Comma)},
+        {tr("Toggle sidebar"),
+         chord(Qt::ControlModifier, Qt::Key_Backslash)},
+        {tr("Quit Emerald"), chord(Qt::ControlModifier, Qt::Key_Q)},
+    };
+    const ShortcutRows navigation = {
+        {tr("Go to note"), chord(Qt::ControlModifier, Qt::Key_P)},
+        {tr("Find in note"), key(QKeySequence(QKeySequence::Find))},
+        {tr("Search vault"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_F)},
+        {tr("Review broken links"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_B)},
+        {tr("Open Graph View"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_G)},
+        {tr("Toggle Read Mode"), chord(Qt::ControlModifier, Qt::Key_E)},
+        {tr("Back / forward"),
+         joined(chord(Qt::AltModifier, Qt::Key_Left),
+                chord(Qt::AltModifier, Qt::Key_Right))},
+        {tr("Quick Jump to link"), tr("Hold Alt, then hint")},
+        {tr("Shortcut cheatsheet"),
+         tr("Hold %1").arg(chord(Qt::AltModifier, Qt::Key_X))},
+    };
+    const ShortcutRows editing = {
+        {tr("Undo / redo"),
+         joined(key(QKeySequence(QKeySequence::Undo)),
+                key(QKeySequence(QKeySequence::Redo)))},
+        {tr("Bold / italic"),
+         joined(chord(Qt::ControlModifier, Qt::Key_B),
+                chord(Qt::ControlModifier, Qt::Key_I))},
+        {tr("Insert link"), chord(Qt::ControlModifier, Qt::Key_K)},
+        {tr("Heading level 1–6"),
+         QStringLiteral("%1 … %2")
+             .arg(chord(Qt::ControlModifier, Qt::Key_1),
+                  chord(Qt::ControlModifier, Qt::Key_6))},
+        {tr("Select current line"), chord(Qt::ControlModifier, Qt::Key_L)},
+        {tr("New line below"), chord(Qt::ControlModifier, Qt::Key_Return)},
+        {tr("Move line up / down"),
+         joined(chord(Qt::AltModifier, Qt::Key_Up),
+                chord(Qt::AltModifier, Qt::Key_Down))},
+        {tr("Indent / outdent list"),
+         joined(key(QKeySequence(Qt::Key_Tab)),
+                key(QKeySequence(Qt::ShiftModifier | Qt::Key_Tab)))},
+        {tr("Next / previous table cell"),
+         joined(key(QKeySequence(Qt::Key_Tab)),
+                key(QKeySequence(Qt::ShiftModifier | Qt::Key_Tab)))},
+    };
+    const ShortcutRows viewAndGraph = {
+        {tr("Highlight Read Mode selection"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_H)},
+        {tr("Font size up / down"),
+         joined(chord(Qt::ControlModifier, Qt::Key_Plus),
+                chord(Qt::ControlModifier, Qt::Key_Minus))},
+        {tr("Reset font size"), chord(Qt::ControlModifier, Qt::Key_0)},
+        {tr("Fit / reset graph camera"),
+         joined(key(QKeySequence(Qt::Key_F)),
+                key(QKeySequence(Qt::Key_0)))},
+        {tr("Focus graph search"),
+         joined(key(QKeySequence(Qt::Key_Slash)),
+                key(QKeySequence(QKeySequence::Find)))},
+        {tr("Open selected graph note"), key(QKeySequence(Qt::Key_Return))},
+        {tr("Mascot gallery"), chord(Qt::ControlModifier, Qt::Key_G)},
+        {tr("Generate mascot"), chord(Qt::ControlModifier, Qt::Key_M)},
+        {tr("Delete mascot"),
+         chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_M)},
+    };
+
+    m_shortcutCheatsheet = new QFrame(this);
+    m_shortcutCheatsheet->setObjectName(QStringLiteral("shortcutCheatsheet"));
+    m_shortcutCheatsheet->setFrameShape(QFrame::StyledPanel);
+    m_shortcutCheatsheet->setFocusPolicy(Qt::NoFocus);
+
+    // X11-style repeat may arrive as release/press pairs. Delay a real X-up by
+    // one short frame; the immediately following repeat press cancels it,
+    // while a physical release still dismisses the hold overlay promptly.
+    m_shortcutReleaseTimer = new QTimer(this);
+    m_shortcutReleaseTimer->setSingleShot(true);
+    m_shortcutReleaseTimer->setInterval(35);
+    connect(m_shortcutReleaseTimer, &QTimer::timeout, this,
+            &MainWindow::hideShortcutCheatsheet);
+
+    auto *root = new QVBoxLayout(m_shortcutCheatsheet);
+    root->setContentsMargins(24, 20, 24, 20);
+    root->setSpacing(12);
+
+    auto *title = new QLabel(tr("Keyboard shortcuts"), m_shortcutCheatsheet);
+    title->setObjectName(QStringLiteral("shortcutCheatsheetTitle"));
+    title->setAlignment(Qt::AlignCenter);
+    root->addWidget(title);
+
+    auto *hint = new QLabel(
+        tr("Hold %1 · release either key to close")
+            .arg(chord(Qt::AltModifier, Qt::Key_X)),
+        m_shortcutCheatsheet);
+    hint->setObjectName(QStringLiteral("shortcutCheatsheetHint"));
+    hint->setAlignment(Qt::AlignCenter);
+    root->addWidget(hint);
+
+    auto *scroll = new QScrollArea(m_shortcutCheatsheet);
+    scroll->setObjectName(QStringLiteral("shortcutCheatsheetScroll"));
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setFocusPolicy(Qt::NoFocus);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    root->addWidget(scroll, 1);
+
+    auto *content = new QWidget(scroll);
+    content->setObjectName(QStringLiteral("shortcutCheatsheetContent"));
+    auto *columns = new QHBoxLayout(content);
+    m_shortcutColumnsLayout = columns;
+    columns->setContentsMargins(0, 0, 0, 0);
+    columns->setSpacing(12);
+
+    const auto makeSection = [this](QWidget *parent, const QString &heading,
+                                    const ShortcutRows &rows) {
+        auto *section = new QFrame(parent);
+        section->setObjectName(QStringLiteral("shortcutSection"));
+        auto *layout = new QVBoxLayout(section);
+        layout->setContentsMargins(14, 12, 14, 12);
+        layout->setSpacing(1);
+
+        auto *sectionTitle = new QLabel(heading, section);
+        sectionTitle->setObjectName(QStringLiteral("shortcutSectionTitle"));
+        layout->addWidget(sectionTitle);
+
+        for (const ShortcutRow &entry : rows) {
+            auto *row = new QWidget(section);
+            row->setObjectName(QStringLiteral("shortcutRow"));
+            auto *rowLayout = new QHBoxLayout(row);
+            rowLayout->setContentsMargins(0, 0, 0, 0);
+            rowLayout->setSpacing(8);
+
+            auto *action = new QLabel(entry.action, row);
+            action->setObjectName(QStringLiteral("shortcutAction"));
+            action->setWordWrap(true);
+            action->setSizePolicy(QSizePolicy::Expanding,
+                                  QSizePolicy::Preferred);
+            auto *keys = new QLabel(entry.keys, row);
+            keys->setObjectName(QStringLiteral("shortcutKey"));
+            keys->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            keys->setTextInteractionFlags(Qt::NoTextInteraction);
+            rowLayout->addWidget(action, 1);
+            rowLayout->addWidget(keys);
+            layout->addWidget(row);
+        }
+        layout->addStretch();
+        return section;
+    };
+
+    auto *left = new QWidget(content);
+    left->setObjectName(QStringLiteral("shortcutColumn"));
+    auto *leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(12);
+    leftLayout->addWidget(makeSection(left, tr("Workspace"), workspace));
+    leftLayout->addWidget(makeSection(left, tr("Editing"), editing));
+
+    auto *right = new QWidget(content);
+    right->setObjectName(QStringLiteral("shortcutColumn"));
+    auto *rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(12);
+    rightLayout->addWidget(makeSection(right, tr("Navigate & find"), navigation));
+    rightLayout->addWidget(
+        makeSection(right, tr("View, graph & mascot"), viewAndGraph));
+
+    columns->addWidget(left, 1);
+    columns->addWidget(right, 1);
+    scroll->setWidget(content);
+
+    m_shortcutCheatsheet->hide();
+    positionShortcutCheatsheet();
+}
+
+void MainWindow::positionShortcutCheatsheet() {
+    if (!m_shortcutCheatsheet)
+        return;
+    const int availableWidth = qMax(280, width() - 32);
+    const int availableHeight = qMax(260, height() - 32);
+    const QSize panel(qMin(920, availableWidth),
+                      qMin(680, availableHeight));
+    m_shortcutCheatsheet->setGeometry(
+        (width() - panel.width()) / 2,
+        (height() - panel.height()) / 2,
+        panel.width(), panel.height());
+    if (m_shortcutColumnsLayout) {
+        const QBoxLayout::Direction direction =
+            panel.width() < 680 ? QBoxLayout::TopToBottom
+                                : QBoxLayout::LeftToRight;
+        if (m_shortcutColumnsLayout->direction() != direction) {
+            m_shortcutColumnsLayout->setDirection(direction);
+            m_shortcutColumnsLayout->invalidate();
+        }
+    }
+}
+
+void MainWindow::showShortcutCheatsheet() {
+    if (!m_shortcutCheatsheet)
+        return;
+    if (m_shortcutReleaseTimer)
+        m_shortcutReleaseTimer->stop();
+    if (m_editor)
+        m_editor->suppressQuickJump();
+    m_shortcutCheatsheetHeld = true;
+    positionShortcutCheatsheet();
+    m_shortcutCheatsheet->show();
+    m_shortcutCheatsheet->raise();
+}
+
+void MainWindow::hideShortcutCheatsheet() {
+    if (m_shortcutReleaseTimer)
+        m_shortcutReleaseTimer->stop();
+    m_shortcutCheatsheetHeld = false;
+    if (m_shortcutCheatsheet)
+        m_shortcutCheatsheet->hide();
 }
 
 void MainWindow::notify(const QString &text, int ms) {
@@ -3584,9 +3835,63 @@ void MainWindow::positionFindBar() {
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
     updateResponsiveLayout();
+    positionShortcutCheatsheet();
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (event->type() == QEvent::ApplicationDeactivate ||
+        (watched == this && event->type() == QEvent::WindowDeactivate)) {
+        hideShortcutCheatsheet();
+    }
+
+    if (event->type() == QEvent::KeyPress ||
+        event->type() == QEvent::KeyRelease) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        const bool pressed = event->type() == QEvent::KeyPress;
+
+        // Always observe the releases that end an active hold, even if focus
+        // moved between children while the panel was visible. Let Alt release
+        // continue to the editor so its independent Quick Jump state also
+        // returns to idle; X remains consumed and can never reach note text.
+        if (m_shortcutCheatsheetHeld) {
+            if (keyEvent->isAutoRepeat() &&
+                (keyEvent->key() == Qt::Key_Alt ||
+                 keyEvent->key() == Qt::Key_X)) {
+                return true;
+            }
+            if (pressed && keyEvent->key() == Qt::Key_X) {
+                if (m_shortcutReleaseTimer)
+                    m_shortcutReleaseTimer->stop();
+                return true;
+            }
+            if (!pressed && keyEvent->key() == Qt::Key_Alt) {
+                hideShortcutCheatsheet();
+                return false;
+            }
+            if (!pressed && keyEvent->key() == Qt::Key_X) {
+                if (m_shortcutReleaseTimer)
+                    m_shortcutReleaseTimer->start();
+                else
+                    hideShortcutCheatsheet();
+                return true;
+            }
+            return true;
+        }
+
+        QWidget *receiver = qobject_cast<QWidget *>(watched);
+        const bool belongsToMainWindow =
+            receiver && (receiver == this || isAncestorOf(receiver));
+        const Qt::KeyboardModifiers modifiers =
+            keyEvent->modifiers() &
+            ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
+        if (pressed && belongsToMainWindow &&
+            keyEvent->key() == Qt::Key_X &&
+            modifiers == Qt::AltModifier) {
+            showShortcutCheatsheet();
+            return true;
+        }
+    }
+
     if (watched == m_findInput && event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
         if (ke->key() == Qt::Key_Escape) {

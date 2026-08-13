@@ -297,6 +297,65 @@ QLineEdit#findInput:focus {
     border: 1px solid #2bbf74;
 }
 
+/* Hold-to-view keyboard shortcut cheatsheet. It is a child overlay of the
+   main window, so it never creates another window or steals keyboard focus. */
+QFrame#shortcutCheatsheet {
+    background: #0f1211;
+    border: 1px solid #315b46;
+    border-radius: 14px;
+}
+QLabel#shortcutCheatsheetTitle {
+    background: transparent;
+    color: #e1f4ea;
+    font-size: 24px;
+    font-weight: 700;
+}
+QLabel#shortcutCheatsheetHint {
+    background: transparent;
+    color: #6f9882;
+    font-size: 13px;
+    padding-bottom: 3px;
+}
+QScrollArea#shortcutCheatsheetScroll,
+QScrollArea#shortcutCheatsheetScroll > QWidget > QWidget,
+QWidget#shortcutCheatsheetContent,
+QWidget#shortcutColumn {
+    background: transparent;
+    border: none;
+}
+QFrame#shortcutSection {
+    background: #151b18;
+    border: 1px solid #253a30;
+    border-radius: 9px;
+}
+QLabel#shortcutSectionTitle {
+    background: transparent;
+    color: #58d691;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 0 0 5px 1px;
+}
+QWidget#shortcutRow,
+QLabel#shortcutAction {
+    background: transparent;
+}
+QLabel#shortcutAction {
+    color: #b8d2c4;
+    font-size: 13px;
+}
+QLabel#shortcutKey {
+    background: #1d3227;
+    color: #d9eee3;
+    border: 1px solid #315b46;
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: 600;
+}
+
 QListWidget#searchResults {
     background: transparent;
     min-height: 90px;

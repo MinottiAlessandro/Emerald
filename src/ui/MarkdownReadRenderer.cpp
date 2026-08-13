@@ -105,19 +105,244 @@ int closingMarker(const QString &text, const QString &marker, int from) {
     return end > from ? end : -1;
 }
 
+enum InlineStyleFlag {
+    InlineBold = 1 << 0,
+    InlineItalic = 1 << 1,
+    InlineStrike = 1 << 2,
+    InlineHighlight = 1 << 3,
+};
+
+struct InlineStyleAnalysis {
+    QVector<int> mask;
+    QVector<bool> delimiters;
+};
+
+// Analyse emphasis over the complete source run before emitting any text.
+// Each delimiter kind contributes an independent flag, so valid pairs may
+// overlap (for example ==mark **bold== still bold**), matching Edit Mode's
+// live preview instead of requiring every style to be strictly nested.
+InlineStyleAnalysis analyzeInlineStyles(const QString &text) {
+    const int size = text.size();
+    InlineStyleAnalysis result{QVector<int>(size, 0),
+                               QVector<bool>(size, false)};
+    QVector<bool> protectedCharacter(size, false);
+
+    auto protect = [&](int start, int end) {
+        for (int i = qMax(0, start); i < end && i < size; ++i)
+            protectedCharacter[i] = true;
+    };
+
+    // Escaped characters and verbatim inline constructs cannot introduce
+    // emphasis delimiters. An enclosing style may still flow across them.
+    for (int i = 0; i + 1 < size; ++i) {
+        if (text.at(i) == QLatin1Char('\\')) {
+            protect(i, i + 2);
+            ++i;
+        }
+    }
+    for (int pos = 0; pos < size;) {
+        if (text.at(pos) != QLatin1Char('`')) {
+            ++pos;
+            continue;
+        }
+        const int end = closingMarker(text, QStringLiteral("`"), pos + 1);
+        if (end < 0) {
+            ++pos;
+            continue;
+        }
+        protect(pos, end + 1);
+        pos = end + 1;
+    }
+    auto mathIt = MathRender::pattern().globalMatch(text);
+    while (mathIt.hasNext()) {
+        const auto match = mathIt.next();
+        protect(match.capturedStart(0), match.capturedEnd(0));
+    }
+
+    // Link labels remain styleable, but hidden targets and link punctuation do
+    // not participate in delimiter matching. This prevents underscores in a
+    // URL or wiki target from leaking italic formatting into following text.
+    for (int pos = 0; pos + 1 < size;) {
+        if (text.mid(pos, 2) != QStringLiteral("[[")) {
+            ++pos;
+            continue;
+        }
+        const int end = text.indexOf(QStringLiteral("]]"), pos + 2);
+        if (end < 0) {
+            ++pos;
+            continue;
+        }
+        const int pipe = text.indexOf(QLatin1Char('|'), pos + 2);
+        protect(pos, pos + 2);
+        if (pipe >= 0 && pipe < end)
+            protect(pos + 2, pipe + 1);
+        protect(end, end + 2);
+        pos = end + 2;
+    }
+    for (int pos = 0; pos < size;) {
+        if (text.at(pos) != QLatin1Char('[') ||
+            (pos > 0 && text.at(pos - 1) == QLatin1Char('!'))) {
+            ++pos;
+            continue;
+        }
+        const int labelEnd = text.indexOf(QStringLiteral("]("), pos + 1);
+        if (labelEnd < 0) {
+            ++pos;
+            continue;
+        }
+        const int targetEnd = text.indexOf(QLatin1Char(')'), labelEnd + 2);
+        if (targetEnd < 0) {
+            ++pos;
+            continue;
+        }
+        protect(pos, pos + 1);
+        protect(labelEnd, targetEnd + 1);
+        pos = targetEnd + 1;
+    }
+
+    auto addStyle = [&](int start, int end, int style) {
+        for (int i = qMax(0, start); i < end && i < size; ++i)
+            result.mask[i] |= style;
+    };
+    auto markDelimiter = [&](int start, int end) {
+        for (int i = qMax(0, start); i < end && i < size; ++i)
+            result.delimiters[i] = true;
+    };
+
+    auto pairTwoCharacter = [&](QChar character, int style) {
+        int open = -1;
+        for (int i = 0; i + 1 < size;) {
+            if (!protectedCharacter.at(i) &&
+                !protectedCharacter.at(i + 1) &&
+                text.at(i) == character && text.at(i + 1) == character) {
+                if (open < 0) {
+                    open = i;
+                } else {
+                    addStyle(open + 2, i, style);
+                    markDelimiter(open, open + 2);
+                    markDelimiter(i, i + 2);
+                    open = -1;
+                }
+                i += 2;
+            } else {
+                ++i;
+            }
+        }
+    };
+    pairTwoCharacter(QLatin1Char('='), InlineHighlight);
+    pairTwoCharacter(QLatin1Char('~'), InlineStrike);
+
+    struct OpenDelimiter {
+        int contentStart = 0;
+        int delimiterStart = 0;
+        int delimiterEnd = 0;
+    };
+    auto matchRuns = [&](QChar character, bool intrawordRule) {
+        QVector<OpenDelimiter> boldStack;
+        QVector<OpenDelimiter> italicStack;
+        for (int i = 0; i < size;) {
+            if (protectedCharacter.at(i) || text.at(i) != character) {
+                ++i;
+                continue;
+            }
+            int end = i;
+            while (end < size && !protectedCharacter.at(end) &&
+                   text.at(end) == character)
+                ++end;
+            const int length = end - i;
+            const QChar before =
+                i > 0 ? text.at(i - 1) : QLatin1Char(' ');
+            const QChar after =
+                end < size ? text.at(end) : QLatin1Char(' ');
+            const bool canOpen = !intrawordRule || !before.isLetterOrNumber();
+            const bool canClose = !intrawordRule || !after.isLetterOrNumber();
+            int boldUnits = length / 2;
+            int italicUnits = length % 2;
+            if (canClose) {
+                while (boldUnits > 0 && !boldStack.isEmpty()) {
+                    const OpenDelimiter open = boldStack.takeLast();
+                    addStyle(open.contentStart, i, InlineBold);
+                    markDelimiter(open.delimiterStart, open.delimiterEnd);
+                    markDelimiter(i, end);
+                    --boldUnits;
+                }
+                while (italicUnits > 0 && !italicStack.isEmpty()) {
+                    const OpenDelimiter open = italicStack.takeLast();
+                    addStyle(open.contentStart, i, InlineItalic);
+                    markDelimiter(open.delimiterStart, open.delimiterEnd);
+                    markDelimiter(i, end);
+                    --italicUnits;
+                }
+            }
+            if (canOpen) {
+                for (int unit = 0; unit < boldUnits; ++unit)
+                    boldStack.append({end, i, end});
+                for (int unit = 0; unit < italicUnits; ++unit)
+                    italicStack.append({end, i, end});
+            }
+            i = end;
+        }
+    };
+    matchRuns(QLatin1Char('*'), false);
+    matchRuns(QLatin1Char('_'), true);
+    return result;
+}
+
+void applyInlineStyles(QTextCharFormat &format, int mask) {
+    if (mask & InlineBold)
+        format.setFontWeight(QFont::Bold);
+    if (mask & InlineItalic)
+        format.setFontItalic(true);
+    if (mask & InlineStrike)
+        format.setFontStrikeOut(true);
+    if (mask & InlineHighlight) {
+        format.setBackground(MarkdownStyle::highlightBackground());
+        format.setForeground(MarkdownStyle::highlightForeground());
+    }
+}
+
+QTextCharFormat withInlineStyles(const QTextCharFormat &base, int mask) {
+    QTextCharFormat format = base;
+    applyInlineStyles(format, mask);
+    return format;
+}
+
 // A deliberately small inline parser. It handles Emerald's existing live-
 // preview syntax without passing note content through HTML or loading external
-// resources. Recursive formatting lets emphasis nest inside links/strong text.
-void insertInline(QTextCursor &cursor, const QString &text,
-                  const QTextCharFormat &base,
-                  const MarkdownReadRenderer::Options &options,
-                  int sourceOffset, ReadSourceRanges *ranges) {
+// resources. Style analysis covers the full run while recursive parsing keeps
+// semantic link labels and their source mappings intact.
+void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
+                          const QTextCharFormat &base,
+                          const MarkdownReadRenderer::Options &options,
+                          int sourceOffset, ReadSourceRanges *ranges,
+                          const InlineStyleAnalysis &analysis,
+                          int analysisSourceOffset) {
     const QColor accent(0x58, 0xd6, 0x91);
     const QColor muted(0x79, 0x9a, 0x88);
+    const auto analysisPosition = [&](int localPosition) {
+        return sourceOffset + localPosition - analysisSourceOffset;
+    };
+    const auto styleAt = [&](int localPosition) {
+        const int position = analysisPosition(localPosition);
+        return position >= 0 && position < analysis.mask.size()
+                   ? analysis.mask.at(position)
+                   : 0;
+    };
+    const auto isDelimiter = [&](int localPosition) {
+        const int position = analysisPosition(localPosition);
+        return position >= 0 && position < analysis.delimiters.size() &&
+               analysis.delimiters.at(position);
+    };
     int pos = 0;
     while (pos < text.size()) {
+        if (isDelimiter(pos)) {
+            ++pos;
+            continue;
+        }
+
         if (text.at(pos) == QLatin1Char('\\') && pos + 1 < text.size()) {
-            insertMappedText(cursor, text.mid(pos + 1, 1), base,
+            insertMappedText(cursor, text.mid(pos + 1, 1),
+                             withInlineStyles(base, styleAt(pos + 1)),
                              sourceOffset + pos, 2, ranges);
             pos += 2;
             continue;
@@ -151,10 +376,10 @@ void insertInline(QTextCursor &cursor, const QString &text,
                         f.setToolTip(target);
                     }
                 });
-                insertInline(cursor, label, link, options,
-                             sourceOffset + pos + 2 + labelStart +
-                                 leadingSpace,
-                             ranges);
+                insertInlineAnalyzed(
+                    cursor, label, link, options,
+                    sourceOffset + pos + 2 + labelStart + leadingSpace,
+                    ranges, analysis, analysisSourceOffset);
                 pos = end + 2;
                 continue;
             }
@@ -178,9 +403,10 @@ void insertInline(QTextCursor &cursor, const QString &text,
                                 f.setToolTip(target);
                             }
                         });
-                    insertInline(cursor,
-                                 text.mid(pos + 1, labelEnd - pos - 1), link,
-                                 options, sourceOffset + pos + 1, ranges);
+                    insertInlineAnalyzed(
+                        cursor, text.mid(pos + 1, labelEnd - pos - 1), link,
+                        options, sourceOffset + pos + 1, ranges, analysis,
+                        analysisSourceOffset);
                     pos = targetEnd + 1;
                     continue;
                 }
@@ -195,7 +421,8 @@ void insertInline(QTextCursor &cursor, const QString &text,
                     QString label = text.mid(pos + 2, labelEnd - pos - 2).trimmed();
                     if (label.isEmpty())
                         label = QStringLiteral("Image");
-                    QTextCharFormat image = base;
+                    QTextCharFormat image =
+                        withInlineStyles(base, styleAt(pos));
                     image.setForeground(muted);
                     image.setFontItalic(true);
                     insertMappedText(cursor, QStringLiteral("[%1]").arg(label),
@@ -207,45 +434,12 @@ void insertInline(QTextCursor &cursor, const QString &text,
             }
         }
 
-        QString pairedMarker;
-        enum PairedStyle { None, Strong, Strike, Highlight } pairedStyle = None;
-        if (text.mid(pos, 2) == QStringLiteral("**") ||
-            text.mid(pos, 2) == QStringLiteral("__")) {
-            pairedMarker = text.mid(pos, 2);
-            pairedStyle = Strong;
-        } else if (text.mid(pos, 2) == QStringLiteral("~~")) {
-            pairedMarker = QStringLiteral("~~");
-            pairedStyle = Strike;
-        } else if (text.mid(pos, 2) == QStringLiteral("==")) {
-            pairedMarker = QStringLiteral("==");
-            pairedStyle = Highlight;
-        }
-        if (pairedStyle != None) {
-            const int end = closingMarker(text, pairedMarker, pos + 2);
-            if (end >= 0) {
-                QTextCharFormat format = base;
-                if (pairedStyle == Strong)
-                    format.setFontWeight(QFont::Bold);
-                else if (pairedStyle == Strike)
-                    format.setFontStrikeOut(true);
-                else {
-                    format.setBackground(
-                        MarkdownStyle::highlightBackground());
-                    format.setForeground(
-                        MarkdownStyle::highlightForeground());
-                }
-                insertInline(cursor, text.mid(pos + 2, end - pos - 2), format,
-                             options, sourceOffset + pos + 2, ranges);
-                pos = end + 2;
-                continue;
-            }
-        }
-
         if (text.at(pos) == QLatin1Char('`')) {
             const int end = closingMarker(text, QStringLiteral("`"), pos + 1);
             if (end >= 0) {
-                QTextCharFormat code = base;
-                code.setFont(monospaceFont(base.font()));
+                QTextCharFormat code =
+                    withInlineStyles(base, styleAt(pos + 1));
+                code.setFont(monospaceFont(code.font()));
                 code.setBackground(QColor(0x22, 0x2f, 0x28));
                 code.setForeground(QColor(0xd5, 0xe9, 0xde));
                 insertMappedText(cursor,
@@ -263,6 +457,7 @@ void insertInline(QTextCursor &cursor, const QString &text,
                 QTextCharFormat formula =
                     MarkdownReadObjectRenderer::inlineMathFormat(
                         options.baseFont, math.captured(1));
+                applyInlineStyles(formula, styleAt(pos));
                 if (base.isAnchor()) {
                     formula.setAnchor(true);
                     formula.setAnchorHref(base.anchorHref());
@@ -277,28 +472,26 @@ void insertInline(QTextCursor &cursor, const QString &text,
             }
         }
 
-        if (text.at(pos) == QLatin1Char('*') ||
-            text.at(pos) == QLatin1Char('_')) {
-            const QString marker(text.at(pos));
-            const int end = closingMarker(text, marker, pos + 1);
-            if (end >= 0) {
-                const QTextCharFormat emphasis =
-                    merged(base, [](QTextCharFormat &f) { f.setFontItalic(true); });
-                insertInline(cursor, text.mid(pos + 1, end - pos - 1), emphasis,
-                             options, sourceOffset + pos + 1, ranges);
-                pos = end + 1;
-                continue;
-            }
-        }
-
         int next = pos + 1;
+        const int mask = styleAt(pos);
         while (next < text.size() &&
-               !QStringLiteral("\\[!*_`~=$").contains(text.at(next)))
+               !QStringLiteral("\\[!*_`~=$").contains(text.at(next)) &&
+               !isDelimiter(next) && styleAt(next) == mask)
             ++next;
-        insertMappedText(cursor, text.mid(pos, next - pos), base,
+        insertMappedText(cursor, text.mid(pos, next - pos),
+                         withInlineStyles(base, mask),
                          sourceOffset + pos, next - pos, ranges);
         pos = next;
     }
+}
+
+void insertInline(QTextCursor &cursor, const QString &text,
+                  const QTextCharFormat &base,
+                  const MarkdownReadRenderer::Options &options,
+                  int sourceOffset, ReadSourceRanges *ranges) {
+    const InlineStyleAnalysis analysis = analyzeInlineStyles(text);
+    insertInlineAnalyzed(cursor, text, base, options, sourceOffset, ranges,
+                         analysis, sourceOffset);
 }
 
 QTextBlockFormat baseBlockFormat(int lineSpacing) {
@@ -932,6 +1125,12 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                     const bool isTitle =
                         calloutTitle.valid() &&
                         calloutTitle.quote.depth == calloutDepth;
+                    block.setProperty(MarkdownStyle::CalloutTypeProperty,
+                                      calloutType);
+                    block.setProperty(MarkdownStyle::CalloutDepthProperty,
+                                      calloutDepth);
+                    block.setProperty(MarkdownStyle::CalloutTitleProperty,
+                                      isTitle);
                     block.setBackground(
                         MarkdownCallout::surface(calloutType, isTitle));
                     text.setFontItalic(false);

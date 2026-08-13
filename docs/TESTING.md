@@ -265,6 +265,7 @@ Verify each fires and that menu items show their shortcut label.
 | Settings                           | `Ctrl+,`                       | [ ] |
 | Back / Forward                     | `Alt+←` / `Alt+→`              | [ ] |
 | Quick Jump to visible link         | Hold `Alt`, then type hint     | [ ] |
+| Shortcut cheatsheet                | Hold `Alt+X`; release to close | [ ] |
 | Bold / Italic                      | `Ctrl+B` / `Ctrl+I`            | [ ] |
 | Insert link                        | `Ctrl+K`                       | [ ] |
 | Heading 1–6 (press again to clear) | `Ctrl+1` … `Ctrl+6`            | [ ] |

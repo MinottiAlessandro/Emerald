@@ -14,6 +14,9 @@ inline QColor highlightBackground() { return QColor(0x7e, 0xe0, 0xa8); }
 // item. Keeping this on the block format makes hierarchy lookup and fold hit
 // testing constant-time instead of repeatedly walking backwards through a
 // potentially very large note.
+inline constexpr int CalloutTypeProperty = QTextFormat::UserProperty + 520;
+inline constexpr int CalloutDepthProperty = QTextFormat::UserProperty + 521;
+inline constexpr int CalloutTitleProperty = QTextFormat::UserProperty + 522;
 inline constexpr int ListDepthProperty = QTextFormat::UserProperty + 523;
 inline constexpr int ListParentBlockProperty = QTextFormat::UserProperty + 524;
 } // namespace MarkdownStyle

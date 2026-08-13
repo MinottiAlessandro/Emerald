@@ -95,6 +95,11 @@ public:
     // blocks are never dereferenced by reapplyFolds() during the load.
     void clearFolds();
 
+    // An application-level Alt chord has taken ownership of the keyboard.
+    // Cancel both pending and visible Quick Jump state immediately so link
+    // hints cannot remain behind the owning overlay.
+    void suppressQuickJump();
+
 signals:
     void linkClicked(const QString &target);
     void navigateBack();
@@ -237,6 +242,10 @@ private:
     QRectF foldControlRect(const QTextBlock &block) const;
     QRectF listMarkerRect(const QTextBlock &block) const;
     void drawFoldControls(QPainter &painter, const QRect &clip) const;
+    // Paint one continuous quote/callout panel behind consecutive rows. Shared
+    // by Edit and Read modes so fractional block geometry cannot expose seams.
+    void drawQuotePanels(QPainter &painter, const QRect &clip,
+                         bool drawRails = true) const;
 
     struct CodeBlock {
         QRectF header;   // the top header bar (language tag + copy button)

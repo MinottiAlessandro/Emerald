@@ -100,7 +100,7 @@ it opens or installs a download.
 - **Accents** (`\hat \bar \vec \tilde \dot \ddot \widehat \overline`), **grown delimiters** `\left( … \right]`, **`\text` / `\textbf` / `\operatorname`**, **matrices** (`pmatrix` `bmatrix` `vmatrix` …), ~150 symbol commands (Greek, operators, relations, arrows), and full Unicode (emoji, CJK).
 
 **Links & navigation**
-- `[[Note]]` links are clickable (plain click once rendered, Ctrl+click on the line you're editing) and auto-create their target. `[[Note|alias]]` shows just the alias. Typing `[[` pops a fuzzy autocomplete of existing titles. Hold `Alt` for a moment to label every visible link, then type its QWERTY-ordered hint to open it without the mouse.
+- `[[Note]]` links are clickable (plain click once rendered, Ctrl+click on the line you're editing) and auto-create their target. `[[Note|alias]]` shows just the alias. Typing `[[` pops a fuzzy autocomplete of existing titles. Hold `Alt` for a moment to label every visible link, then type its QWERTY-ordered hint to open it without the mouse (`X` is reserved for the shortcuts panel).
 - **External links** — `[text](https://…)` renders as a clickable link (the `](url)` melts away, leaving just the text) and opens in your browser.
 - **Title = filename** — the note's title is the first line above the body; editing it renames the file and rewrites every inbound `[[link]]`.
 - **Back / forward history** like a browser (`Alt+←` / `Alt+→`, mouse side buttons, or the sidebar arrows).
@@ -122,6 +122,7 @@ it opens or installs a download.
 
 **Polish**
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
+- **Hold-to-view shortcut cheatsheet** — keep `Alt+X` pressed for a centered, categorized reference, then release either key to dismiss it without losing focus.
 - **Responsive layout** — at narrow widths, the folder tree and editor become separate full-width views with compact Notes/Editor navigation and always-available new-note, search, and gear controls.
 - **Adjustable editor font** (family + size, persisted) and **line spacing**; heading sizes scale with the font.
 - **Smooth scrolling** — mouse-wheel steps ease between pixel positions; high-resolution trackpad deltas remain native and direct, and Read Mode's ↑/↓ movement uses the same pixel-based viewport.
@@ -154,6 +155,7 @@ it opens or installs a download.
 | Settings | `Ctrl+,` |
 | Back / Forward | `Alt+←` / `Alt+→` |
 | Quick Jump to visible link | Hold `Alt`, then type its hint |
+| Show shortcut cheatsheet | Hold `Alt+X`; release either key to close |
 | Bold / Italic | `Ctrl+B` / `Ctrl+I` |
 | Insert link | `Ctrl+K` |
 | Heading level 1–6 (press again to clear) | `Ctrl+1` … `Ctrl+6` |

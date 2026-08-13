@@ -1236,6 +1236,49 @@ void MarkdownHighlighter::strikeConsumedInline(const QString &text, bool reveal,
         }
     }
 
+    // Wiki links are rendered before (and therefore excluded from) the
+    // emphasis pass. Reapply their visible label with the link styling plus a
+    // strike whenever an enclosing ~~...~~ span crosses the link.
+    QList<bool> wikiProtected(text.size(), false);
+    auto protectForWiki = [&](const QRegularExpression &pattern) {
+        auto it = pattern.globalMatch(text);
+        while (it.hasNext()) {
+            const auto match = it.next();
+            for (int i = qMax(0, match.capturedStart(0));
+                 i < match.capturedEnd(0) && i < wikiProtected.size(); ++i)
+                wikiProtected[i] = true;
+        }
+    };
+    protectForWiki(m_reCode);
+    protectForWiki(MathRender::pattern());
+    protectForWiki(m_reLink);
+
+    auto wikiIt = WikiLink::pattern().globalMatch(text);
+    while (wikiIt.hasNext()) {
+        const auto match = wikiIt.next();
+        if (!spanStruck(match.capturedStart(0), match.capturedEnd(0)))
+            continue;
+        bool protectedOverlap = false;
+        for (int i = match.capturedStart(0);
+             i < match.capturedEnd(0) && i < wikiProtected.size(); ++i) {
+            if (i >= 0 && wikiProtected.at(i)) {
+                protectedOverlap = true;
+                break;
+            }
+        }
+        if (protectedOverlap)
+            continue;
+        const QString inner = match.captured(1);
+        const int innerStart = match.capturedStart(1);
+        const int pipe = inner.indexOf(QLatin1Char('|'));
+        const int displayStart =
+            reveal || pipe < 0 ? innerStart : innerStart + pipe + 1;
+        const int displayEnd = match.capturedEnd(1);
+        QTextCharFormat link = inlineFormat(m_link);
+        link.setFontStrikeOut(true);
+        setFormat(displayStart, displayEnd - displayStart, link);
+    }
+
     // Inline math: only the revealed (active-line) source is real text here;
     // off the active line the editor paints it and strikes it there.
     if (reveal) {
