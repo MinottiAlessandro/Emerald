@@ -4,7 +4,9 @@
 
 #include <QFileInfo>
 #include <QHideEvent>
+#include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QVBoxLayout>
@@ -23,6 +25,19 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
     setFrameShape(QFrame::StyledPanel);
     hide();
 
+    auto *header = new QWidget(this);
+    header->setObjectName(QStringLiteral("searchPopupHeader"));
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(1, 0, 1, 0);
+    headerLayout->setSpacing(8);
+    m_title = new QLabel(tr("Search vault"), header);
+    m_title->setObjectName(QStringLiteral("searchPopupTitle"));
+    auto *dismissHint = new QLabel(tr("Esc"), header);
+    dismissHint->setObjectName(QStringLiteral("searchPopupDismissHint"));
+    headerLayout->addWidget(m_title);
+    headerLayout->addStretch();
+    headerLayout->addWidget(dismissHint);
+
     m_input = new QLineEdit(this);
     m_input->setObjectName(QStringLiteral("searchInput"));
     m_input->setPlaceholderText(tr("Search notes…"));
@@ -33,8 +48,9 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
     m_results->setUniformItemSizes(false);
 
     auto *col = new QVBoxLayout(this);
-    col->setContentsMargins(10, 10, 10, 10);
-    col->setSpacing(8);
+    col->setContentsMargins(12, 10, 12, 12);
+    col->setSpacing(7);
+    col->addWidget(header);
     col->addWidget(m_input);
     col->addWidget(m_results);
 
@@ -48,11 +64,17 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
         parent->installEventFilter(this);
 }
 
+void SearchPopup::setModeTitle(const QString &title) {
+    if (m_title)
+        m_title->setText(title);
+}
+
 void SearchPopup::showCentered(bool titlesOnly) {
     m_vaultMode = false;
     m_templateMode = false;
     m_brokenLinkMode = false;
     m_titlesOnly = titlesOnly;
+    setModeTitle(titlesOnly ? tr("Go to note") : tr("Search vault"));
     m_input->setPlaceholderText(titlesOnly ? tr("Go to note…")
                                            : tr("Search notes…"));
     m_input->clear();
@@ -67,6 +89,7 @@ void SearchPopup::showVaults(const QStringList &dirs) {
     m_vaultMode = true;
     m_templateMode = false;
     m_brokenLinkMode = false;
+    setModeTitle(tr("Switch vault"));
     m_vaultDirs = dirs;
     m_input->setPlaceholderText(tr("Switch vault…"));
     m_input->clear();
@@ -81,6 +104,7 @@ void SearchPopup::showTemplates(const QStringList &files) {
     m_vaultMode = false;
     m_templateMode = true;
     m_brokenLinkMode = false;
+    setModeTitle(tr("Insert template"));
     m_templateFiles = files;
     m_input->setPlaceholderText(tr("Insert template…"));
     m_input->clear();
@@ -95,6 +119,7 @@ void SearchPopup::showBrokenLinks(const QList<BrokenLinkItem> &items) {
     m_vaultMode = false;
     m_templateMode = false;
     m_brokenLinkMode = true;
+    setModeTitle(tr("Broken links"));
     m_brokenLinkItems = items;
     m_input->setPlaceholderText(tr("Filter broken links…"));
     m_input->clear();

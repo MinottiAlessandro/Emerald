@@ -261,35 +261,74 @@ QDockWidget::title {
     letter-spacing: 1px;
 }
 
-/* Telescope-style search overlay */
+/* Compact command palette shared by search, quick-open, vault switching,
+   templates, and the broken-link report. */
 QFrame#searchPopup {
-    background: #101113;
-    border: 1px solid #2f4a3b;
-    border-radius: 10px;
+    background: #121512;
+    border: 1px solid #315140;
+    border-radius: 8px;
+}
+QWidget#searchPopupHeader {
+    background: transparent;
+}
+QLabel#searchPopupTitle {
+    background: transparent;
+    color: #d7eee2;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#searchPopupDismissHint {
+    background: #1a211d;
+    color: #789384;
+    border: 1px solid #294035;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: monospace;
+    font-size: 11px;
 }
 QLineEdit#searchInput {
-    background: #17181b;
+    background: #181c19;
     color: #d7eee2;
-    border: 1px solid #1f4733;
-    border-radius: 6px;
-    padding: 7px 10px;
+    border: 1px solid #294035;
+    border-radius: 5px;
+    padding: 7px 9px;
     font-size: 14px;
     selection-background-color: #1f4a33;
 }
 QLineEdit#searchInput:focus {
-    border: 1px solid #2bbf74;
+    border-color: #39bd79;
+}
+QListWidget#searchResults {
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: 90px;
+    max-height: 360px;
+}
+QListWidget#searchResults::item {
+    color: #9fbeae;
+    padding: 7px 9px;
+    border-radius: 4px;
+    margin: 1px 0;
+}
+QListWidget#searchResults::item:hover {
+    background: #18241e;
+}
+QListWidget#searchResults::item:selected {
+    background: #1d3d2d;
+    color: #e1f4ea;
 }
 /* In-note find bar (top-right of the editor) */
 QFrame#findBar {
-    background: #101113;
-    border: 1px solid #2f4a3b;
-    border-radius: 8px;
+    background: #121512;
+    border: 1px solid #315140;
+    border-radius: 6px;
 }
 QLineEdit#findInput {
-    background: #17181b;
+    background: #181c19;
     color: #d7eee2;
-    border: 1px solid #1f4733;
-    border-radius: 6px;
+    border: 1px solid #294035;
+    border-radius: 4px;
     padding: 5px 8px;
     selection-background-color: #1f4a33;
 }
@@ -300,21 +339,21 @@ QLineEdit#findInput:focus {
 /* Hold-to-view keyboard shortcut cheatsheet. It is a child overlay of the
    main window, so it never creates another window or steals keyboard focus. */
 QFrame#shortcutCheatsheet {
-    background: #0f1211;
-    border: 1px solid #315b46;
-    border-radius: 14px;
+    background: #121512;
+    border: 1px solid #315140;
+    border-radius: 9px;
 }
 QLabel#shortcutCheatsheetTitle {
     background: transparent;
-    color: #e1f4ea;
-    font-size: 24px;
+    color: #d7eee2;
+    font-size: 20px;
     font-weight: 700;
 }
 QLabel#shortcutCheatsheetHint {
     background: transparent;
-    color: #6f9882;
-    font-size: 13px;
-    padding-bottom: 3px;
+    color: #789384;
+    font-size: 12px;
+    padding-bottom: 2px;
 }
 QScrollArea#shortcutCheatsheetScroll,
 QScrollArea#shortcutCheatsheetScroll > QWidget > QWidget,
@@ -324,14 +363,14 @@ QWidget#shortcutColumn {
     border: none;
 }
 QFrame#shortcutSection {
-    background: #151b18;
-    border: 1px solid #253a30;
-    border-radius: 9px;
+    background: #171b18;
+    border: 1px solid #263c31;
+    border-radius: 6px;
 }
 QLabel#shortcutSectionTitle {
     background: transparent;
-    color: #58d691;
-    font-size: 13px;
+    color: #56cf8c;
+    font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -342,157 +381,311 @@ QLabel#shortcutAction {
     background: transparent;
 }
 QLabel#shortcutAction {
-    color: #b8d2c4;
-    font-size: 13px;
+    color: #abc7b8;
+    font-size: 12px;
 }
 QLabel#shortcutKey {
-    background: #1d3227;
+    background: #1c2d24;
     color: #d9eee3;
-    border: 1px solid #315b46;
-    border-radius: 5px;
-    padding: 2px 7px;
+    border: 1px solid #315140;
+    border-radius: 4px;
+    padding: 2px 6px;
     font-family: monospace;
     font-size: 12px;
     font-weight: 600;
 }
 
-QListWidget#searchResults {
-    background: transparent;
-    min-height: 90px;
-    max-height: 360px;
-}
-
 /* [[ autocomplete popup */
 QListView#completer {
-    background: #101113;
+    background: #121512;
     color: #d7eee2;
-    border: 1px solid #1f4733;
-    border-radius: 6px;
-    padding: 4px;
+    border: 1px solid #315140;
+    border-radius: 5px;
+    padding: 3px;
     outline: 0;
 }
 QListView#completer::item {
-    padding: 5px 10px;
-    border-radius: 4px;
+    padding: 6px 9px;
+    border-radius: 3px;
 }
 QListView#completer::item:selected {
-    background: #1f4733;
+    background: #1d3d2d;
 }
 
 QMenuBar {
-    background: #101113;
-    color: #a9c8b8;
+    background: #121512;
+    color: #a8c3b5;
 }
 QMenuBar::item:selected {
-    background: #1f4733;
+    background: #1d3d2d;
 }
 QMenu {
-    background: #101113;
-    color: #a9c8b8;
-    border: 1px solid #1f4733;
-    padding: 4px;
+    background: #121512;
+    color: #a8c3b5;
+    border: 1px solid #315140;
+    border-radius: 6px;
+    padding: 5px;
 }
 QMenu::item {
-    padding: 6px 22px;
-    border-radius: 5px;
+    padding: 6px 24px 6px 10px;
+    border-radius: 4px;
+    margin: 1px 0;
 }
 QMenu::item:selected {
-    background: #1f4733;
+    background: #1d3d2d;
+    color: #e1f4ea;
+}
+QMenu::item:disabled {
+    color: #4f6559;
+}
+QMenu::indicator {
+    width: 13px;
+    height: 13px;
+    margin-left: 7px;
+}
+QMenu::indicator:checked {
+    background: #39bd79;
+    border: 1px solid #39bd79;
+    border-radius: 3px;
 }
 QMenu::separator {
     height: 1px;
-    background: #1f4733;
-    margin: 4px 8px;
+    background: #263c31;
+    margin: 5px 7px;
 }
 
-/* Settings dialog */
-QDialog#settingsDialog {
-    background: #17181b;
+/* App-owned dialogs share one compact shell. Specialized dialogs keep their
+   own layouts while inheriting the same surface, typography, fields, and
+   action hierarchy. Non-native QFileDialogs are used so this also covers the
+   Open Vault and Insert Image flows on every platform. */
+QDialog {
+    background: #171a18;
+    color: #a8c3b5;
 }
-QDialog#settingsDialog QLabel,
-QDialog#settingsDialog QCheckBox {
+QDialog QLabel,
+QDialog QCheckBox,
+QDialog QRadioButton,
+QDialog QScrollArea,
+QDialog QScrollArea > QWidget > QWidget {
     background: transparent;
+}
+QDialog QAbstractButton {
+    outline: none;
 }
 QLabel#settingsTitle {
     color: #d7eee2;
-    font-size: 24px;
+    font-size: 21px;
     font-weight: 700;
 }
 QLabel#settingsSubtitle {
-    color: #6f8e7e;
-    font-size: 13px;
+    color: #789384;
+    font-size: 12px;
 }
 QFrame#settingsSection {
-    background: #101113;
-    border: 1px solid #20382b;
-    border-radius: 8px;
+    background: #121512;
+    border: 1px solid #263c31;
+    border-radius: 6px;
+}
+QFrame#settingsSection QWidget {
+    background: transparent;
 }
 QLabel#settingsSectionTitle {
     color: #d7eee2;
-    font-size: 15px;
-    font-weight: 700;
+    font-size: 14px;
+    font-weight: 600;
 }
 QLabel#settingsSectionDescription {
-    color: #6f8e7e;
+    color: #789384;
     font-size: 12px;
 }
 QLabel#settingsFieldLabel {
-    color: #a9c8b8;
-    font-size: 13px;
+    color: #9fbaac;
+    font-size: 12px;
 }
-QDialog#settingsDialog QComboBox,
-QDialog#settingsDialog QAbstractSpinBox,
-QDialog#settingsDialog QLineEdit {
-    background: #17181b;
+QDialog QComboBox,
+QDialog QAbstractSpinBox,
+QDialog QLineEdit {
+    background: #1b1f1c;
     color: #d7eee2;
-    border: 1px solid #254232;
-    border-radius: 6px;
-    padding: 6px 9px;
-    min-height: 28px;
+    border: 1px solid #294035;
+    border-radius: 5px;
+    padding: 5px 8px;
+    min-height: 26px;
     selection-background-color: #1f4a33;
 }
-QDialog#settingsDialog QComboBox:focus,
-QDialog#settingsDialog QAbstractSpinBox:focus,
-QDialog#settingsDialog QLineEdit:focus {
-    border: 1px solid #2bbf74;
+QDialog QComboBox:hover,
+QDialog QAbstractSpinBox:hover,
+QDialog QLineEdit:hover {
+    border-color: #3a5e4b;
 }
-QDialog#settingsDialog QComboBox::drop-down {
+QDialog QComboBox:focus,
+QDialog QAbstractSpinBox:focus,
+QDialog QLineEdit:focus {
+    border-color: #39bd79;
+}
+QDialog QComboBox::drop-down {
     border: none;
-    width: 26px;
+    width: 24px;
 }
-QDialog#settingsDialog QCheckBox {
+QDialog QCheckBox,
+QDialog QRadioButton {
     color: #d7eee2;
-    spacing: 8px;
+    spacing: 7px;
 }
-QDialog#settingsDialog QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border: 1px solid #2f4a3b;
+QDialog QCheckBox::indicator {
+    width: 15px;
+    height: 15px;
+    border: 1px solid #365344;
+    border-radius: 3px;
+    background: #1b1f1c;
+}
+QDialog QCheckBox::indicator:checked {
+    background: #39bd79;
+    border-color: #39bd79;
+}
+QDialog QPushButton {
+    background: #1b211d;
+    color: #aac5b7;
+    border: 1px solid #315140;
+    border-radius: 5px;
+    padding: 6px 13px;
+    min-width: 68px;
+}
+QDialog QPushButton:focus {
+    border-color: #39bd79;
+}
+QDialog QPushButton:hover {
+    background: #202c25;
+    border-color: #47715a;
+    color: #e1f4ea;
+}
+QDialog QPushButton:pressed {
+    background: #18221d;
+}
+QDialog QPushButton:disabled {
+    background: #171b18;
+    color: #4f6257;
+    border-color: #24362d;
+}
+QDialog QPushButton[dialogRole="primary"] {
+    background: #237349;
+    color: #effaf4;
+    border-color: #2f9a62;
+    font-weight: 600;
+}
+QDialog QPushButton[dialogRole="primary"]:hover {
+    background: #288454;
+    border-color: #39bd79;
+}
+QDialog QPushButton:default {
+    background: #237349;
+    color: #effaf4;
+    border-color: #2f9a62;
+    font-weight: 600;
+}
+QDialog QPushButton[dialogRole="destructive"] {
+    background: #522d2d;
+    color: #f2d8d8;
+    border-color: #794141;
+}
+QDialog QPushButton[dialogRole="destructive"]:hover {
+    background: #633434;
+    border-color: #9b5656;
+}
+QDialog QProgressBar {
+    background: #111412;
+    border: 1px solid #294035;
     border-radius: 4px;
-    background: #17181b;
+    min-height: 7px;
+    max-height: 7px;
 }
-QDialog#settingsDialog QCheckBox::indicator:checked {
-    background: #2bbf74;
-    border: 1px solid #2bbf74;
+QDialog QProgressBar::chunk {
+    background: #39bd79;
+    border-radius: 3px;
 }
-QDialog#settingsDialog QPushButton {
-    background: #1f4733;
-    color: #d7eee2;
-    border: 1px solid #2f4a3b;
+
+/* System-style dialogs still receive Emerald's compact content treatment. */
+QMessageBox QLabel {
+    color: #c8dfd3;
+}
+QMessageBox QLabel#qt_msgbox_label {
+    min-width: 260px;
+    padding: 7px 8px 9px 8px;
+    qproperty-alignment: AlignCenter;
+}
+QMessageBox QTextEdit,
+QMessageBox QPlainTextEdit {
+    background: #111412;
+    color: #9fbaac;
+    border: 1px solid #294035;
+    border-radius: 5px;
+    padding: 7px;
+}
+QFileDialog QTreeView,
+QFileDialog QListView {
+    background: #121512;
+    color: #a8c3b5;
+    border: 1px solid #263c31;
+    border-radius: 5px;
+    padding: 3px;
+}
+QFileDialog QTreeView::item,
+QFileDialog QListView::item {
+    padding: 5px 7px;
+    margin: 0;
+    border-radius: 3px;
+}
+QFileDialog QTreeView::item:selected,
+QFileDialog QListView::item:selected {
+    background: #1d3d2d;
+    color: #e1f4ea;
+}
+QFileDialog QHeaderView::section {
+    background: #171b18;
+    color: #789384;
+    border: none;
+    border-bottom: 1px solid #263c31;
+    padding: 5px 7px;
+}
+QFileDialog QToolButton {
+    background: transparent;
+    color: #9fbaac;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 4px;
+}
+QFileDialog QToolButton:hover {
+    background: #1d3d2d;
+    color: #e1f4ea;
+    border-color: #315140;
+}
+QFileDialog QToolButton:focus,
+QToolButton#mascotGalleryItem:focus {
+    border-color: #39bd79;
+}
+QDialog QComboBox QAbstractItemView {
+    background: #121512;
+    color: #a8c3b5;
+    border: 1px solid #315140;
+    selection-background-color: #1d3d2d;
+    selection-color: #e1f4ea;
+    outline: 0;
+    padding: 3px;
+}
+
+/* The gallery uses the shared dialog shell with dense selectable cards. */
+QToolButton#mascotGalleryItem {
+    background: #121512;
+    color: #aac5b7;
+    border: 1px solid #263c31;
     border-radius: 6px;
-    padding: 7px 16px;
-    min-width: 72px;
+    padding: 7px;
+    font-size: 12px;
 }
-QDialog#settingsDialog QPushButton:hover {
-    background: #286044;
-}
-QDialog#settingsDialog QPushButton:pressed {
-    background: #183927;
-}
-QDialog#settingsDialog QPushButton:disabled {
-    background: #16241c;
-    color: #4f6555;
-    border: 1px solid #20382b;
+QToolButton#mascotGalleryItem:hover {
+    background: #18241e;
+    color: #e1f4ea;
+    border-color: #47715a;
 }
 
 /* Transient toast notice that floats over the bottom of the editor and

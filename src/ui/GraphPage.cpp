@@ -71,6 +71,7 @@ GraphPage::GraphPage(QWidget *parent) : QWidget(parent) {
   m_filterButton->setText(tr("Filters"));
   m_filterButton->setPopupMode(QToolButton::InstantPopup);
   auto *filterMenu = new QMenu(m_filterButton);
+  filterMenu->setObjectName(QStringLiteral("graphFilterMenu"));
   auto addFilterAction = [filterMenu](const QString &text, bool checked) {
     QAction *action = filterMenu->addAction(text);
     action->setCheckable(true);
@@ -82,7 +83,9 @@ GraphPage::GraphPage(QWidget *parent) : QWidget(parent) {
   QAction *arrowAction = addFilterAction(tr("Show link arrows"), false);
   filterMenu->addSeparator();
   m_folderMenu = filterMenu->addMenu(tr("Folder"));
+  m_folderMenu->setObjectName(QStringLiteral("graphFolderMenu"));
   m_directionMenu = filterMenu->addMenu(tr("Direction"));
+  m_directionMenu->setObjectName(QStringLiteral("graphDirectionMenu"));
   m_directionGroup = new QActionGroup(m_directionMenu);
   m_directionGroup->setExclusive(true);
   for (int i = 0; i < m_direction->count(); ++i) {

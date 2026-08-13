@@ -21,6 +21,7 @@ SpellLanguageDialog::SpellLanguageDialog(const QString &activeLanguage,
       m_languages(SpellChecker::availableLanguages()),
       m_network(new QNetworkAccessManager(this)) {
     setObjectName(QStringLiteral("spellLanguageDialog"));
+    setProperty("emeraldDialog", true);
     setWindowTitle(tr("Spelling languages"));
     resize(560, 500);
     setMinimumSize(380, 400);
@@ -113,6 +114,7 @@ void SpellLanguageDialog::buildUi() {
         close->setIcon(QIcon());
         close->setAutoDefault(false);
         close->setDefault(false);
+        close->setProperty("dialogRole", QStringLiteral("secondary"));
     }
     connect(buttons, &QDialogButtonBox::rejected, this,
             &QDialog::reject);

@@ -5,6 +5,7 @@
 #include <QStringList>
 
 class QLineEdit;
+class QLabel;
 class QListWidget;
 class QHideEvent;
 class SearchIndex;
@@ -52,11 +53,13 @@ protected:
     void hideEvent(QHideEvent *event) override;
 
 private:
+    void setModeTitle(const QString &title);
     void refresh(const QString &text);
     void accept();      // open the highlighted result
     void reposition();  // keep centred over the parent
 
     const SearchIndex *m_index = nullptr;
+    QLabel *m_title = nullptr;
     QLineEdit *m_input = nullptr;
     QListWidget *m_results = nullptr;
     bool m_titlesOnly = false;
