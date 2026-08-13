@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Emerald VERSION 2.0.0 LANGUAGES CXX)
+project(Emerald VERSION 2.1.0 LANGUAGES CXX)
 
 # Keep the version shown in the UI and diagnostics aligned with the package
 # and native bundle metadata.
