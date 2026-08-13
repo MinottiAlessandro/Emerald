@@ -41,7 +41,6 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QMouseEvent>
-#include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QLabel>
@@ -902,12 +901,22 @@ void prepareDialogButtons(QDialogButtonBox *buttons) {
         button->setIcon(QIcon());
         button->setAutoDefault(false);
         button->setDefault(false);
+        const QDialogButtonBox::ButtonRole role = buttons->buttonRole(button);
+        const bool primary = role == QDialogButtonBox::AcceptRole ||
+                             role == QDialogButtonBox::YesRole ||
+                             role == QDialogButtonBox::ApplyRole;
+        button->setProperty("dialogRole",
+                            primary ? QStringLiteral("primary")
+                                    : QStringLiteral("secondary"));
     }
 }
 
 QVBoxLayout *createEmeraldDialogRoot(QDialog *dlg, const QString &title,
-                                     const QString &subtitle = QString()) {
-    dlg->setObjectName(QStringLiteral("settingsDialog"));
+                                     const QString &subtitle = QString(),
+                                     const QString &objectName =
+                                         QStringLiteral("compactDialog")) {
+    dlg->setObjectName(objectName);
+    dlg->setProperty("emeraldDialog", true);
     dlg->setWindowTitle(title);
     dlg->setSizeGripEnabled(false);
     QWidget *parent = dlg->parentWidget();
@@ -941,7 +950,10 @@ QVBoxLayout *createEmeraldDialogRoot(QDialog *dlg, const QString &title,
 
 bool runFolderNameDialog(QWidget *parent, QString *out) {
     QDialog dlg(parent);
-    auto *root = createEmeraldDialogRoot(&dlg, QObject::tr("New Folder"));
+    auto *root = createEmeraldDialogRoot(
+        &dlg, QObject::tr("New Folder"),
+        QObject::tr("Create a folder in the selected location."),
+        QStringLiteral("newFolderDialog"));
 
     auto *input = new QLineEdit(&dlg);
     input->setObjectName(QStringLiteral("dialogInput"));
@@ -954,7 +966,7 @@ bool runFolderNameDialog(QWidget *parent, QString *out) {
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     if (auto *ok = buttons->button(QDialogButtonBox::Ok)) {
-        ok->setText(QObject::tr("Ok"));
+        ok->setText(QObject::tr("Create"));
         ok->setEnabled(false);
     }
     buttons->setCenterButtons(true);
@@ -983,14 +995,18 @@ bool runFolderNameDialog(QWidget *parent, QString *out) {
 
 bool runTrashDialog(QWidget *parent, const QString &question) {
     QDialog dlg(parent);
-    auto *root = createEmeraldDialogRoot(&dlg, question);
+    auto *root = createEmeraldDialogRoot(
+        &dlg, QObject::tr("Move to Trash"), question,
+        QStringLiteral("trashDialog"));
 
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     if (auto *ok = buttons->button(QDialogButtonBox::Ok))
-        ok->setText(QObject::tr("Ok"));
+        ok->setText(QObject::tr("Move to Trash"));
     buttons->setCenterButtons(true);
     prepareDialogButtons(buttons);
+    if (auto *ok = buttons->button(QDialogButtonBox::Ok))
+        ok->setProperty("dialogRole", QStringLiteral("destructive"));
     root->addWidget(buttons, 0, Qt::AlignCenter);
 
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -998,6 +1014,53 @@ bool runTrashDialog(QWidget *parent, const QString &question) {
     dlg.adjustSize();
     dlg.setFixedSize(dlg.sizeHint());
     return dlg.exec() == QDialog::Accepted;
+}
+
+bool runVaultNameDialog(QWidget *parent, QString *out) {
+    QDialog dlg(parent);
+    auto *root = createEmeraldDialogRoot(
+        &dlg, QObject::tr("New Vault"),
+        QObject::tr("Choose a concise name for the new vault."),
+        QStringLiteral("newVaultDialog"));
+
+    auto *input = new QLineEdit(&dlg);
+    input->setObjectName(QStringLiteral("dialogInput"));
+    input->setPlaceholderText(QObject::tr("Vault name"));
+    input->setFixedWidth(qBound(220, parent ? parent->width() - 64 : 300, 300));
+    root->addWidget(input, 0, Qt::AlignCenter);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    if (auto *create = buttons->button(QDialogButtonBox::Ok)) {
+        create->setText(QObject::tr("Create"));
+        create->setEnabled(false);
+    }
+    buttons->setCenterButtons(true);
+    prepareDialogButtons(buttons);
+    root->addWidget(buttons, 0, Qt::AlignCenter);
+
+    QObject::connect(input, &QLineEdit::textChanged, &dlg,
+                     [buttons](const QString &text) {
+        if (auto *create = buttons->button(QDialogButtonBox::Ok))
+            create->setEnabled(!text.trimmed().isEmpty());
+    });
+    QObject::connect(input, &QLineEdit::returnPressed, &dlg, [&dlg, buttons] {
+        if (auto *create = buttons->button(QDialogButtonBox::Ok);
+            create && create->isEnabled())
+            dlg.accept();
+    });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg,
+                     &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg,
+                     &QDialog::reject);
+
+    dlg.adjustSize();
+    dlg.setFixedSize(dlg.sizeHint());
+    input->setFocus();
+    if (dlg.exec() != QDialog::Accepted)
+        return false;
+    *out = input->text().trimmed();
+    return true;
 }
 }
 
@@ -1804,16 +1867,30 @@ void MainWindow::openMascotGallery() {
     });
 
     QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("mascotGalleryDialog"));
+    dlg.setProperty("emeraldDialog", true);
     dlg.setWindowTitle(tr("Mascot Gallery"));
     const bool compactGallery = m_mobileLayout || width() <= kMobileBreakpoint;
     dlg.resize(compactGallery
                    ? QSize(qMax(320, width() - 24), qMax(420, height() - 48))
                    : QSize(640, 620));
     auto *outer = new QVBoxLayout(&dlg);
-    outer->setContentsMargins(compactGallery ? 8 : 11,
-                              compactGallery ? 8 : 11,
-                              compactGallery ? 8 : 11,
-                              compactGallery ? 8 : 11);
+    outer->setContentsMargins(compactGallery ? 14 : 20,
+                              compactGallery ? 14 : 18,
+                              compactGallery ? 14 : 20,
+                              compactGallery ? 14 : 16);
+    outer->setSpacing(compactGallery ? 10 : 12);
+
+    auto *galleryTitle = new QLabel(tr("Mascot Gallery"), &dlg);
+    galleryTitle->setObjectName(QStringLiteral("settingsTitle"));
+    auto *gallerySubtitle = new QLabel(
+        entries.isEmpty()
+            ? tr("Every mascot in this vault will appear here.")
+            : tr("%n mascot(s) in this vault", nullptr, entries.size()),
+        &dlg);
+    gallerySubtitle->setObjectName(QStringLiteral("settingsSubtitle"));
+    outer->addWidget(galleryTitle);
+    outer->addWidget(gallerySubtitle);
 
     if (entries.isEmpty()) {
         auto *empty = new QLabel(
@@ -1833,6 +1910,7 @@ void MainWindow::openMascotGallery() {
         for (int i = 0; i < entries.size(); ++i) {
             const Entry &e = entries.at(i);
             auto *cell = new QToolButton(grid);
+            cell->setObjectName(QStringLiteral("mascotGalleryItem"));
             cell->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
             cell->setAutoRaise(true);
             cell->setIconSize(iconSize);
@@ -1850,6 +1928,10 @@ void MainWindow::openMascotGallery() {
         scroll->setWidget(grid);
         outer->addWidget(scroll);
     }
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+    prepareDialogButtons(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
     dlg.exec();
 }
 
@@ -1974,6 +2056,7 @@ void MainWindow::buildActions() {
     addAction(quit);
 
     auto *mascotMenu = new QMenu(tr("Mascot"), m_gearMenu);
+    mascotMenu->setObjectName(QStringLiteral("mascotMenu"));
     mascotMenu->addAction(m_genMascotAction);
     mascotMenu->addAction(m_delMascotAction);
     mascotMenu->addAction(gallery);
@@ -2301,21 +2384,22 @@ void MainWindow::updateResponsiveLayout() {
 void MainWindow::openSettings() {
     QDialog dlg(this);
     dlg.setObjectName(QStringLiteral("settingsDialog"));
+    dlg.setProperty("emeraldDialog", true);
     dlg.setWindowTitle(tr("Settings"));
     dlg.setFocusPolicy(Qt::StrongFocus);
     const bool compactSettings = m_mobileLayout || width() <= kMobileBreakpoint;
-    dlg.setMinimumSize(compactSettings ? QSize(320, 420) : QSize(660, 840));
+    dlg.setMinimumSize(compactSettings ? QSize(320, 420) : QSize(620, 560));
     dlg.resize(compactSettings
                    ? QSize(qMax(320, width() - 24), qMax(420, height() - 48))
-                   : QSize(700, 880));
+                   : QSize(680, qMax(560, qMin(700, height() - 40))));
     dlg.setSizeGripEnabled(!compactSettings);
 
     auto *root = new QVBoxLayout(&dlg);
-    root->setContentsMargins(compactSettings ? 12 : 24,
-                             compactSettings ? 12 : 22,
-                             compactSettings ? 12 : 24,
-                             compactSettings ? 12 : 18);
-    root->setSpacing(compactSettings ? 10 : 16);
+    root->setContentsMargins(compactSettings ? 12 : 20,
+                             compactSettings ? 12 : 18,
+                             compactSettings ? 12 : 20,
+                             compactSettings ? 12 : 16);
+    root->setSpacing(compactSettings ? 10 : 12);
 
     auto *scroll = new QScrollArea(&dlg);
     scroll->setWidgetResizable(true);
@@ -2323,7 +2407,7 @@ void MainWindow::openSettings() {
     auto *content = new QWidget(scroll);
     auto *contentLayout = new QVBoxLayout(content);
     contentLayout->setContentsMargins(0, 0, 0, 0);
-    contentLayout->setSpacing(compactSettings ? 10 : 16);
+    contentLayout->setSpacing(compactSettings ? 10 : 12);
 
     auto *heading = new QLabel(tr("Settings"), content);
     heading->setObjectName(QStringLiteral("settingsTitle"));
@@ -2337,7 +2421,7 @@ void MainWindow::openSettings() {
 
     auto *sections = new QVBoxLayout();
     sections->setContentsMargins(0, 0, 0, 0);
-    sections->setSpacing(compactSettings ? 10 : 14);
+    sections->setSpacing(compactSettings ? 10 : 12);
     contentLayout->addLayout(sections);
     scroll->setWidget(content);
     root->addWidget(scroll, 1);
@@ -2347,10 +2431,10 @@ void MainWindow::openSettings() {
         auto *section = new QFrame(content);
         section->setObjectName(QStringLiteral("settingsSection"));
         auto *layout = new QVBoxLayout(section);
-        layout->setContentsMargins(compactSettings ? 12 : 18,
-                                   compactSettings ? 12 : 16,
-                                   compactSettings ? 12 : 18,
-                                   compactSettings ? 12 : 18);
+        layout->setContentsMargins(compactSettings ? 12 : 15,
+                                   compactSettings ? 12 : 13,
+                                   compactSettings ? 12 : 15,
+                                   compactSettings ? 12 : 14);
         layout->setSpacing(compactSettings ? 8 : 10);
 
         auto *titleLabel = new QLabel(title, section);
@@ -2369,7 +2453,7 @@ void MainWindow::openSettings() {
         form->setFormAlignment(Qt::AlignTop);
         form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         form->setHorizontalSpacing(compactSettings ? 8 : 22);
-        form->setVerticalSpacing(compactSettings ? 10 : 16);
+        form->setVerticalSpacing(compactSettings ? 10 : 12);
         layout->addLayout(form);
 
         sections->addWidget(section);
@@ -2587,12 +2671,14 @@ void MainWindow::openSettings() {
         ok->setIcon(QIcon());
         ok->setAutoDefault(false);
         ok->setDefault(false);
+        ok->setProperty("dialogRole", QStringLiteral("primary"));
     }
     if (auto *cancel = buttons->button(QDialogButtonBox::Cancel))
     {
         cancel->setIcon(QIcon());
         cancel->setAutoDefault(false);
         cancel->setDefault(false);
+        cancel->setProperty("dialogRole", QStringLiteral("secondary"));
     }
     root->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -2732,15 +2818,12 @@ void MainWindow::toggleSidebar() {
 
 void MainWindow::newVault() {
     const QString parent = QFileDialog::getExistingDirectory(
-        this, tr("Choose where to create the vault"), vaultStartDir());
+        this, tr("Choose where to create the vault"), vaultStartDir(),
+        QFileDialog::ShowDirsOnly | QFileDialog::DontUseNativeDialog);
     if (parent.isEmpty())
         return;
-    bool ok = false;
-    const QString name =
-        QInputDialog::getText(this, tr("New Vault"), tr("Vault name:"),
-                              QLineEdit::Normal, QString(), &ok)
-            .trimmed();
-    if (!ok || name.isEmpty())
+    QString name;
+    if (!runVaultNameDialog(this, &name))
         return;
     QDir dir(parent);
     if (dir.exists(name)) {
@@ -2767,6 +2850,7 @@ void MainWindow::deleteCurrentNote() {
 
 void MainWindow::onEditorContextMenu(const QPoint &pos) {
     QMenu *menu = m_editor->createStandardContextMenu();
+    menu->setObjectName(QStringLiteral("editorContextMenu"));
     const QString misspelled = m_editor->misspelledWordAt(pos);
     if (!misspelled.isEmpty()) {
         auto *spelling = new QMenu(tr("Spelling: “%1”").arg(misspelled), menu);
@@ -2859,7 +2943,8 @@ void MainWindow::checkForUpdates() {
 
 void MainWindow::chooseVault() {
     const QString dir = QFileDialog::getExistingDirectory(
-        this, tr("Open Vault"), vaultStartDir());
+        this, tr("Open Vault"), vaultStartDir(),
+        QFileDialog::ShowDirsOnly | QFileDialog::DontUseNativeDialog);
     if (!dir.isEmpty())
         openVault(dir);
 }
@@ -3826,7 +3911,8 @@ void MainWindow::insertImage() {
     const QString filter =
         tr("Images (%1);;All Files (*)").arg(patterns.join(QLatin1Char(' ')));
     const QStringList paths = QFileDialog::getOpenFileNames(
-        this, tr("Insert Image"), QFileInfo(m_currentPath).absolutePath(), filter);
+        this, tr("Insert Image"), QFileInfo(m_currentPath).absolutePath(), filter,
+        nullptr, QFileDialog::DontUseNativeDialog);
     insertImagesFromFiles(paths);
 }
 
@@ -4201,6 +4287,7 @@ void MainWindow::onTreeContextMenu(const QPoint &pos) {
                       selPaths.size() > 1;
 
     QMenu menu(this);
+    menu.setObjectName(QStringLiteral("noteTreeContextMenu"));
     QAction *newNote =
         menu.addAction(tr("New Note"), this, [this, dir] { newNoteIn(dir); });
     QAction *newFolder = menu.addAction(

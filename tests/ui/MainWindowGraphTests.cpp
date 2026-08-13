@@ -257,6 +257,12 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     auto *manageLanguages = dialog ? dialog->findChild<QPushButton *>(
                                          QStringLiteral("manageSpellLanguages"))
                                    : nullptr;
+    const QString settingsScreenshot =
+        QString::fromLocal8Bit(qgetenv("EMERALD_TEST_SETTINGS_SCREENSHOT"));
+    if (dialog && !settingsScreenshot.isEmpty()) {
+      QApplication::processEvents();
+      dialog->grab().save(settingsScreenshot);
+    }
     settingsGraphControlsSeen = openGlobal && openLocal;
     spellingControlsSeen = spellEnabled && spellLanguage && manageLanguages &&
                            spellEnabled->isChecked() &&
@@ -265,6 +271,12 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     if (manageLanguages) {
       QTimer::singleShot(0, [&spellingManagerSeen] {
         auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        const QString spellingScreenshot = QString::fromLocal8Bit(
+            qgetenv("EMERALD_TEST_SPELLING_SCREENSHOT"));
+        if (manager && !spellingScreenshot.isEmpty()) {
+          QApplication::processEvents();
+          manager->grab().save(spellingScreenshot);
+        }
         spellingManagerSeen =
             manager && manager->objectName() ==
                            QStringLiteral("spellLanguageDialog") &&

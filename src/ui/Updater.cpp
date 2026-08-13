@@ -223,9 +223,12 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
     const QString currentRelease = current.section(QLatin1Char('-'), 0, 0);
 
     if (latest.isEmpty() || compareVersions(latest, currentRelease) <= 0) {
-        QMessageBox::information(
-            m_window, tr("Check for Updates"),
-            tr("You're on the latest version (v%1).").arg(current));
+        QMessageBox status(QMessageBox::NoIcon, tr("Check for Updates"),
+                           tr("You're on the latest version (v%1).").arg(current),
+                           QMessageBox::Ok, m_window);
+        status.setObjectName(QStringLiteral("updateStatusDialog"));
+        status.setProperty("emeraldDialog", true);
+        status.exec();
         return;
     }
 
@@ -278,6 +281,8 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
                     tr("Emerald v%1 is available — you have v%2.")
                         .arg(latest, current),
                     QMessageBox::NoButton, m_window);
+    box.setObjectName(QStringLiteral("updateDialog"));
+    box.setProperty("emeraldDialog", true);
     QString notes = obj.value(QStringLiteral("body")).toString().trimmed();
     if (notes.size() > 1200)
         notes = notes.left(1200) + QStringLiteral("…");
@@ -336,6 +341,8 @@ void Updater::startDownload(const QString &url, const QString &assetName,
 
     auto *progress = new QProgressDialog(
         tr("Downloading Emerald v%1…").arg(version), tr("Cancel"), 0, 100, m_window);
+    progress->setObjectName(QStringLiteral("updateProgressDialog"));
+    progress->setProperty("emeraldDialog", true);
     progress->setWindowModality(Qt::WindowModal);
     progress->setMinimumDuration(0);
     progress->setAutoClose(false);

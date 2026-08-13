@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QTextStream>
@@ -46,10 +47,15 @@ int main(int argc, char **argv) {
     QApplication::processEvents();
 
     auto *input = popup.findChild<QLineEdit *>(QStringLiteral("searchInput"));
+    auto *title =
+        popup.findChild<QLabel *>(QStringLiteral("searchPopupTitle"));
     auto *results =
         popup.findChild<QListWidget *>(QStringLiteral("searchResults"));
     check(popup.isVisible(), QStringLiteral("broken-link popup is visible"));
-    check(input && results, QStringLiteral("popup exposes search-style controls"));
+    check(input && results && title,
+          QStringLiteral("popup exposes its compact command-palette controls"));
+    check(title && title->text() == QStringLiteral("Broken links"),
+          QStringLiteral("popup identifies the active command mode"));
     if (input && results) {
         check(results->count() == 2,
               QStringLiteral("all broken links are initially listed"));
@@ -76,6 +82,11 @@ int main(int argc, char **argv) {
               QStringLiteral("Enter emits the exact source occurrence"));
         check(!popup.isVisible(),
               QStringLiteral("accepting a broken link dismisses the popup"));
+
+        popup.showCentered(true);
+        QApplication::processEvents();
+        check(title && title->text() == QStringLiteral("Go to note"),
+              QStringLiteral("quick-open updates the command-palette title"));
 
         popup.showBrokenLinks({});
         QApplication::processEvents();
