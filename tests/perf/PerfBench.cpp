@@ -496,6 +496,13 @@ int main(int argc, char **argv) {
     QTemporaryDir tmp;
     if (!tmp.isValid())
         return 2;
+#if defined(Q_OS_LINUX) || defined(__linux__)
+    // Keep the benchmark's extracted English dictionary inside its disposable
+    // fixture rather than touching the developer's real application data.
+    const QString benchmarkData = tmp.filePath(QStringLiteral("app-data"));
+    QDir().mkpath(benchmarkData);
+    qputenv("XDG_DATA_HOME", benchmarkData.toUtf8());
+#endif
 
     bool generated = false;
     addMetric(metrics, QStringLiteral("generate_vault"),
@@ -623,6 +630,18 @@ int main(int argc, char **argv) {
     MarkdownEditor editor;
     editor.resize(820, 720);
     editor.setImagePaths(tmp.path(), tmp.path());
+    QString spellError;
+    bool spellReady = false;
+    addMetric(metrics, QStringLiteral("spell_english_dictionary_load"),
+              timeMs([&] {
+                  spellReady = editor.setSpellCheckingLanguage(
+                      QStringLiteral("en_US"), &spellError);
+                  editor.setSpellCheckingEnabled(spellReady);
+              }),
+              QStringLiteral("ms"));
+    if (!spellReady)
+        QTextStream(stderr) << "Spell benchmark unavailable: " << spellError
+                            << '\n';
     QString bigDoc = noteBody(4242, qMax(words * 8, 2000),
                               qMax(notes, 4243), profile, QString());
     if (richProfile(profile)) {

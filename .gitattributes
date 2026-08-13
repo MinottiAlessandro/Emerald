@@ -1,0 +1,6 @@
+# Vendored sources and mirrored dictionaries are preserved byte-for-byte from
+# their recorded upstream revisions. Do not normalize upstream whitespace: the
+# spelling manifest and provenance metadata verify these exact bytes.
+third_party/hunspell/** whitespace=-blank-at-eol,-blank-at-eof
+resources/dictionaries/en_US/** whitespace=-blank-at-eol,-blank-at-eof
+packaging/spelling-packs/** whitespace=-blank-at-eol,-blank-at-eof

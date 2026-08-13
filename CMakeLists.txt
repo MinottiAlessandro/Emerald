@@ -35,6 +35,47 @@ endfunction()
 # deployment API (qt_generate_deploy_app_script).
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Svg)
 
+# --- Spell checking -------------------------------------------------------
+# Emerald vendors the small Hunspell library surface it uses. Builds therefore
+# never fetch code or select a different system version: every platform compiles
+# the same reviewed snapshot from third_party/hunspell. See its UPSTREAM.json
+# and license files for exact provenance.
+set(_hunspell_dir
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/hunspell/src/hunspell")
+add_library(emerald_hunspell STATIC
+  "${_hunspell_dir}/affentry.cxx"
+  "${_hunspell_dir}/affixmgr.cxx"
+  "${_hunspell_dir}/csutil.cxx"
+  "${_hunspell_dir}/filemgr.cxx"
+  "${_hunspell_dir}/hashmgr.cxx"
+  "${_hunspell_dir}/hunspell.cxx"
+  "${_hunspell_dir}/hunzip.cxx"
+  "${_hunspell_dir}/phonet.cxx"
+  "${_hunspell_dir}/replist.cxx"
+  "${_hunspell_dir}/suggestmgr.cxx")
+target_include_directories(emerald_hunspell PUBLIC "${_hunspell_dir}")
+target_compile_definitions(emerald_hunspell PUBLIC HUNSPELL_STATIC)
+set_target_properties(emerald_hunspell PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
+add_library(Emerald::Hunspell ALIAS emerald_hunspell)
+
+# The reviewed US-English pair and the pack manifest are source-controlled Qt
+# resources. Hunspell requires filesystem paths, so the application extracts
+# English into its private data directory on first use.
+set(EMERALD_DICTIONARY_RESOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/dictionaries")
+
+function(emerald_add_spell_resources target)
+  qt_add_resources(${target} "${target}_english_dictionary"
+    PREFIX "/dictionaries"
+    BASE "${EMERALD_DICTIONARY_RESOURCE_DIR}"
+    FILES
+      "${EMERALD_DICTIONARY_RESOURCE_DIR}/manifest.json"
+      "${EMERALD_DICTIONARY_RESOURCE_DIR}/en_US/en_US.aff"
+      "${EMERALD_DICTIONARY_RESOURCE_DIR}/en_US/en_US.dic"
+      "${EMERALD_DICTIONARY_RESOURCE_DIR}/en_US/NOTICE.txt")
+endfunction()
+
 # --- Platform icons -------------------------------------------------------
 # Pre-generated and committed (see packaging/macos/make_icns.py and the .ico
 # built with ImageMagick) so ordinary builds need no image tooling.
@@ -79,6 +120,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/MarkdownWikiLinkScanner.cpp
   src/core/LinkGraphIndex.h
   src/core/LinkGraphIndex.cpp
+  src/core/SpellChecker.h
+  src/core/SpellChecker.cpp
   src/core/Perf.h
   src/core/MascotSeed.h
   src/ui/MainWindow.h
@@ -105,6 +148,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/MathRender.cpp
   src/ui/SearchPopup.h
   src/ui/SearchPopup.cpp
+  src/ui/SpellLanguageDialog.h
+  src/ui/SpellLanguageDialog.cpp
   src/ui/Updater.h
   src/ui/Updater.cpp
   resources/resources.qrc
@@ -112,7 +157,9 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
 )
 
 target_include_directories(emerald PRIVATE src)
-target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg)
+target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg
+  Emerald::Hunspell)
+emerald_add_spell_resources(emerald)
 emerald_enable_sanitizers(emerald)
 # Surface the build version to the app (shown in the sidebar footer).
 target_compile_definitions(emerald PRIVATE
@@ -146,6 +193,7 @@ install(TARGETS emerald
   BUNDLE  DESTINATION .
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
+install(FILES THIRD_PARTY_NOTICES.md DESTINATION .)
 
 # Linux desktop integration: menu entry + themed icons.
 if(UNIX AND NOT APPLE)
@@ -247,6 +295,8 @@ if(EMERALD_BUILD_PERF_TESTS)
     src/core/LinkGraphIndex.cpp
     src/core/MascotSeed.h
     src/core/Perf.h
+    src/core/SpellChecker.h
+    src/core/SpellChecker.cpp
     src/ui/MarkdownEditor.h
     src/ui/MarkdownEditor.cpp
     src/ui/GraphView.h
@@ -268,7 +318,9 @@ if(EMERALD_BUILD_PERF_TESTS)
     resources/resources.qrc
   )
   target_include_directories(emerald_perf_tests PRIVATE src)
-  target_link_libraries(emerald_perf_tests PRIVATE Qt6::Widgets Qt6::Svg)
+  target_link_libraries(emerald_perf_tests PRIVATE Qt6::Widgets Qt6::Svg
+    Emerald::Hunspell)
+  emerald_add_spell_resources(emerald_perf_tests)
   target_compile_definitions(emerald_perf_tests PRIVATE
     EMERALD_VERSION="${EMERALD_BUILD_VERSION}")
   emerald_enable_sanitizers(emerald_perf_tests)
@@ -290,6 +342,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/Perf.h
     src/core/WikiLink.h
     src/core/WikiLink.cpp
+    src/core/SpellChecker.h
+    src/core/SpellChecker.cpp
     src/ui/MarkdownEditor.h
     src/ui/MarkdownEditor.cpp
     src/ui/MarkdownCallout.h
@@ -304,9 +358,12 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/ui/MathRender.cpp
   )
   target_include_directories(emerald_editor_tests PRIVATE src)
-  target_link_libraries(emerald_editor_tests PRIVATE Qt6::Widgets Qt6::Svg)
+  target_link_libraries(emerald_editor_tests PRIVATE Qt6::Widgets Qt6::Svg
+    Emerald::Hunspell)
+  emerald_add_spell_resources(emerald_editor_tests)
   target_compile_definitions(emerald_editor_tests PRIVATE
-    EMERALD_VERSION="${EMERALD_BUILD_VERSION}")
+    EMERALD_VERSION="${EMERALD_BUILD_VERSION}"
+    EMERALD_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   emerald_enable_sanitizers(emerald_editor_tests)
   add_test(NAME emerald_editor_tests COMMAND emerald_editor_tests)
   set_tests_properties(emerald_editor_tests PROPERTIES
@@ -344,6 +401,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/MarkdownWikiLinkScanner.cpp
     src/core/LinkGraphIndex.h
     src/core/LinkGraphIndex.cpp
+    src/core/SpellChecker.h
+    src/core/SpellChecker.cpp
     src/core/Perf.h
     src/core/MascotSeed.h
     src/ui/MainWindow.h
@@ -370,13 +429,16 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/ui/MathRender.cpp
     src/ui/SearchPopup.h
     src/ui/SearchPopup.cpp
+    src/ui/SpellLanguageDialog.h
+    src/ui/SpellLanguageDialog.cpp
     src/ui/Updater.h
     src/ui/Updater.cpp
     resources/resources.qrc
   )
   target_include_directories(emerald_main_window_graph_tests PRIVATE src)
   target_link_libraries(emerald_main_window_graph_tests PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Svg)
+    Qt6::Widgets Qt6::Network Qt6::Svg Emerald::Hunspell)
+  emerald_add_spell_resources(emerald_main_window_graph_tests)
   target_compile_definitions(emerald_main_window_graph_tests PRIVATE
     EMERALD_VERSION="${EMERALD_BUILD_VERSION}")
   emerald_enable_sanitizers(emerald_main_window_graph_tests)

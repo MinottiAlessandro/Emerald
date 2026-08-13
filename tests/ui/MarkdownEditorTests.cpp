@@ -7,11 +7,13 @@
 #include "ui/MathRender.h"
 
 #include "core/Perf.h"
+#include "core/SpellChecker.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QClipboard>
 #include <QEventLoop>
+#include <QFile>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -230,11 +232,232 @@ void clickEditor(MarkdownEditor &editor, const QPoint &position,
 } // namespace
 
 int main(int argc, char **argv) {
+    QTemporaryDir applicationData;
+    if (!applicationData.isValid())
+        return 2;
+    qputenv("XDG_DATA_HOME", applicationData.path().toUtf8());
     QApplication app(argc, argv);
+    QCoreApplication::setOrganizationName(QStringLiteral("EmeraldTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("MarkdownEditorTests"));
 
     MarkdownEditor editor;
     editor.resize(250, 220);
     editor.show();
+
+    // The bundled English dictionary loads without a network connection at
+    // runtime, and the Markdown scanner exposes only human-language ranges.
+    QString spellError;
+    check(editor.setSpellCheckingLanguage(QStringLiteral("en_US"), &spellError),
+          QStringLiteral("bundled English dictionary should load: %1")
+              .arg(spellError));
+    editor.setSpellCheckingEnabled(true);
+    editor.setSpellCheckingOptions(true, true);
+    const QList<SpellChecker::WordRange> spellRanges =
+        SpellChecker::wordsInMarkdown(QStringLiteral(
+            "Prose `codde` [[Targget]] [[Note|aliass]] "
+            "[labell](https://bad.example/misstake) $formulla$ <tag>"));
+    QStringList spellWords;
+    for (const auto &range : spellRanges)
+        spellWords.append(range.word);
+    check(spellWords.contains(QStringLiteral("Prose")) &&
+              spellWords.contains(QStringLiteral("aliass")) &&
+              spellWords.contains(QStringLiteral("labell")) &&
+              !spellWords.contains(QStringLiteral("codde")) &&
+              !spellWords.contains(QStringLiteral("Targget")) &&
+              !spellWords.contains(QStringLiteral("misstake")) &&
+              !spellWords.contains(QStringLiteral("formulla")) &&
+              !spellWords.contains(QStringLiteral("tag")),
+          QStringLiteral("spell ranges should include prose and visible labels "
+                         "but exclude Markdown targets, code, math, URLs, and HTML"));
+
+    const QString spellingSource = QStringLiteral(
+        "A correct word and **wrod** plus `codde`, [[Targget]], "
+        "[[Note|aliass]], and [labell](https://example.com/misstake).\n"
+        "trailing line");
+    editor.setPlainText(spellingSource);
+    editor.moveCursor(QTextCursor::End);
+    const QTextBlock spellingBlock = editor.document()->firstBlock();
+    settleLayout(editor, spellingBlock);
+    const QString spellingText = spellingBlock.text();
+    auto underlined = [&spellingBlock, &spellingText](const QString &word) {
+        return highlighterFormatAt(spellingBlock, spellingText.indexOf(word))
+                   .underlineStyle() == QTextCharFormat::SpellCheckUnderline;
+    };
+    check(underlined(QStringLiteral("wrod")) &&
+              underlined(QStringLiteral("aliass")) &&
+              underlined(QStringLiteral("labell")) &&
+              !underlined(QStringLiteral("correct")) &&
+              !underlined(QStringLiteral("codde")) &&
+              !underlined(QStringLiteral("Targget")) &&
+              !underlined(QStringLiteral("misstake")),
+          QStringLiteral("only misspelled visible prose should be underlined"));
+    const QTextCharFormat styledMisspelling = highlighterFormatAt(
+        spellingBlock, spellingText.indexOf(QStringLiteral("wrod")));
+    check(styledMisspelling.fontWeight() >= QFont::Bold &&
+              styledMisspelling.underlineStyle() ==
+                  QTextCharFormat::SpellCheckUnderline,
+          QStringLiteral("spell underline should preserve Markdown bold styling"));
+
+    QTextCursor typing(spellingBlock);
+    typing.setPosition(spellingBlock.position() +
+                       spellingText.indexOf(QStringLiteral("wrod")) + 2);
+    editor.setTextCursor(typing);
+    settleLayout(editor, spellingBlock);
+    check(!underlined(QStringLiteral("wrod")),
+          QStringLiteral("the word under the typing caret should not flash red"));
+    editor.moveCursor(QTextCursor::End);
+    settleLayout(editor, spellingBlock);
+    check(underlined(QStringLiteral("wrod")),
+          QStringLiteral("a misspelling should appear when the caret leaves it"));
+
+    const QStringList suggestions =
+        editor.spellingSuggestions(QStringLiteral("recieve"));
+    check(!suggestions.isEmpty(),
+          QStringLiteral("Hunspell should provide on-demand corrections"));
+    editor.setPlainText(QStringLiteral("Please recieve this\nnext"));
+    editor.moveCursor(QTextCursor::End);
+    QTextCursor misspellingPoint(editor.document()->firstBlock());
+    misspellingPoint.setPosition(
+        editor.document()->firstBlock().position() + 9);
+    const QPoint misspellingPosition =
+        editor.cursorRect(misspellingPoint).center();
+    check(editor.misspelledWordAt(misspellingPosition) ==
+              QStringLiteral("recieve"),
+          QStringLiteral("context lookup should identify the misspelled word"));
+    if (!suggestions.isEmpty()) {
+        check(editor.replaceMisspelledWordAt(
+                  misspellingPosition, QStringLiteral("recieve"),
+                  suggestions.first()) &&
+                  editor.toPlainText().contains(suggestions.first()),
+              QStringLiteral("choosing a spelling suggestion should replace only "
+                             "the source word"));
+    }
+
+    editor.setPlainText(QStringLiteral("A perssonalword here\nnext"));
+    editor.moveCursor(QTextCursor::End);
+    const QTextBlock personalBlock = editor.document()->firstBlock();
+    settleLayout(editor, personalBlock);
+    const int personalOffset = personalBlock.text().indexOf(
+        QStringLiteral("perssonalword"));
+    check(highlighterFormatAt(personalBlock, personalOffset).underlineStyle() ==
+              QTextCharFormat::SpellCheckUnderline,
+          QStringLiteral("unknown personal word starts misspelled"));
+    check(editor.addToPersonalDictionary(QStringLiteral("perssonalword"),
+                                         &spellError),
+          QStringLiteral("personal word should persist: %1").arg(spellError));
+    settleLayout(editor, personalBlock);
+    check(highlighterFormatAt(personalBlock, personalOffset).underlineStyle() !=
+              QTextCharFormat::SpellCheckUnderline,
+          QStringLiteral("personal words should be accepted immediately"));
+    SpellChecker reloadedPersonalDictionary;
+    check(reloadedPersonalDictionary.setLanguage(QStringLiteral("en_US"),
+                                                  &spellError) &&
+              reloadedPersonalDictionary.isCorrect(
+                  QStringLiteral("perssonalword")),
+          QStringLiteral("personal words should survive a fresh checker instance"));
+
+    editor.setPlainText(QStringLiteral("sesssionword here\nnext"));
+    editor.moveCursor(QTextCursor::End);
+    const QTextBlock sessionBlock = editor.document()->firstBlock();
+    settleLayout(editor, sessionBlock);
+    const int sessionOffset =
+        sessionBlock.text().indexOf(QStringLiteral("sesssionword"));
+    check(highlighterFormatAt(sessionBlock, sessionOffset).underlineStyle() ==
+              QTextCharFormat::SpellCheckUnderline,
+          QStringLiteral("session fixture starts misspelled"));
+    editor.ignoreSpellingForSession(QStringLiteral("sesssionword"));
+    settleLayout(editor, sessionBlock);
+    check(highlighterFormatAt(sessionBlock, sessionOffset).underlineStyle() !=
+              QTextCharFormat::SpellCheckUnderline,
+          QStringLiteral("session ignore should remove every matching underline"));
+    check(!reloadedPersonalDictionary.isCorrect(
+              QStringLiteral("sesssionword")),
+          QStringLiteral("session ignored words should not persist globally"));
+
+    const QList<SpellLanguage> spellingLanguages =
+        SpellChecker::availableLanguages();
+    check(spellingLanguages.size() == 5 &&
+              SpellChecker::installedLanguages().contains(QStringLiteral("en_US")),
+          QStringLiteral("language catalog should expose bundled English and "
+                         "four optional verified packs"));
+    for (const SpellLanguage &language : spellingLanguages) {
+        if (language.builtIn)
+            continue;
+        check(language.affix.url.startsWith(QStringLiteral(
+                  "https://github.com/MinottiAlessandro/Emerald/releases/download/"
+                  "spell-dictionaries-v")) &&
+                  language.dictionary.url.startsWith(QStringLiteral(
+                      "https://github.com/MinottiAlessandro/Emerald/releases/"
+                      "download/spell-dictionaries-v")) &&
+                  language.notice.url.startsWith(QStringLiteral(
+                      "https://github.com/MinottiAlessandro/Emerald/releases/"
+                      "download/spell-dictionaries-v")),
+              QStringLiteral("optional dictionaries should use versioned "
+                             "Emerald-hosted assets"));
+    }
+    const QHash<QString, QString> optionalLanguageWords = {
+        {QStringLiteral("it_IT"), QStringLiteral("ciao")},
+        {QStringLiteral("de_DE"), QStringLiteral("Straße")},
+        {QStringLiteral("fr_FR"), QStringLiteral("bonjour")},
+        {QStringLiteral("es_ES"), QStringLiteral("hola")}};
+    for (auto it = optionalLanguageWords.cbegin();
+         it != optionalLanguageWords.cend(); ++it) {
+        const QString root = QString::fromUtf8(EMERALD_SOURCE_DIR) +
+                             QStringLiteral("/packaging/spelling-packs/v1/") +
+                             it.key() + QLatin1Char('/');
+        auto readPackFile = [&root](const QString &name) {
+            QFile file(root + name);
+            return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+        };
+        const QByteArray affix =
+            readPackFile(it.key() + QStringLiteral(".aff"));
+        const QByteArray dictionary =
+            readPackFile(it.key() + QStringLiteral(".dic"));
+        const QByteArray notice = readPackFile(QStringLiteral("NOTICE.txt"));
+        check(SpellChecker::installLanguage(it.key(), affix, dictionary, notice,
+                                            &spellError),
+              QStringLiteral("reviewed %1 release pack should install: %2")
+                  .arg(it.key(), spellError));
+        SpellChecker optionalChecker;
+        check(optionalChecker.setLanguage(it.key(), &spellError) &&
+                  optionalChecker.isCorrect(it.value()),
+              QStringLiteral("reviewed %1 dictionary should load and recognize "
+                             "its smoke-test word: %2")
+                  .arg(it.key(), spellError));
+        if (it.key() == QLatin1String("it_IT")) {
+            QFile installedDictionary(
+                SpellChecker::dictionaryRoot() +
+                QStringLiteral("/it_IT/it_IT.dic"));
+            check(installedDictionary.open(QIODevice::WriteOnly |
+                                           QIODevice::Truncate) &&
+                      installedDictionary.write("corrupt\n") == 8,
+                  QStringLiteral("optional-pack update fixture should corrupt "
+                                 "the installed copy"));
+            installedDictionary.close();
+            check(!SpellChecker::isLanguageInstalled(it.key()) &&
+                      SpellChecker::languageNeedsUpdate(it.key()),
+                  QStringLiteral("a stale or corrupt optional pack should be "
+                                 "reported as needing an update"));
+            check(SpellChecker::installLanguage(it.key(), affix, dictionary,
+                                                notice, &spellError) &&
+                      SpellChecker::isLanguageInstalled(it.key()) &&
+                      !SpellChecker::languageNeedsUpdate(it.key()),
+                  QStringLiteral("a verified pack should safely replace a stale "
+                                 "installation: %1")
+                      .arg(spellError));
+        }
+        check(SpellChecker::removeLanguage(it.key(), &spellError),
+              QStringLiteral("test %1 pack should be removable: %2")
+                  .arg(it.key(), spellError));
+    }
+    QByteArray invalidPart("not a dictionary");
+    check(!SpellChecker::installLanguage(QStringLiteral("it_IT"), invalidPart,
+                                         invalidPart, invalidPart, &spellError) &&
+              !SpellChecker::isLanguageInstalled(QStringLiteral("it_IT")),
+          QStringLiteral("invalid optional packs must fail verification without "
+                         "becoming installed"));
+    check(!SpellChecker::removeLanguage(QStringLiteral("en_US"), &spellError),
+          QStringLiteral("the bundled English baseline cannot be removed"));
 
     const QString tail = QStringLiteral(
         "continues with enough words to wrap onto more than one visual line "

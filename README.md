@@ -6,7 +6,7 @@
 
 **A tiny, fast, Obsidian-style Markdown notes app.**
 
-Plain `.md` files · inline live preview · one dependency · Linux · macOS · Windows
+Plain `.md` files · inline live preview · local spell check · Linux · macOS · Windows
 
 [![Release](https://github.com/MinottiAlessandro/Emerald/actions/workflows/release.yml/badge.svg)](https://github.com/MinottiAlessandro/Emerald/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/MinottiAlessandro/Emerald?sort=semver&color=2bbf74)](https://github.com/MinottiAlessandro/Emerald/releases/latest)
@@ -77,7 +77,7 @@ it opens or installs a download.
 - 🔍 **Instant full-text search** over the whole vault, backed by an in-memory inverted index.
 - 🧮 **Math, built in.** Inline `$…$` and display `$$…$$` LaTeX render live — fractions, roots, matrices, accents — with no extra dependencies.
 - 🐾 **A mascot per note.** Each note can grow its own little procedurally drawn creature in the corner — a memorable face to recall it by.
-- 🪶 **One dependency (Qt 6), tiny footprint.** Built to stay small, fast, and maintainable.
+- 🪶 **Tiny dependency footprint.** Qt 6 plus a private Hunspell engine; built to stay small, fast, local, and maintainable.
 
 ---
 
@@ -93,6 +93,7 @@ it opens or installs a download.
 - **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).
 - **Folding** on heading sections, fenced blocks, and nested list trees.
 - **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block ordinary edits. Select text and press `Ctrl+Shift+H` to add or remove a persistent `==highlight==`; if any part of the selection is not highlighted, Emerald fills the gaps, otherwise it removes the selected highlight. Plain ↑/↓ scroll the page while search, links, folding and text selection remain available. Switching between Read and Edit Mode preserves the same source-backed viewport anchor, so even rapidly toggling a wrapped list does not make the page drift.
+- **Markdown-aware spell checking** — US English is included and works entirely offline. Misspelled prose is underlined incrementally without disturbing bold, links, or other live-preview styling; code, math, URLs, HTML, images, and wiki-link targets are skipped. Right-click a misspelling for corrections, **Add to personal dictionary**, or **Ignore for this session**. Settings can download independently verified Italian, German, French, and Spanish packs from versioned Emerald releases, outside the vault.
 
 **Math** *(no dependencies — a small built-in TeX-subset typesetter)*
 - **Inline `$…$`** and **display `$$…$$`** render live in place; a `$$` block can span several lines (open/close on their own lines or carrying content), and the raw source reappears whenever the caret or selection is inside it. Bare dollars (`$5 and $12`) stay literal.
@@ -175,7 +176,11 @@ it opens or installs a download.
 
 ## Build from source
 
-Requires **Qt 6**, a **C++20** compiler, and **CMake ≥ 3.21**.
+Requires **Qt 6**, a **C++20** compiler, and **CMake ≥ 3.21**. Emerald vendors
+the reviewed Hunspell 1.7.3 source snapshot and its pinned English dictionary,
+so configuration and compilation never download dependencies or vary with the
+host's installed Hunspell version. The finished application needs no network
+connection for English spell checking.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -184,6 +189,10 @@ cmake --build build -j
 ```
 
 Open a vault with `Ctrl+O` and create your first note with `Ctrl+N`.
+
+Spelling dependency provenance, offline verification, and the review-first
+update/release process are documented in
+[`docs/SPELLING_DEPENDENCIES.md`](docs/SPELLING_DEPENDENCIES.md).
 
 The widget backing store is composited on the GPU by default (Qt's RHI path) for
 smooth resizing; set `QT_WIDGETS_RHI=0` to fall back to CPU raster.
@@ -213,12 +222,14 @@ core/   no GUI, unit-testable (depends only on QtCore)
   WikiLink         the shared [[wiki-link]] pattern + target cleaning
   MarkdownWikiLinkScanner semantic link discovery outside code spans/fences
   LinkGraphIndex   compact incremental directed note graph
+  SpellChecker     Hunspell wrapper, Markdown word ranges, personal/pack storage
   Note             { path, title }
 ui/     Qt Widgets
   MainWindow       folder tree + in-pane note/graph pages; autosave, typed history, rename
   GraphView        custom QPainter canvas + background force layout
   MarkdownEditor   QTextEdit + pixel scrolling, clickable links, [[ autocomplete, lists, folding
   MarkdownHighlighter   inline live preview (conceals markers off the active line)
+  SpellLanguageDialog  verified optional-dictionary downloads and removal
   SearchPopup      centered Telescope-style search overlay
 ```
 

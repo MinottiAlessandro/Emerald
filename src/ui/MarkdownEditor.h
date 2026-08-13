@@ -11,6 +11,7 @@
 
 class MarkdownHighlighter;
 class MarkdownReadObjectRenderer;
+class SpellChecker;
 class QCompleter;
 class QFocusEvent;
 class QMimeData;
@@ -99,6 +100,24 @@ public:
     // Cancel both pending and visible Quick Jump state immediately so link
     // hints cannot remain behind the owning overlay.
     void suppressQuickJump();
+
+    // Incremental Hunspell integration. These settings are global application
+    // preferences; the selected dictionary itself remains outside every vault.
+    void setSpellCheckingEnabled(bool enabled);
+    bool spellCheckingEnabled() const;
+    bool setSpellCheckingLanguage(const QString &locale,
+                                  QString *error = nullptr);
+    QString spellCheckingLanguage() const;
+    void setSpellCheckingOptions(bool ignoreWordsWithNumbers,
+                                 bool ignoreAllCaps);
+    QString misspelledWordAt(const QPoint &viewportPosition) const;
+    QStringList spellingSuggestions(const QString &word) const;
+    bool replaceMisspelledWordAt(const QPoint &viewportPosition,
+                                 const QString &expectedWord,
+                                 const QString &replacement);
+    bool addToPersonalDictionary(const QString &word,
+                                 QString *error = nullptr);
+    void ignoreSpellingForSession(const QString &word);
 
 signals:
     void linkClicked(const QString &target);
@@ -321,6 +340,7 @@ private:
     void insertCompletion(const QString &completion);
 
     MarkdownHighlighter *m_highlighter = nullptr;
+    SpellChecker *m_spellChecker = nullptr;
     QObject *m_documentOwner = nullptr;
     QTextDocument *m_sourceDocument = nullptr;
     QTextDocument *m_readDocument = nullptr;

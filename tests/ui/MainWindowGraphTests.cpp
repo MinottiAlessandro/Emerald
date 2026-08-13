@@ -6,6 +6,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
@@ -17,6 +18,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -236,6 +238,8 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
 
   const int topLevels = QApplication::topLevelWidgets().size();
   bool settingsGraphControlsSeen = false;
+  bool spellingControlsSeen = false;
+  bool spellingManagerSeen = false;
   QTimer::singleShot(0, [&] {
     auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
     auto *openGlobal = dialog ? dialog->findChild<QPushButton *>(
@@ -244,7 +248,34 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     auto *openLocal = dialog ? dialog->findChild<QPushButton *>(
                                    QStringLiteral("settingsOpenLocalGraph"))
                              : nullptr;
+    auto *spellEnabled = dialog ? dialog->findChild<QCheckBox *>(
+                                      QStringLiteral("spellCheckEnabled"))
+                                : nullptr;
+    auto *spellLanguage = dialog ? dialog->findChild<QComboBox *>(
+                                       QStringLiteral("spellLanguage"))
+                                 : nullptr;
+    auto *manageLanguages = dialog ? dialog->findChild<QPushButton *>(
+                                         QStringLiteral("manageSpellLanguages"))
+                                   : nullptr;
     settingsGraphControlsSeen = openGlobal && openLocal;
+    spellingControlsSeen = spellEnabled && spellLanguage && manageLanguages &&
+                           spellEnabled->isChecked() &&
+                           spellLanguage->currentData() ==
+                               QStringLiteral("en_US");
+    if (manageLanguages) {
+      QTimer::singleShot(0, [&spellingManagerSeen] {
+        auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        spellingManagerSeen =
+            manager && manager->objectName() ==
+                           QStringLiteral("spellLanguageDialog") &&
+            manager->findChildren<QPushButton *>(
+                       QRegularExpression(QStringLiteral("spellLanguageAction_.*")))
+                    .size() == 5;
+        if (manager)
+          manager->reject();
+      });
+      manageLanguages->click();
+    }
     if (openGlobal)
       openGlobal->click();
     else if (dialog)
@@ -254,6 +285,11 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   check(settingsGraphControlsSeen,
         QStringLiteral("Settings > Vault contains Global and Local Graph "
                        "launchers"));
+  check(spellingControlsSeen,
+        QStringLiteral("Settings exposes enabled bundled-English spelling and "
+                       "the optional-language manager"));
+  check(spellingManagerSeen,
+        QStringLiteral("language manager lists bundled and optional packs"));
   check(waitUntil(
             [pages, graphPage] { return pages->currentWidget() == graphPage; }),
         QStringLiteral("Settings can open the Graph View"));
@@ -442,12 +478,14 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
 } // namespace
 
 int main(int argc, char **argv) {
+  QTemporaryDir settingsDir;
+  QTemporaryDir applicationData;
+  if (!settingsDir.isValid() || !applicationData.isValid())
+    return 2;
+  qputenv("XDG_DATA_HOME", applicationData.path().toUtf8());
   QApplication app(argc, argv);
   QCoreApplication::setOrganizationName(QStringLiteral("EmeraldTests"));
   QCoreApplication::setApplicationName(QStringLiteral("MainWindowGraphTests"));
-  QTemporaryDir settingsDir;
-  if (!settingsDir.isValid())
-    return 2;
   QSettings::setDefaultFormat(QSettings::IniFormat);
   QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                      settingsDir.path());

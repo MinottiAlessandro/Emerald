@@ -65,6 +65,18 @@ move the caret back onto the line, confirm the raw markers reappear.
       their own descendants. ◆
 - [ ] **Ctrl+Enter** opens a new line below without splitting, continuing the list.
 
+## 4a. Spell checking
+- [ ] Spell checking starts enabled with **English (US)** under **Settings → Spelling** and works after disconnecting the network.
+- [ ] Type `This is a mistkae` and leave the word; only `mistkae` receives the red spelling underline. The incomplete word under the caret is not underlined until the caret leaves it.
+- [ ] A misspelling inside bold/highlight/strike retains both its Markdown styling and the spelling underline.
+- [ ] Inline/fenced code, `$math$`, URLs, email addresses, HTML, image paths, and unaliased `[[wiki targets]]` are ignored. Visible `[link labels](url)` and `[[target|aliases]]` are checked.
+- [ ] Right-click a misspelling: correction suggestions appear on demand and replace only that word.
+- [ ] **Add to personal dictionary** removes every matching underline immediately and survives restarting Emerald. **Ignore for this session** lasts only until restart.
+- [ ] **Manage languages…** shows English as included. Download Italian, German, French, or Spanish; interrupted/corrupt downloads do not appear as installed. Select an installed language, restart, and confirm it remains selected. A selected pack cannot be removed until another language is active.
+- [ ] Optional language downloads use the matching `spell-dictionaries-v*` Emerald release and still fail closed if an asset is missing, oversized, or does not match the SHA-256 embedded in the application.
+- [ ] After installing an optional language, a newer application manifest with different hashes reports **Update available**. Updating safely replaces the old pack; an interrupted update leaves the existing files recoverable.
+- [ ] Downloaded dictionaries and personal words live in Emerald's application-data folder, not in the vault.
+
 ## 5. Tables
 - [ ] Enter anywhere on a fresh header row auto-adds the `| --- |` separator + first data row; caret lands in the first data cell.
 - [ ] Enter anywhere in an established header or its separator row formats the table when it fits, then lands in the first cell of the first data row.

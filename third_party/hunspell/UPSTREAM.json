@@ -1,0 +1,10 @@
+{
+  "name": "Hunspell",
+  "version": "1.7.3",
+  "tag": "v1.7.3",
+  "sourceArchive": "https://github.com/hunspell/hunspell/archive/refs/tags/v1.7.3.tar.gz",
+  "sourceArchiveSha256": "933be3dac6fd55f6e752331a170efb7e33800e40fae1156d8434cc8c85379a1b",
+  "vendoredTreeSha256": "3bec9a0b172a4fba015feb4fcc56b85ca89b4be9ea76da72951c0f3fdc70b942",
+  "vendoredPath": "src/hunspell",
+  "vendoredFiles": "The complete upstream src/hunspell directory, unmodified."
+}
