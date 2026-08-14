@@ -1823,10 +1823,13 @@ void MainWindow::buildShortcutCheatsheet() {
 void MainWindow::positionShortcutCheatsheet() {
     if (!m_shortcutCheatsheet)
         return;
-    const int availableWidth = qMax(280, width() - 32);
-    const int availableHeight = qMax(260, height() - 32);
-    const QSize panel(qMin(920, availableWidth),
-                      qMin(680, availableHeight));
+    // Use most of the workspace so every shortcut fits at once on an ordinary
+    // desktop window. The scroll area remains as a fallback only when the app
+    // itself is too small to contain the complete sheet.
+    const int availableWidth = qMax(280, width() - 16);
+    const int availableHeight = qMax(260, height() - 16);
+    const QSize panel(qMin(1080, availableWidth),
+                      qMin(820, availableHeight));
     m_shortcutCheatsheet->setGeometry(
         (width() - panel.width()) / 2,
         (height() - panel.height()) / 2,

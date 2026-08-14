@@ -347,13 +347,13 @@ QFrame#shortcutCheatsheet {
 QLabel#shortcutCheatsheetTitle {
     background: transparent;
     color: #d7eee2;
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 700;
 }
 QLabel#shortcutCheatsheetHint {
     background: transparent;
     color: #789384;
-    font-size: 12px;
+    font-size: 13px;
     padding-bottom: 2px;
 }
 QScrollArea#shortcutCheatsheetScroll,
@@ -371,7 +371,7 @@ QFrame#shortcutSection {
 QLabel#shortcutSectionTitle {
     background: transparent;
     color: #56cf8c;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -383,7 +383,7 @@ QLabel#shortcutAction {
 }
 QLabel#shortcutAction {
     color: #abc7b8;
-    font-size: 12px;
+    font-size: 14px;
 }
 QLabel#shortcutKey {
     background: #1c2d24;
@@ -392,7 +392,7 @@ QLabel#shortcutKey {
     border-radius: 4px;
     padding: 2px 6px;
     font-family: monospace;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
 }
 

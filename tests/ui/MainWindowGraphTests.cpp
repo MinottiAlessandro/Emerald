@@ -186,6 +186,14 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
             cheatsheet->findChildren<QLabel *>(QStringLiteral("shortcutKey"))
                     .size() >= 30,
         QStringLiteral("shortcut cheatsheet is grouped and comprehensive"));
+  const QList<QLabel *> shortcutActions =
+      cheatsheet->findChildren<QLabel *>(QStringLiteral("shortcutAction"));
+  const QList<QLabel *> shortcutKeys =
+      cheatsheet->findChildren<QLabel *>(QStringLiteral("shortcutKey"));
+  check(!shortcutActions.isEmpty() && !shortcutKeys.isEmpty() &&
+            shortcutActions.first()->font().pixelSize() >= 14 &&
+            shortcutKeys.first()->font().pixelSize() >= 14,
+        QStringLiteral("shortcut entries use comfortably sized text"));
 
   editor->setFocus();
   const QString sourceBeforeCheatsheet = editor->toPlainText();
@@ -199,6 +207,13 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   check((cheatsheet->geometry().center() - window.rect().center())
                 .manhattanLength() <= 2,
         QStringLiteral("shortcut cheatsheet is centered in the app window"));
+  auto *cheatsheetScroll = cheatsheet->findChild<QScrollArea *>(
+      QStringLiteral("shortcutCheatsheetScroll"));
+  check(cheatsheet->width() > 920 && cheatsheet->height() > 680 &&
+            cheatsheetScroll &&
+            cheatsheetScroll->verticalScrollBar()->maximum() == 0,
+        QStringLiteral("desktop cheatsheet grows to show every shortcut "
+                       "without a scrollbar"));
 
   sendKey(editor, QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
           QStringLiteral("x"), true);
