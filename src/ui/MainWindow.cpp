@@ -79,6 +79,7 @@
 #include <QUrl>
 #include <QVariant>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <algorithm>
 #include <functional>
 #include <memory>
@@ -1190,6 +1191,37 @@ bool runVaultNameDialog(QWidget *parent, QString *out) {
     *out = input->text().trimmed();
     return true;
 }
+
+// Dropdowns and spin boxes normally consume wheel input whenever the pointer
+// happens to be above them. In the long Settings page that makes casual
+// scrolling silently change preferences. Redirect those events to the page's
+// scroll viewport instead, preserving both ordinary wheels and trackpad deltas.
+class SettingsWheelRedirector final : public QObject {
+public:
+    SettingsWheelRedirector(QScrollArea *scroll, QObject *parent)
+        : QObject(parent), m_scroll(scroll) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (event->type() != QEvent::Wheel || !m_scroll)
+            return QObject::eventFilter(watched, event);
+
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        QWidget *viewport = m_scroll->viewport();
+        const QPoint local =
+            viewport->mapFromGlobal(wheel->globalPosition().toPoint());
+        QWheelEvent redirected(
+            QPointF(local), wheel->globalPosition(), wheel->pixelDelta(),
+            wheel->angleDelta(), wheel->buttons(), wheel->modifiers(),
+            wheel->phase(), wheel->inverted(), wheel->source());
+        QApplication::sendEvent(viewport, &redirected);
+        wheel->accept();
+        return true;
+    }
+
+private:
+    QScrollArea *m_scroll;
+};
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -3026,6 +3058,13 @@ void MainWindow::openSettings() {
         graphToOpen = GraphToOpen::Local;
         dlg.reject();
     });
+
+    auto *wheelRedirector = new SettingsWheelRedirector(scroll, &dlg);
+    for (QWidget *field : dlg.findChildren<QWidget *>())
+        if (qobject_cast<QComboBox *>(field) ||
+            qobject_cast<QAbstractSpinBox *>(field))
+            field->installEventFilter(wheelRedirector);
+
     dlg.setFocus(Qt::OtherFocusReason);
     QTimer::singleShot(0, &dlg,
                        [&dlg] { dlg.setFocus(Qt::OtherFocusReason); });

@@ -24,6 +24,8 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
@@ -36,6 +38,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
+#include <QWheelEvent>
 
 Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf.tests")
 
@@ -90,6 +93,15 @@ void sendKey(QWidget *receiver, QEvent::Type type, int key,
              Qt::KeyboardModifiers modifiers,
              const QString &text = QString(), bool autoRepeat = false) {
   QKeyEvent event(type, key, modifiers, text, autoRepeat, 1);
+  QApplication::sendEvent(receiver, &event);
+}
+
+void sendWheel(QWidget *receiver, int angleY) {
+  const QPoint center = receiver->rect().center();
+  QWheelEvent event(QPointF(center),
+                    QPointF(receiver->mapToGlobal(center)), QPoint(),
+                    QPoint(0, angleY), Qt::NoButton, Qt::NoModifier,
+                    Qt::NoScrollPhase, false);
   QApplication::sendEvent(receiver, &event);
 }
 
@@ -603,6 +615,7 @@ void testFullWidthEditorPreference() {
 
     bool controlsSeen = false;
     bool fullWidthPreviewSeen = false;
+    bool settingsWheelScrollSeen = false;
     QTimer::singleShot(0, [&] {
       auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
       auto *fullWidth = dialog ? dialog->findChild<QCheckBox *>(
@@ -611,8 +624,28 @@ void testFullWidthEditorPreference() {
       auto *pixelWidth = dialog ? dialog->findChild<QSpinBox *>(
                                       QStringLiteral("editorColumnWidth"))
                                 : nullptr;
+      auto *settingsScroll =
+          dialog ? dialog->findChild<QScrollArea *>() : nullptr;
+      auto *fileOrder = dialog ? dialog->findChild<QComboBox *>(
+                                     QStringLiteral("fileTreeSort"))
+                               : nullptr;
       controlsSeen = fullWidth && pixelWidth && !fullWidth->isChecked() &&
                      pixelWidth->isEnabled() && pixelWidth->value() == 520;
+      if (pixelWidth && fileOrder && settingsScroll) {
+        QScrollBar *bar = settingsScroll->verticalScrollBar();
+        const int valueBefore = pixelWidth->value();
+        const int optionBefore = fileOrder->currentIndex();
+        const int scrollBefore = bar->value();
+        sendWheel(pixelWidth, -120);
+        QApplication::processEvents();
+        const int scrollAfterValue = bar->value();
+        sendWheel(fileOrder, -120);
+        QApplication::processEvents();
+        settingsWheelScrollSeen =
+            pixelWidth->value() == valueBefore &&
+            fileOrder->currentIndex() == optionBefore &&
+            scrollAfterValue > scrollBefore && bar->value() > scrollAfterValue;
+      }
       if (fullWidth && pixelWidth) {
         fullWidth->setChecked(true);
         QApplication::processEvents();
@@ -632,6 +665,9 @@ void testFullWidthEditorPreference() {
     check(fullWidthPreviewSeen,
           QStringLiteral("Full width disables the pixel limit and expands the "
                          "editor immediately"));
+    check(settingsWheelScrollSeen,
+          QStringLiteral("wheel input over a Settings value scrolls the page "
+                         "without changing that value"));
     check(settings.value(QStringLiteral("editorFullWidth")).toBool() &&
               editorColumn &&
               editorColumn->maximumWidth() == QWIDGETSIZE_MAX,
