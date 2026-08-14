@@ -192,6 +192,10 @@ private:
                                     bool preserveModification = false);
     void smoothScrollBy(qreal pixels, int durationMs = 140);
     void stopSmoothScroll();
+    void watchScrollPastEnd(QTextDocument *watchedDocument);
+    void applyScrollPastEndRange(int naturalMaximum);
+    void scheduleScrollPastEndRangeUpdate();
+    void updateScrollPastEndRange();
     QString linkAt(const QPoint &pos) const;
     // The URL of the [text](url) link under `pos`, or empty. Distinct from
     // linkAt (wiki note targets): these open in the system browser.
@@ -370,6 +374,7 @@ private:
     int m_visualSelectionLast = 0;
     bool m_prettifying = false;  // guard against re-entrant table reformatting
     bool m_adjustingScroll = false; // guard the over-scroll range extension
+    bool m_scrollRangeUpdateQueued = false;
     bool m_applyingVisualBlockFormats = false;
     bool m_visualFormatQueued = false;
     bool m_pendingVisualPreserveModification = false;

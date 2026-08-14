@@ -53,6 +53,24 @@ void settleLayout(MarkdownEditor &editor, const QTextBlock &block) {
     QApplication::processEvents();
 }
 
+void checkCanScrollPastLastLine(MarkdownEditor &editor,
+                                const QString &description) {
+    const QTextBlock lastBlock = editor.document()->lastBlock();
+    settleLayout(editor, lastBlock);
+    editor.verticalScrollBar()->setValue(
+        editor.verticalScrollBar()->maximum());
+    QApplication::processEvents();
+
+    const QRect lastLine = editor.cursorRect(QTextCursor(lastBlock));
+    check(editor.verticalScrollBar()->maximum() > 0 &&
+              lastLine.bottom() <= 0,
+          description +
+              QStringLiteral(" should let the final line scroll past the top "
+                             "of the viewport (maximum %1, line bottom %2)")
+                  .arg(editor.verticalScrollBar()->maximum())
+                  .arg(lastLine.bottom()));
+}
+
 void waitForMs(int milliseconds) {
     QEventLoop loop;
     QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
@@ -244,6 +262,28 @@ int main(int argc, char **argv) {
     MarkdownEditor editor;
     editor.resize(250, 220);
     editor.show();
+
+    // A note with content shorter than the viewport still needs a full page of
+    // trailing scroll room. Reproduce the common long-note to short-note
+    // transition because Qt resets its natural range to zero in that case.
+    {
+        MarkdownEditor scrollEditor;
+        scrollEditor.resize(320, 180);
+        scrollEditor.show();
+        QStringList longRows;
+        for (int i = 0; i < 60; ++i)
+            longRows.append(QStringLiteral("Long note line %1").arg(i));
+        scrollEditor.setPlainText(longRows.join(QLatin1Char('\n')));
+        settleLayout(scrollEditor, scrollEditor.document()->lastBlock());
+
+        scrollEditor.setPlainText(QStringLiteral("First line\nLast line"));
+        scrollEditor.moveCursor(QTextCursor::Start);
+        checkCanScrollPastLastLine(scrollEditor, QStringLiteral("Edit Mode"));
+
+        scrollEditor.verticalScrollBar()->setValue(0);
+        scrollEditor.setReadMode(true);
+        checkCanScrollPastLastLine(scrollEditor, QStringLiteral("Read Mode"));
+    }
 
     // The bundled English dictionary loads without a network connection at
     // runtime, and the Markdown scanner exposes only human-language ranges.

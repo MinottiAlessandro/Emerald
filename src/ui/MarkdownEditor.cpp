@@ -50,6 +50,7 @@
 #include <QtMath>
 #include <QUrl>
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace {
@@ -489,6 +490,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     m_documentOwner = new QObject(this);
     m_sourceDocument = document();
     m_sourceDocument->setParent(m_documentOwner);
+    watchScrollPastEnd(m_sourceDocument);
     m_readObjectRenderer = new MarkdownReadObjectRenderer(this);
     m_readDocument = createReadDocument();
     m_sourceCursor = QTextCursor(m_sourceDocument);
@@ -497,13 +499,11 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     // unlike QPlainTextEdit's visual-line range, so it can also be animated.
     connect(verticalScrollBar(), &QAbstractSlider::rangeChanged, this,
             [this](int, int max) {
-                if (m_adjustingScroll || max <= 0)
+                if (m_adjustingScroll)
                     return;
-                m_adjustingScroll = true; // setMaximum re-emits rangeChanged
-                verticalScrollBar()->setMaximum(
-                    max + verticalScrollBar()->pageStep() - 1);
-                m_adjustingScroll = false;
+                applyScrollPastEndRange(max);
             });
+    scheduleScrollPastEndRangeUpdate();
 
     m_smoothScroll = new QVariantAnimation(this);
     m_smoothScroll->setEasingCurve(QEasingCurve::OutCubic);
@@ -1195,6 +1195,52 @@ void MarkdownEditor::stopSmoothScroll() {
     m_smoothScrollTarget = verticalScrollBar()->value();
 }
 
+void MarkdownEditor::watchScrollPastEnd(QTextDocument *watchedDocument) {
+    if (!watchedDocument || !watchedDocument->documentLayout())
+        return;
+    connect(watchedDocument->documentLayout(),
+            &QAbstractTextDocumentLayout::documentSizeChanged, this,
+            [this, watchedDocument](const QSizeF &) {
+                if (document() == watchedDocument)
+                    scheduleScrollPastEndRangeUpdate();
+            });
+}
+
+void MarkdownEditor::applyScrollPastEndRange(int naturalMaximum) {
+    if (m_adjustingScroll)
+        return;
+    QScrollBar *const bar = verticalScrollBar();
+    const int extra = qMax(0, bar->pageStep() - 1);
+    const int boundedNatural = qBound(
+        0, naturalMaximum, std::numeric_limits<int>::max() - extra);
+    const int extendedMaximum = boundedNatural + extra;
+    if (bar->maximum() == extendedMaximum)
+        return;
+
+    m_adjustingScroll = true; // setMaximum re-emits rangeChanged
+    bar->setMaximum(extendedMaximum);
+    m_adjustingScroll = false;
+}
+
+void MarkdownEditor::scheduleScrollPastEndRangeUpdate() {
+    if (m_scrollRangeUpdateQueued)
+        return;
+    m_scrollRangeUpdateQueued = true;
+    QTimer::singleShot(0, this, [this] {
+        m_scrollRangeUpdateQueued = false;
+        updateScrollPastEndRange();
+    });
+}
+
+void MarkdownEditor::updateScrollPastEndRange() {
+    if (!document() || !document()->documentLayout())
+        return;
+    const int viewportHeight = verticalScrollBar()->pageStep();
+    const int documentHeight =
+        document()->documentLayout()->documentSize().toSize().height();
+    applyScrollPastEndRange(qMax(0, documentHeight - viewportHeight));
+}
+
 void MarkdownEditor::smoothScrollBy(qreal pixels, int durationMs) {
     QScrollBar *bar = verticalScrollBar();
     if (!bar || qFuzzyIsNull(pixels))
@@ -1402,6 +1448,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
 
         m_switchingDocuments = true;
         setDocument(m_readDocument);
+        scheduleScrollPastEndRangeUpdate();
         m_switchingDocuments = false;
         reapplyFolds();
         setReadOnly(true);
@@ -1427,6 +1474,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
             m_highlighter->setSuspended(false);
         m_switchingDocuments = true;
         setDocument(m_sourceDocument);
+        scheduleScrollPastEndRangeUpdate();
         setTextCursor(m_sourceCursor);
         m_switchingDocuments = false;
         reapplyFolds();
@@ -1558,6 +1606,7 @@ QTextDocument *MarkdownEditor::createReadDocument() {
     auto *readDocument = new QTextDocument(m_documentOwner);
     readDocument->documentLayout()->registerHandler(
         MarkdownReadObjectRenderer::ObjectType, m_readObjectRenderer);
+    watchScrollPastEnd(readDocument);
     return readDocument;
 }
 
@@ -1598,6 +1647,7 @@ void MarkdownEditor::rebuildReadDocument(qreal scrollRatio) {
         QTextDocument *oldReadDocument = m_readDocument;
         m_readDocument = renderTarget;
         setDocument(m_readDocument);
+        scheduleScrollPastEndRangeUpdate();
         setTextCursor(MarkdownReadRenderer::mapToReadCursor(
             m_readDocument, sourceCursor));
         // Presentation is derived state. QTextEdit may mark a newly installed
@@ -4417,6 +4467,7 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     const qreal anchorOffset = blockViewportRect(anchor).top();
 
     QTextEdit::resizeEvent(event);
+    scheduleScrollPastEndRangeUpdate();
     if (!m_readMode) {
         applyImagePreviewFormats(); // source media rows depend on viewport width
     } else if (!m_readResizeQueued) {
