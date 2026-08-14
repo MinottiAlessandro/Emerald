@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTemporaryDir>
@@ -557,6 +558,86 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   QSettings().clear();
   Q_UNUSED(settingsRoot);
 }
+
+void testFullWidthEditorPreference() {
+  QSettings settings;
+  settings.clear();
+  settings.setValue(QStringLiteral("editorWidth"), 520);
+  settings.setValue(QStringLiteral("editorFullWidth"), false);
+  settings.sync();
+
+  {
+    MainWindow window;
+    window.resize(1200, 700);
+    window.show();
+    check(waitUntil([&window] { return window.isVisible(); }),
+          QStringLiteral("fixed-width settings test window becomes visible"));
+
+    auto *editorColumn =
+        window.findChild<QWidget *>(QStringLiteral("editorColumn"));
+    auto *settingsAction =
+        window.findChild<QAction *>(QStringLiteral("settingsAction"));
+    check(editorColumn && settingsAction &&
+              editorColumn->maximumWidth() == 520,
+          QStringLiteral("saved pixel width constrains the editor by default"));
+
+    bool controlsSeen = false;
+    bool fullWidthPreviewSeen = false;
+    QTimer::singleShot(0, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *fullWidth = dialog ? dialog->findChild<QCheckBox *>(
+                                     QStringLiteral("editorFullWidth"))
+                               : nullptr;
+      auto *pixelWidth = dialog ? dialog->findChild<QSpinBox *>(
+                                      QStringLiteral("editorColumnWidth"))
+                                : nullptr;
+      controlsSeen = fullWidth && pixelWidth && !fullWidth->isChecked() &&
+                     pixelWidth->isEnabled() && pixelWidth->value() == 520;
+      if (fullWidth && pixelWidth) {
+        fullWidth->setChecked(true);
+        QApplication::processEvents();
+        fullWidthPreviewSeen =
+            editorColumn && !pixelWidth->isEnabled() &&
+            editorColumn->maximumWidth() == QWIDGETSIZE_MAX &&
+            editorColumn->width() > 520;
+      }
+      if (dialog)
+        dialog->accept();
+    });
+    if (settingsAction)
+      settingsAction->trigger();
+
+    check(controlsSeen,
+          QStringLiteral("Settings exposes Full width beside the pixel width"));
+    check(fullWidthPreviewSeen,
+          QStringLiteral("Full width disables the pixel limit and expands the "
+                         "editor immediately"));
+    check(settings.value(QStringLiteral("editorFullWidth")).toBool() &&
+              editorColumn &&
+              editorColumn->maximumWidth() == QWIDGETSIZE_MAX,
+          QStringLiteral("accepting Settings persists the full-width editor"));
+    window.close();
+    QApplication::processEvents();
+  }
+
+  {
+    MainWindow restored;
+    restored.resize(1200, 700);
+    restored.show();
+    check(waitUntil([&restored] { return restored.isVisible(); }),
+          QStringLiteral("restored full-width window becomes visible"));
+    auto *editorColumn =
+        restored.findChild<QWidget *>(QStringLiteral("editorColumn"));
+    check(editorColumn &&
+              editorColumn->maximumWidth() == QWIDGETSIZE_MAX &&
+              editorColumn->width() > 520,
+          QStringLiteral("full-width editor preference is restored on startup"));
+    restored.close();
+    QApplication::processEvents();
+  }
+
+  settings.clear();
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -576,6 +657,7 @@ int main(int argc, char **argv) {
     app.setStyleSheet(QString::fromUtf8(qss.readAll()));
 
   testInPaneGraphNavigation(settingsDir.path());
+  testFullWidthEditorPreference();
   if (failures == 0)
     QTextStream(stdout) << "All MainWindow graph tests passed.\n";
   return failures == 0 ? 0 : 1;

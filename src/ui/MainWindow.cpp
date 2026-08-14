@@ -2147,6 +2147,8 @@ void MainWindow::loadSettings() {
     QSettings s;
     m_editorColumnWidth =
         s.value(QStringLiteral("editorWidth"), m_editorColumnWidth).toInt();
+    m_editorFullWidth =
+        s.value(QStringLiteral("editorFullWidth"), false).toBool();
     applyEditorColumnWidth();
     m_editor->setLineSpacing(s.value(QStringLiteral("lineSpacing"), 100).toInt());
     const QByteArray split = s.value(QStringLiteral("splitterState")).toByteArray();
@@ -2269,8 +2271,9 @@ void MainWindow::updateReadModeUi() {
 void MainWindow::applyEditorColumnWidth() {
     if (!m_centerColumn)
         return;
-    m_centerColumn->setMaximumWidth(m_mobileLayout ? QWIDGETSIZE_MAX
-                                                   : m_editorColumnWidth);
+    m_centerColumn->setMaximumWidth(
+        m_mobileLayout || m_editorFullWidth ? QWIDGETSIZE_MAX
+                                            : m_editorColumnWidth);
 }
 
 void MainWindow::applyMobileSplit() {
@@ -2496,6 +2499,11 @@ void MainWindow::openSettings() {
     widthBox->setSingleStep(20);
     widthBox->setSuffix(tr(" px"));
     widthBox->setValue(m_editorColumnWidth);
+    widthBox->setObjectName(QStringLiteral("editorColumnWidth"));
+    auto *fullWidthBox = new QCheckBox(tr("Use all available space"), &dlg);
+    fullWidthBox->setObjectName(QStringLiteral("editorFullWidth"));
+    fullWidthBox->setChecked(m_editorFullWidth);
+    widthBox->setEnabled(!m_editorFullWidth);
     auto *spacingBox = new QSpinBox(&dlg);
     spacingBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spacingBox->setRange(100, 250);
@@ -2647,6 +2655,7 @@ void MainWindow::openSettings() {
         addSection(tr("Editor"), tr("Reading comfort and writing column size."));
     addSettingRow(editorForm, tr("Font"), fontBox);
     addSettingRow(editorForm, tr("Font size"), sizeBox);
+    addSettingRow(editorForm, tr("Full width"), fullWidthBox);
     addSettingRow(editorForm, tr("Column width"), widthBox);
     addSettingRow(editorForm, tr("Line spacing"), spacingBox);
 
@@ -2694,21 +2703,26 @@ void MainWindow::openSettings() {
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
     // Live preview of font + width + line spacing as the user changes controls.
-    auto preview = [this, fontBox, sizeBox, widthBox, spacingBox] {
+    auto preview = [this, fontBox, sizeBox, fullWidthBox, widthBox,
+                    spacingBox] {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
+        m_editorFullWidth = fullWidthBox->isChecked();
+        widthBox->setEnabled(!m_editorFullWidth);
         m_editorColumnWidth = widthBox->value();
         applyEditorColumnWidth();
         m_editor->setLineSpacing(spacingBox->value());
     };
     connect(fontBox, &QFontComboBox::currentFontChanged, &dlg, preview);
     connect(sizeBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
+    connect(fullWidthBox, &QCheckBox::toggled, &dlg, preview);
     connect(widthBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
     connect(spacingBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
 
     const QFont originalFont = m_editor->font();
     const int originalWidth = m_editorColumnWidth;
+    const bool originalFullWidth = m_editorFullWidth;
     const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
     bool openBrokenLinksAfterSettings = false;
     enum class GraphToOpen { None, Global, Local };
@@ -2732,12 +2746,14 @@ void MainWindow::openSettings() {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
+        m_editorFullWidth = fullWidthBox->isChecked();
         m_editorColumnWidth = widthBox->value();
         applyEditorColumnWidth();
         m_editor->setLineSpacing(spacingBox->value());
         s.setValue(QStringLiteral("editorFontFamily"), f.family());
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
         s.setValue(QStringLiteral("editorWidth"), widthBox->value());
+        s.setValue(QStringLiteral("editorFullWidth"), m_editorFullWidth);
         s.setValue(QStringLiteral("lineSpacing"), spacingBox->value());
         QString spellLanguage =
             spellLanguageBox->currentData().toString();
@@ -2781,6 +2797,7 @@ void MainWindow::openSettings() {
         }
     } else {
         m_editor->applyFont(originalFont); // revert the live preview
+        m_editorFullWidth = originalFullWidth;
         m_editorColumnWidth = originalWidth;
         applyEditorColumnWidth();
         m_editor->setLineSpacing(originalSpacing);

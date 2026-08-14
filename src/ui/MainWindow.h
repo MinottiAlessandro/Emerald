@@ -263,6 +263,7 @@ private:
     QHash<QString, NoteFileMeta> m_noteMeta; // path -> title/size/mtime snapshot
     int m_indexGeneration = 0;
     int m_editorColumnWidth = 820;
+    bool m_editorFullWidth = false;
     QList<int> m_desktopSplitterSizes;
     bool m_mobileLayout = false;
     bool m_mobileShowingNotes = true;
