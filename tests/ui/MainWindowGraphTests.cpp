@@ -35,6 +35,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QToolButton>
+#include <QTreeView>
 
 Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf.tests")
 
@@ -67,6 +68,22 @@ bool writeFile(const QString &path, const QString &content) {
   const QByteArray bytes = content.toUtf8();
   return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
          file.write(bytes) == bytes.size();
+}
+
+bool setModificationTime(const QString &path, const QDateTime &time) {
+  QFile file(path);
+  return file.open(QIODevice::ReadWrite) &&
+         file.setFileTime(time, QFileDevice::FileModificationTime);
+}
+
+QStringList topLevelTreeLabels(const QTreeView *tree) {
+  QStringList labels;
+  if (!tree || !tree->model())
+    return labels;
+  const QAbstractItemModel *model = tree->model();
+  for (int row = 0; row < model->rowCount(); ++row)
+    labels << model->index(row, 0).data(Qt::DisplayRole).toString();
+  return labels;
 }
 
 void sendKey(QWidget *receiver, QEvent::Type type, int key,
@@ -642,6 +659,151 @@ void testFullWidthEditorPreference() {
   settings.clear();
 }
 
+void testFileTreeSortPreference() {
+  QTemporaryDir vault;
+  check(vault.isValid(), QStringLiteral("file-tree sort vault exists"));
+  if (!vault.isValid())
+    return;
+
+  const QString alpha = vault.filePath(QStringLiteral("Alpha.md"));
+  const QString bravo = vault.filePath(QStringLiteral("Bravo.md"));
+  const QString charlie = vault.filePath(QStringLiteral("Charlie.md"));
+  check(writeFile(alpha, QStringLiteral("alpha\n")) &&
+            writeFile(bravo, QStringLiteral("bravo\n")) &&
+            writeFile(charlie, QStringLiteral("charlie\n")),
+        QStringLiteral("file-tree sort fixture is writable"));
+  const QDateTime base = QDateTime::currentDateTimeUtc().addDays(-7);
+  check(setModificationTime(alpha, base.addDays(3)) &&
+            setModificationTime(bravo, base.addDays(1)) &&
+            setModificationTime(charlie, base.addDays(2)),
+        QStringLiteral("file-tree fixture modification times are writable"));
+
+  QSettings settings;
+  settings.clear();
+  settings.setValue(QStringLiteral("lastVault"), vault.path());
+  settings.setValue(QStringLiteral("lastNote"), bravo);
+  settings.sync();
+
+  {
+    MainWindow window;
+    window.resize(1000, 680);
+    window.show();
+    check(waitUntil([&window] { return window.isVisible(); }),
+          QStringLiteral("file-tree sort window becomes visible"));
+    auto *tree =
+        window.findChild<QTreeView *>(QStringLiteral("noteTree"));
+    auto *settingsAction =
+        window.findChild<QAction *>(QStringLiteral("settingsAction"));
+    check(tree && settingsAction &&
+              topLevelTreeLabels(tree) ==
+                  QStringList({QStringLiteral("Alpha"),
+                               QStringLiteral("Bravo"),
+                               QStringLiteral("Charlie")}),
+          QStringLiteral("file tree defaults to ascending name order"));
+
+    struct SortCase {
+      QString key;
+      QStringList expected;
+    };
+    const QList<SortCase> cases = {
+        {QStringLiteral("nameDesc"),
+         {QStringLiteral("Charlie"), QStringLiteral("Bravo"),
+          QStringLiteral("Alpha")}},
+        {QStringLiteral("modifiedNewest"),
+         {QStringLiteral("Alpha"), QStringLiteral("Charlie"),
+          QStringLiteral("Bravo")}},
+        {QStringLiteral("modifiedOldest"),
+         {QStringLiteral("Bravo"), QStringLiteral("Charlie"),
+          QStringLiteral("Alpha")}},
+        {QStringLiteral("nameAsc"),
+         {QStringLiteral("Alpha"), QStringLiteral("Bravo"),
+          QStringLiteral("Charlie")}},
+    };
+    bool selectorComplete = false;
+    for (const SortCase &sortCase : cases) {
+      QTimer::singleShot(0, [&] {
+        auto *dialog =
+            qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        auto *sort = dialog ? dialog->findChild<QComboBox *>(
+                                  QStringLiteral("fileTreeSort"))
+                            : nullptr;
+        selectorComplete = selectorComplete ||
+                           (sort && sort->count() == 4);
+        if (sort)
+          sort->setCurrentIndex(sort->findData(sortCase.key));
+        if (dialog)
+          dialog->accept();
+      });
+      if (settingsAction)
+        settingsAction->trigger();
+      QApplication::processEvents();
+      check(settings.value(QStringLiteral("fileTreeSort")).toString() ==
+                    sortCase.key &&
+                topLevelTreeLabels(tree) == sortCase.expected,
+            QStringLiteral("file tree applies and persists sort mode %1")
+                .arg(sortCase.key));
+    }
+    check(selectorComplete,
+          QStringLiteral("Settings exposes all four file-tree sort orders"));
+
+    QTimer::singleShot(0, [&] {
+      auto *dialog =
+          qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *sort = dialog ? dialog->findChild<QComboBox *>(
+                                QStringLiteral("fileTreeSort"))
+                          : nullptr;
+      if (sort)
+        sort->setCurrentIndex(
+            sort->findData(QStringLiteral("modifiedNewest")));
+      if (dialog)
+        dialog->accept();
+    });
+    if (settingsAction)
+      settingsAction->trigger();
+    auto *editor = window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+    if (editor) {
+      QTextCursor cursor = editor->sourceTextCursor();
+      cursor.movePosition(QTextCursor::End);
+      cursor.insertText(QStringLiteral("updated\n"));
+      editor->setSourceTextCursor(cursor);
+    }
+    check(editor &&
+              waitUntil([tree] {
+                return topLevelTreeLabels(tree) ==
+                       QStringList({QStringLiteral("Bravo"),
+                                    QStringLiteral("Alpha"),
+                                    QStringLiteral("Charlie")});
+              }),
+          QStringLiteral("modified ordering follows an autosaved active note "
+                         "without rebuilding the full tree"));
+    window.close();
+    QApplication::processEvents();
+  }
+
+  settings.setValue(QStringLiteral("fileTreeSort"),
+                    QStringLiteral("modifiedOldest"));
+  settings.sync();
+  check(setModificationTime(bravo, base.addDays(1)),
+        QStringLiteral("file-tree restore fixture time is reset"));
+  {
+    MainWindow restored;
+    restored.show();
+    check(waitUntil([&restored] { return restored.isVisible(); }),
+          QStringLiteral("restored file-tree sort window becomes visible"));
+    auto *tree =
+        restored.findChild<QTreeView *>(QStringLiteral("noteTree"));
+    check(topLevelTreeLabels(tree) ==
+              QStringList({QStringLiteral("Bravo"),
+                           QStringLiteral("Charlie"),
+                           QStringLiteral("Alpha")}),
+          QStringLiteral("saved file-tree order is restored on startup"));
+    restored.close();
+    QApplication::processEvents();
+  }
+
+  settings.clear();
+}
+
 void testThemePreference() {
   QSettings settings;
   settings.clear();
@@ -966,6 +1128,7 @@ int main(int argc, char **argv) {
 
   testInPaneGraphNavigation(settingsDir.path());
   testFullWidthEditorPreference();
+  testFileTreeSortPreference();
   testThemePreference();
   testCustomThemes();
   if (failures == 0)

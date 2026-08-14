@@ -92,6 +92,34 @@ constexpr int kDesktopSplitterHandleWidth = 11;
 constexpr int kGraphSplitterHandleWidth = 2;
 constexpr int kDefaultSidebarWidth = 260;
 
+enum class NoteTreeSort {
+    NameAscending,
+    NameDescending,
+    ModifiedNewest,
+    ModifiedOldest
+};
+
+NoteTreeSort noteTreeSortFromKey(const QString &key) {
+    if (key == QStringLiteral("nameDesc"))
+        return NoteTreeSort::NameDescending;
+    if (key == QStringLiteral("modifiedNewest"))
+        return NoteTreeSort::ModifiedNewest;
+    if (key == QStringLiteral("modifiedOldest"))
+        return NoteTreeSort::ModifiedOldest;
+    return NoteTreeSort::NameAscending;
+}
+
+QString currentNoteTreeSortKey() {
+    const QString key =
+        QSettings().value(QStringLiteral("fileTreeSort"),
+                          QStringLiteral("nameAsc")).toString();
+    return key == QStringLiteral("nameDesc") ||
+                   key == QStringLiteral("modifiedNewest") ||
+                   key == QStringLiteral("modifiedOldest")
+               ? key
+               : QStringLiteral("nameAsc");
+}
+
 // Keep only paths that aren't nested inside another path in the list — moving
 // or deleting a folder already carries its contents, so handling a child too
 // would just hit a stale path.
@@ -384,7 +412,8 @@ QString manualText() {
         "`.md`); edit it to rename the note.\n"
         "- **Sidebar** — notes live in a folder tree. Right-click to create or "
         "delete notes and folders, drag to move them, Shift/Ctrl-click to select "
-        "several at once, and single-click a folder to fold it. Collapse the whole "
+        "several at once, and single-click a folder to fold it. Choose name or "
+        "modified-time ordering under **Settings → Vault → File order**. Collapse the whole "
         "sidebar with **Ctrl+\\** (or click the divider) and again to bring it "
         "back.\n"
         "- **Narrow windows** — at compact widths, Notes and the editor become "
@@ -468,6 +497,7 @@ struct NoteTreeNode {
     QString text;
     QString path;
     QString dir;
+    QDateTime modified;
     NoteTreeNode *parent = nullptr;
     std::vector<std::unique_ptr<NoteTreeNode>> children;
     int row = 0;
@@ -552,20 +582,24 @@ public:
     Qt::DropActions supportedDropActions() const override { return Qt::MoveAction; }
 
     void rebuild(const QString &rootPath, const QStringList &folders,
-                 const QVector<Note> &notes, const QSet<QString> &expandedDirs) {
+                 const QVector<Note> &notes, const QSet<QString> &expandedDirs,
+                 NoteTreeSort sort) {
         beginResetModel();
         m_root.children.clear();
         m_noteNodes.clear();
         m_dirNodes.clear();
         m_expandedDirs = expandedDirs;
+        m_sort = sort;
 
         const QDir rootDir(rootPath);
         auto appendChild = [](NoteTreeNode *parent, const QString &text,
-                              const QString &path, const QString &dir) {
+                              const QString &path, const QString &dir,
+                              const QDateTime &modified = QDateTime()) {
             auto child = std::make_unique<NoteTreeNode>();
             child->text = text;
             child->path = path;
             child->dir = dir;
+            child->modified = modified;
             child->parent = parent;
             child->row = parent->children.size();
             NoteTreeNode *raw = child.get();
@@ -597,11 +631,44 @@ public:
         for (const Note &note : notes) {
             const QString dirRel =
                 rootDir.relativeFilePath(QFileInfo(note.path).absolutePath());
-            NoteTreeNode *leaf = appendChild(ensure(dirRel), note.title, note.path,
-                                             QString());
+            NoteTreeNode *leaf =
+                appendChild(ensure(dirRel), note.title, note.path, QString(),
+                            QFileInfo(note.path).lastModified());
             m_noteNodes.insert(note.path, leaf);
         }
+
+        sortChildren(&m_root);
         endResetModel();
+    }
+
+    void updateModificationTime(const QString &path,
+                                const QDateTime &modified) {
+        NoteTreeNode *node = m_noteNodes.value(path, nullptr);
+        if (!node)
+            return;
+        node->modified = modified;
+        if (m_sort != NoteTreeSort::ModifiedNewest &&
+            m_sort != NoteTreeSort::ModifiedOldest)
+            return;
+
+        // Only one sibling group can move after a save. A layout change keeps
+        // selection and expansion intact and avoids rebuilding/stat-ing the
+        // complete vault on every autosave.
+        const QModelIndexList before = persistentIndexList();
+        emit layoutAboutToBeChanged({}, QAbstractItemModel::VerticalSortHint);
+        sortChildren(node->parent, false);
+        QModelIndexList after;
+        after.reserve(before.size());
+        for (const QModelIndex &index : before) {
+            auto *persistentNode =
+                static_cast<NoteTreeNode *>(index.internalPointer());
+            after << (persistentNode
+                          ? createIndex(persistentNode->row, index.column(),
+                                        persistentNode)
+                          : QModelIndex());
+        }
+        changePersistentIndexList(before, after);
+        emit layoutChanged({}, QAbstractItemModel::VerticalSortHint);
     }
 
     QModelIndex indexForPath(const QString &path) const {
@@ -627,6 +694,48 @@ public:
     }
 
 private:
+    static int compareText(const QString &left, const QString &right) {
+        const int folded = left.compare(right, Qt::CaseInsensitive);
+        return folded != 0 ? folded : left.compare(right, Qt::CaseSensitive);
+    }
+
+    bool less(const std::unique_ptr<NoteTreeNode> &left,
+              const std::unique_ptr<NoteTreeNode> &right) const {
+        // Keep the hierarchy easy to scan: folders stay above notes and
+        // alphabetic, while the selected order applies to notes.
+        if (left->isFolder() != right->isFolder())
+            return left->isFolder();
+        if (left->isFolder())
+            return compareText(left->text, right->text) < 0;
+
+        if (m_sort == NoteTreeSort::ModifiedNewest &&
+            left->modified != right->modified)
+            return left->modified > right->modified;
+        if (m_sort == NoteTreeSort::ModifiedOldest &&
+            left->modified != right->modified)
+            return left->modified < right->modified;
+
+        const int textOrder = compareText(left->text, right->text);
+        if (textOrder != 0)
+            return m_sort == NoteTreeSort::NameDescending ? textOrder > 0
+                                                          : textOrder < 0;
+        return left->path < right->path;
+    }
+
+    void sortChildren(NoteTreeNode *parent, bool recursive = true) {
+        std::sort(parent->children.begin(), parent->children.end(),
+                  [this](const auto &left, const auto &right) {
+                      return less(left, right);
+                  });
+        for (int row = 0;
+             row < static_cast<int>(parent->children.size()); ++row) {
+            NoteTreeNode *child = parent->children.at(row).get();
+            child->row = row;
+            if (recursive)
+                sortChildren(child);
+        }
+    }
+
     const NoteTreeNode *nodeFor(const QModelIndex &index) const {
         if (!index.isValid())
             return &m_root;
@@ -644,6 +753,7 @@ private:
     QHash<QString, NoteTreeNode *> m_dirNodes;
     QHash<QString, NoteTreeNode *> m_relDirNodes;
     QSet<QString> m_expandedDirs;
+    NoteTreeSort m_sort = NoteTreeSort::NameAscending;
 };
 
 // A tree that draws a faint vertical guide for each nesting level, so notes
@@ -1308,6 +1418,7 @@ void MainWindow::buildUi() {
     m_noteTreeModel = new NoteTreeModel(this);
     auto *tree = new NoteTreeView(this);
     m_noteTree = tree;
+    m_noteTree->setObjectName(QStringLiteral("noteTree"));
     m_noteTree->setModel(m_noteTreeModel);
     m_noteTree->setHeaderHidden(true);
     m_noteTree->setIndentation(16);
@@ -2679,6 +2790,16 @@ void MainWindow::openSettings() {
     auto *folderBox = new QComboBox(&dlg);
     auto *homeBox = new QComboBox(&dlg);
     auto *templatesBox = new QComboBox(&dlg);
+    auto *fileTreeSortBox = new QComboBox(&dlg);
+    fileTreeSortBox->setObjectName(QStringLiteral("fileTreeSort"));
+    fileTreeSortBox->addItem(tr("Name (A–Z)"), QStringLiteral("nameAsc"));
+    fileTreeSortBox->addItem(tr("Name (Z–A)"), QStringLiteral("nameDesc"));
+    fileTreeSortBox->addItem(tr("Modified (newest first)"),
+                             QStringLiteral("modifiedNewest"));
+    fileTreeSortBox->addItem(tr("Modified (oldest first)"),
+                             QStringLiteral("modifiedOldest"));
+    fileTreeSortBox->setCurrentIndex(
+        fileTreeSortBox->findData(currentNoteTreeSortKey()));
     auto *readModeBox = new QCheckBox(tr("Prevent changes to this vault"), &dlg);
     readModeBox->setChecked(m_readMode);
     readModeBox->setToolTip(tr("Shortcut: Ctrl+E"));
@@ -2753,6 +2874,7 @@ void MainWindow::openSettings() {
 
     auto *vaultForm = addSection(
         tr("Vault"), tr("Defaults and maintenance tools for this vault."));
+    addSettingRow(vaultForm, tr("File order"), fileTreeSortBox);
     addSettingRow(vaultForm, tr("New notes in"), folderBox);
     addSettingRow(vaultForm, tr("Home note"), homeBox);
     addSettingRow(vaultForm, tr("Templates folder"), templatesBox);
@@ -2926,6 +3048,11 @@ void MainWindow::openSettings() {
         s.setValue(QStringLiteral("editorWidth"), widthBox->value());
         s.setValue(QStringLiteral("editorFullWidth"), m_editorFullWidth);
         s.setValue(QStringLiteral("lineSpacing"), spacingBox->value());
+        const QString selectedFileTreeSort =
+            fileTreeSortBox->currentData().toString();
+        const bool fileTreeSortChanged =
+            selectedFileTreeSort != currentNoteTreeSortKey();
+        s.setValue(QStringLiteral("fileTreeSort"), selectedFileTreeSort);
         QString spellLanguage =
             spellLanguageBox->currentData().toString();
         QString spellError;
@@ -2965,6 +3092,8 @@ void MainWindow::openSettings() {
             VaultSettings::setValue(root, QStringLiteral("templatesFolder"),
                                     templatesBox->currentData().toString());
             setReadMode(readModeBox->isChecked());
+            if (fileTreeSortChanged)
+                refreshTree();
         }
     } else {
         const QString restoredTheme = AppTheme::isAvailable(originalTheme)
@@ -3357,7 +3486,8 @@ void MainWindow::refreshTree(bool preserveExpansion) {
         preserveExpansion && model ? model->expandedDirs() : QSet<QString>();
     if (!m_vault) {
         if (model)
-            model->rebuild(QString(), QStringList(), QVector<Note>(), QSet<QString>());
+            model->rebuild(QString(), QStringList(), QVector<Note>(),
+                           QSet<QString>(), NoteTreeSort::NameAscending);
         return;
     }
 
@@ -3365,7 +3495,9 @@ void MainWindow::refreshTree(bool preserveExpansion) {
     for (const Note &n : m_vault->notes())
         titles << n.title;
 
-    model->rebuild(m_vault->root(), m_vault->folders(), m_vault->notes(), expanded);
+    model->rebuild(m_vault->root(), m_vault->folders(), m_vault->notes(),
+                   expanded,
+                   noteTreeSortFromKey(currentNoteTreeSortKey()));
 
     // Re-open the folders that were open before (none for a fresh vault, so it
     // stays fully collapsed). The chevron icons follow via the expanded signal.
@@ -3698,6 +3830,9 @@ void MainWindow::saveCurrent() {
     m_linkGraphIndex.updateNote(m_currentPath, m_currentTitle, content);
     refreshGraphPage();
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
+    if (auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel))
+        model->updateModificationTime(
+            m_currentPath, QFileInfo(m_currentPath).lastModified());
 }
 
 // Watch only the note that's currently open; drop whatever we watched before.
@@ -3795,6 +3930,9 @@ void MainWindow::syncOpenNoteFromDisk() {
     m_linkGraphIndex.updateNote(m_currentPath, m_currentTitle, disk);
     refreshGraphPage();
     markNoteMetaCurrent(m_currentPath, m_currentTitle);
+    if (auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel))
+        model->updateModificationTime(
+            m_currentPath, QFileInfo(m_currentPath).lastModified());
 
     QTextCursor c = m_editor->sourceTextCursor();
     c.setPosition(qMin(caret, int(disk.size())));
