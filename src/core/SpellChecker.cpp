@@ -1,5 +1,7 @@
 #include "SpellChecker.h"
 
+#include "MarkdownComment.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -406,6 +408,10 @@ SpellChecker::wordsInMarkdown(const QString &text) {
     maskMatches(allowed, text, url);
     maskMatches(allowed, text, email);
     maskMatches(allowed, text, callout);
+    const MarkdownComment::LineAnalysis comments =
+        MarkdownComment::analyzeLine(text);
+    for (const MarkdownComment::Range &range : comments.ranges)
+        maskRange(allowed, range.start, range.end);
 
     static const QRegularExpression word(QStringLiteral(
         "(?<![\\p{L}\\p{M}\\p{N}_])"

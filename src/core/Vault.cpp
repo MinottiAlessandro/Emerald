@@ -1,7 +1,7 @@
 #include "Vault.h"
 
+#include "MarkdownComment.h"
 #include "MarkdownWikiLinkScanner.h"
-#include "MascotSeed.h"
 #include "Perf.h"
 #include "WikiLink.h"
 #include <QDir>
@@ -129,9 +129,14 @@ QString Vault::replaceLinkTargets(const QString &content,
                                   const QString &newTitle) {
     QString result;
     int last = 0;
+    const QList<MarkdownComment::Range> commentRanges =
+        MarkdownComment::ranges(content);
     auto it = WikiLink::pattern().globalMatch(content);
     while (it.hasNext()) {
         const auto m = it.next();
+        if (MarkdownComment::overlaps(commentRanges, m.capturedStart(),
+                                      m.capturedEnd()))
+            continue;
         const QString inner = m.captured(1);
         // The target is the inner text before any #heading or |alias.
         int cut = inner.size();
@@ -236,7 +241,9 @@ QVector<Vault::BrokenLink> Vault::brokenLinks() const {
                     const qint64 targetBytes = QFileInfo(targetPath).size();
                     empty = targetBytes == 0 ||
                             (!targetContent.isEmpty() &&
-                             MascotSeed::strip(targetContent).trimmed().isEmpty());
+                             MarkdownComment::strip(targetContent)
+                                 .trimmed()
+                                 .isEmpty());
                     emptyByPath.insert(targetPath, empty);
                 } else {
                     empty = emptyIt.value();

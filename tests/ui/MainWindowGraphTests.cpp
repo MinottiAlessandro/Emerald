@@ -75,7 +75,9 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   QDir().mkpath(vault.filePath(QStringLiteral("Projects")));
   const QString gamma = vault.filePath(QStringLiteral("Projects/Gamma.md"));
   const QString delta = vault.filePath(QStringLiteral("Delta.md"));
-  check(writeFile(alpha, QStringLiteral("Alpha links to [[Beta]].\n")) &&
+  check(writeFile(alpha,
+                  QStringLiteral("Alpha links to [[Beta]].\n"
+                                 "<!-- [[Commented Ghost]] -->\n")) &&
             writeFile(beta, QStringLiteral("Beta links to [[Alpha]].\n")) &&
             writeFile(gamma, QStringLiteral("An orphan note.\n")) &&
             writeFile(delta, QStringLiteral("An incoming [[Alpha]] link.\n")),

@@ -1,4 +1,5 @@
 #include "core/ContentSecurity.h"
+#include "core/MarkdownComment.h"
 #include "core/MascotSeed.h"
 #include "core/Perf.h"
 #include "core/Vault.h"
@@ -44,6 +45,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data,
     MascotSeed::fromLine(firstLine);
     MascotSeed::kindFromLine(firstLine);
     MascotSeed::strip(input);
+    MarkdownComment::ranges(input);
+    MarkdownComment::strip(input);
 
     ContentSecurity::externalUrl(input.left(4096));
     return 0;

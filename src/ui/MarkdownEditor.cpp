@@ -7,6 +7,7 @@
 #include "MarkdownStyle.h"
 #include "MathRender.h"
 #include "core/ContentSecurity.h"
+#include "core/MarkdownComment.h"
 #include "core/MascotSeed.h"
 #include "core/Perf.h"
 #include "core/SpellChecker.h"
@@ -52,6 +53,31 @@
 #include <utility>
 
 namespace {
+constexpr int CommentBlockState = 3; // MarkdownHighlighter::StateComment
+
+MarkdownComment::LineAnalysis commentAnalysisForBlock(
+    const QTextBlock &block) {
+    const bool continuesFromPrevious =
+        block.previous().isValid() &&
+        block.previous().userState() == CommentBlockState;
+    return MarkdownComment::analyzeLine(block.text(), continuesFromPrevious);
+}
+
+QString commentMaskedBlockText(const QTextBlock &block) {
+    return commentAnalysisForBlock(block).masked(block.text());
+}
+
+bool cursorInsideComment(const QTextCursor &cursor) {
+    if (cursor.isNull() || !cursor.block().isValid())
+        return false;
+    const MarkdownComment::LineAnalysis comments =
+        commentAnalysisForBlock(cursor.block());
+    const int column = cursor.positionInBlock();
+    return comments.contains(column) ||
+           (comments.continuesComment &&
+            column == cursor.block().text().size());
+}
+
 // A task line: capture(1) = indent, capture(2) = the [ ] / [x] status char.
 const QRegularExpression &taskRe() {
     static const QRegularExpression re(
@@ -404,12 +430,13 @@ void collectInlineHighlightSpans(const QString &text, int sourceOffset,
 int highlightableContentStart(const QTextBlock &block) {
     if (!block.isValid())
         return 0;
-    const QString text = block.text();
+    const QString text = commentMaskedBlockText(block);
     const QuotePrefix quote = quotePrefix(text);
     if (quote.depth > 0) {
-        const int previousDepth = block.previous().isValid()
-                                      ? quotePrefix(block.previous().text()).depth
-                                      : 0;
+        const int previousDepth =
+            block.previous().isValid()
+                ? quotePrefix(commentMaskedBlockText(block.previous())).depth
+                : 0;
         const MarkdownCallout::TitleLine title =
             MarkdownCallout::titleLine(text, previousDepth);
         if (title.valid())
@@ -548,13 +575,20 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
         if (!m_prettifying && cur != m_lastCursorBlock) {
             const QTextBlock prev = document()->findBlockByNumber(m_lastCursorBlock);
             // If the caret just left a table, align it.
-            if (prev.isValid() && isTableRow(prev.text())) {
+            if (prev.isValid() && !insideCodeBlock(prev) &&
+                isTableRow(commentMaskedBlockText(prev))) {
                 int first = m_lastCursorBlock, last = m_lastCursorBlock;
                 while (document()->findBlockByNumber(first - 1).isValid() &&
-                       isTableRow(document()->findBlockByNumber(first - 1).text()))
+                       !insideCodeBlock(
+                           document()->findBlockByNumber(first - 1)) &&
+                       isTableRow(commentMaskedBlockText(
+                           document()->findBlockByNumber(first - 1))))
                     --first;
                 while (document()->findBlockByNumber(last + 1).isValid() &&
-                       isTableRow(document()->findBlockByNumber(last + 1).text()))
+                       !insideCodeBlock(
+                           document()->findBlockByNumber(last + 1)) &&
+                       isTableRow(commentMaskedBlockText(
+                           document()->findBlockByNumber(last + 1))))
                     ++last;
                 if (cur < first || cur > last)
                     prettifyTableAt(m_lastCursorBlock);
@@ -826,11 +860,12 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     // group. Recompute that group as one unit after an edit, then cache the
     // result on each block for constant-time painting.
     while (first.previous().isValid() &&
-           quotePrefix(first.previous().text()).depth > 0 &&
+           quotePrefix(commentMaskedBlockText(first.previous())).depth > 0 &&
            !insideCodeBlock(first.previous()))
         first = first.previous();
-    while (last.next().isValid() && quotePrefix(last.text()).depth > 0 &&
-           quotePrefix(last.next().text()).depth > 0 &&
+    while (last.next().isValid() &&
+           quotePrefix(commentMaskedBlockText(last)).depth > 0 &&
+           quotePrefix(commentMaskedBlockText(last.next())).depth > 0 &&
            !insideCodeBlock(last.next()))
         last = last.next();
 
@@ -838,9 +873,11 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
     // its consecutive list run so every row receives an accurate parent block
     // even after indenting, outdenting, inserting, or deleting an item.
     const auto isStructuralList = [this](const QTextBlock &block) {
+        const QString structure =
+            commentAnalysisForBlock(block).masked(block.text());
         return block.isValid() && !insideCodeBlock(block) &&
-               quotePrefix(block.text()).depth == 0 &&
-               listPrefix(block.text()).valid();
+               quotePrefix(structure).depth == 0 &&
+               listPrefix(structure).valid();
     };
     while (first.previous().isValid() && isStructuralList(first) &&
            isStructuralList(first.previous()))
@@ -898,9 +935,14 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
             }
         }
         const bool codeRegion = insideFence || openingFence;
-
+        const MarkdownComment::LineAnalysis blockComments =
+            codeRegion ? MarkdownComment::LineAnalysis{}
+                       : commentAnalysisForBlock(block);
+        const QString structureText =
+            codeRegion ? block.text()
+                       : blockComments.masked(block.text());
         const QuotePrefix quote =
-            codeRegion ? QuotePrefix{} : quotePrefix(block.text());
+            codeRegion ? QuotePrefix{} : quotePrefix(structureText);
         if (quote.depth == 0) {
             calloutTypes.resize(1);
             calloutTypes[0].clear();
@@ -909,11 +951,13 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         }
         const int previousCalloutQuoteDepth =
             block.previous().isValid() && !codeRegion
-                ? quotePrefix(block.previous().text()).depth
+                ? quotePrefix(commentAnalysisForBlock(block.previous())
+                                  .masked(block.previous().text()))
+                      .depth
                 : 0;
         const MarkdownCallout::TitleLine calloutTitle =
             quote.depth > 0
-                ? MarkdownCallout::titleLine(block.text(),
+                ? MarkdownCallout::titleLine(structureText,
                                              previousCalloutQuoteDepth)
                 : MarkdownCallout::TitleLine{};
         if (calloutTitle.valid())
@@ -931,7 +975,7 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
             calloutTitle.valid() && calloutTitle.quote.depth == calloutDepth;
         const ListPrefix list = codeRegion || quote.depth > 0
                                     ? ListPrefix{}
-                                    : listPrefix(block.text());
+                                    : listPrefix(structureText);
         int listParentBlock = -1;
         if (list.valid()) {
             while (!listAncestors.isEmpty() &&
@@ -973,7 +1017,7 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         }
 
         QTextBlockFormat format = block.blockFormat();
-        const int level = codeRegion ? 0 : headingLevel(block.text());
+        const int level = codeRegion ? 0 : headingLevel(structureText);
         const HeadingSpacing spacing = headingSpacing(qMax(1, level));
         const qreal quoteIndent = bodyLineHeight * 1.18;
         const qreal listIndent = bodyLineHeight * 1.05;
@@ -991,9 +1035,17 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const qreal rightMargin = codeRegion ? codePadding : 0.0;
         const qreal textIndent = codeRegion ? 0.0 : -prefixWidth;
         const int previousQuoteDepth =
-            block.previous().isValid() ? quotePrefix(block.previous().text()).depth : 0;
+            block.previous().isValid()
+                ? quotePrefix(commentAnalysisForBlock(block.previous())
+                                  .masked(block.previous().text()))
+                      .depth
+                : 0;
         const int nextQuoteDepth =
-            block.next().isValid() ? quotePrefix(block.next().text()).depth : 0;
+            block.next().isValid()
+                ? quotePrefix(commentAnalysisForBlock(block.next())
+                                  .masked(block.next().text()))
+                      .depth
+                : 0;
         const qreal quoteTop = quote.depth > 0 && previousQuoteDepth == 0
                                    ? bodyLineHeight * 0.18
                                    : 0.0;
@@ -1001,9 +1053,14 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                                       ? bodyLineHeight * 0.18
                                       : 0.0;
         const bool previousIsList = block.previous().isValid() &&
-                                    listPrefix(block.previous().text()).valid();
+                                    listPrefix(commentAnalysisForBlock(
+                                                   block.previous())
+                                                   .masked(block.previous().text()))
+                                        .valid();
         const bool nextIsList = block.next().isValid() &&
-                                listPrefix(block.next().text()).valid();
+                                listPrefix(commentAnalysisForBlock(block.next())
+                                               .masked(block.next().text()))
+                                    .valid();
         const qreal listTop = list.valid() && !previousIsList
                                   ? bodyLineHeight * 0.10
                                   : 0.0;
@@ -1013,7 +1070,7 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
         const qreal codeTop = openingFence ? bodyLineHeight * 0.30 : 0.0;
         const qreal codeBottom = closingFence ? bodyLineHeight * 0.30 : 0.0;
         const bool imageLine = !codeRegion &&
-                               imageLineRe().match(block.text()).hasMatch();
+                               imageLineRe().match(structureText).hasMatch();
         const bool imageActive = !m_readMode &&
                                  block.blockNumber() >= m_visualSelectionFirst &&
                                  block.blockNumber() <= m_visualSelectionLast;
@@ -1203,7 +1260,7 @@ QString MarkdownEditor::resolvedImagePath(const QTextBlock &block) const {
     if (!block.isValid() || m_imageBasePath.isEmpty() ||
         m_imageRootPath.isEmpty())
         return {};
-    const QString target = imageTargetFromLine(block.text());
+    const QString target = imageTargetFromLine(commentMaskedBlockText(block));
     if (target.isEmpty())
         return {};
     return ContentSecurity::resolveLocalImage(target, m_imageBasePath,
@@ -1270,7 +1327,7 @@ void MarkdownEditor::applyImagePreviewFormats() {
     bool formatEditOpen = false;
     for (QTextBlock block = document()->firstBlock(); block.isValid();
          block = block.next()) {
-        if (!imageLineRe().match(block.text()).hasMatch() ||
+        if (!imageLineRe().match(commentMaskedBlockText(block)).hasMatch() ||
             insideCodeBlock(block))
             continue;
         const bool active = !m_readMode &&
@@ -2140,8 +2197,9 @@ QString MarkdownEditor::misspelledWordAt(const QPoint &viewportPosition) const {
     if (!block.isValid() || block.userState() == 1 || block.userState() == 2)
         return {};
     const int column = cursor.position() - block.position();
+    const QString spellText = commentMaskedBlockText(block);
     for (const SpellChecker::WordRange &range :
-         SpellChecker::wordsInMarkdown(block.text())) {
+         SpellChecker::wordsInMarkdown(spellText)) {
         if (column >= range.start && column <= range.start + range.length &&
             !m_spellChecker->isCorrect(range.word))
             return range.word;
@@ -2163,8 +2221,9 @@ bool MarkdownEditor::replaceMisspelledWordAt(
     if (!block.isValid())
         return false;
     const int column = point.position() - block.position();
+    const QString spellText = commentMaskedBlockText(block);
     for (const SpellChecker::WordRange &range :
-         SpellChecker::wordsInMarkdown(block.text())) {
+         SpellChecker::wordsInMarkdown(spellText)) {
         if (column < range.start || column > range.start + range.length ||
             range.word != expectedWord)
             continue;
@@ -2220,7 +2279,10 @@ int MarkdownEditor::firstContentPosition() const {
 }
 
 QString MarkdownEditor::bodyText() const {
-    return MascotSeed::strip(toPlainText());
+    // Preserve the historic mascot-body hash: its dedicated first line and
+    // trailing newline disappear as one unit, then ordinary comments are
+    // removed while retaining their structural newlines.
+    return MarkdownComment::strip(MascotSeed::strip(toPlainText()));
 }
 
 void MarkdownEditor::setMascot(quint64 seed, const QString &kind) {
@@ -2274,6 +2336,10 @@ void MarkdownEditor::updateMascotLineState() {
 QString MarkdownEditor::wikiContextPrefix(bool *inContext) const {
     *inContext = false;
     const QTextCursor cursor = textCursor();
+    const MarkdownComment::LineAnalysis comments =
+        commentAnalysisForBlock(cursor.block());
+    if (comments.contains(qMax(0, cursor.positionInBlock() - 1)))
+        return {};
     const QString before = cursor.block().text().left(cursor.positionInBlock());
     const int open = before.lastIndexOf(QStringLiteral("[["));
     if (open < 0)
@@ -2357,8 +2423,13 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
     const int column = cursor.positionInBlock();
 
     auto it = WikiLink::pattern().globalMatch(block.text());
+    const MarkdownComment::LineAnalysis comments =
+        commentAnalysisForBlock(block);
     while (it.hasNext()) {
         const auto m = it.next();
+        if (MarkdownComment::overlaps(comments.ranges, m.capturedStart(0),
+                                      m.capturedEnd(0)))
+            continue;
         if (column >= m.capturedStart(0) && column <= m.capturedEnd(0) &&
             pointInTextRange(pos, block, int(m.capturedStart(0)),
                              int(m.capturedEnd(0))))
@@ -2380,8 +2451,13 @@ QString MarkdownEditor::internetLinkAt(const QPoint &pos) const {
     const int column = cursor.positionInBlock();
 
     auto it = mdLinkRe().globalMatch(block.text());
+    const MarkdownComment::LineAnalysis comments =
+        commentAnalysisForBlock(block);
     while (it.hasNext()) {
         const auto m = it.next();
+        if (MarkdownComment::overlaps(comments.ranges, m.capturedStart(0),
+                                      m.capturedEnd(0)))
+            continue;
         if (column >= m.capturedStart(0) && column <= m.capturedEnd(0) &&
             pointInTextRange(pos, block, int(m.capturedStart(0)),
                              int(m.capturedEnd(0))))
@@ -2506,6 +2582,8 @@ void MarkdownEditor::refreshQuickJumpTargets() {
             }
         } else {
             const QString text = block.text();
+            const MarkdownComment::LineAnalysis comments =
+                commentAnalysisForBlock(block);
             QList<QPair<int, int>> codeSpans;
             static const QRegularExpression inlineCodeRe(
                 QStringLiteral("`[^`]+`"));
@@ -2526,7 +2604,10 @@ void MarkdownEditor::refreshQuickJumpTargets() {
             auto wikiIt = WikiLink::pattern().globalMatch(text);
             while (wikiIt.hasNext()) {
                 const auto match = wikiIt.next();
-                if (overlapsCode(match.capturedStart(), match.capturedEnd()))
+                if (overlapsCode(match.capturedStart(), match.capturedEnd()) ||
+                    MarkdownComment::overlaps(
+                        comments.ranges, match.capturedStart(),
+                        match.capturedEnd()))
                     continue;
                 const QString inner = match.captured(1);
                 const int pipe = inner.indexOf(QLatin1Char('|'));
@@ -2544,7 +2625,9 @@ void MarkdownEditor::refreshQuickJumpTargets() {
                 const int start = match.capturedStart();
                 if ((start > 0 &&
                      text.at(start - 1) == QLatin1Char('!')) ||
-                    overlapsCode(start, match.capturedEnd()))
+                    overlapsCode(start, match.capturedEnd()) ||
+                    MarkdownComment::overlaps(comments.ranges, start,
+                                              match.capturedEnd()))
                     continue;
                 candidates.append({start, int(match.capturedStart(1)),
                                    int(match.capturedEnd(1)), match.captured(2),
@@ -2681,7 +2764,7 @@ QTextBlock MarkdownEditor::taskCheckboxBlockAt(const QPoint &pos) const {
     const QTextBlock block = cursorForPosition(pos).block();
     if (block.blockNumber() == textCursor().blockNumber())
         return {}; // the active line shows raw markup; edit it normally
-    const auto m = taskRe().match(block.text());
+    const auto m = taskRe().match(commentMaskedBlockText(block));
     if (!m.hasMatch())
         return {};
     return taskCheckboxRect(block).adjusted(-3, -2, 3, 2).contains(pos)
@@ -2692,7 +2775,7 @@ QTextBlock MarkdownEditor::taskCheckboxBlockAt(const QPoint &pos) const {
 QRectF MarkdownEditor::taskCheckboxRect(const QTextBlock &block) const {
     if (!block.isValid())
         return {};
-    const auto match = taskRe().match(block.text());
+    const auto match = taskRe().match(commentMaskedBlockText(block));
     if (!match.hasMatch())
         return {};
     const int markerPosition = match.capturedLength(1);
@@ -2711,7 +2794,7 @@ bool MarkdownEditor::toggleTaskAt(const QPoint &pos) {
     const QTextBlock block = taskCheckboxBlockAt(pos);
     if (!block.isValid())
         return false;
-    const auto m = taskRe().match(block.text());
+    const auto m = taskRe().match(commentMaskedBlockText(block));
     const int statusPos = m.capturedStart(2);
     QTextCursor edit(block);
     edit.setPosition(block.position() + statusPos);
@@ -2730,7 +2813,8 @@ QRectF MarkdownEditor::foldControlRect(const QTextBlock &block) const {
     if (!block.isValid())
         return {};
     const QTextBlock sourceBlock = sourceBlockForDisplay(block);
-    if (sourceBlock.isValid() && listPrefix(sourceBlock.text()).valid()) {
+    if (sourceBlock.isValid() &&
+        listPrefix(commentMaskedBlockText(sourceBlock)).valid()) {
         const QRectF marker = listMarkerRect(block);
         if (marker.isValid()) {
             constexpr qreal Width = 12.0;
@@ -2748,7 +2832,7 @@ QRectF MarkdownEditor::listMarkerRect(const QTextBlock &block) const {
         return {};
     int markerPosition = 0;
     if (!m_readMode) {
-        const ListPrefix prefix = listPrefix(block.text());
+        const ListPrefix prefix = listPrefix(commentMaskedBlockText(block));
         if (!prefix.valid())
             return {};
         markerPosition = prefix.markerStart;
@@ -3164,9 +3248,10 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
         (event->modifiers() & Qt::ControlModifier)) {
         QTextCursor c = textCursor();
+        const bool inComment = cursorInsideComment(c);
         c.movePosition(QTextCursor::EndOfBlock);
         setTextCursor(c);
-        if (insideCodeBlock(c.block()) || !continueList()) {
+        if (inComment || insideCodeBlock(c.block()) || !continueList()) {
             c = textCursor();
             c.insertText(QStringLiteral("\n"));
             setTextCursor(c);
@@ -3234,7 +3319,7 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
         QTextCursor c = textCursor();
         if (!c.hasSelection() && c.atBlockEnd() &&
             c.block().text() == QStringLiteral("``") &&
-            !insideCodeBlock(c.block())) {
+            !insideCodeBlock(c.block()) && !cursorInsideComment(c)) {
             c.beginEditBlock();
             c.insertText(QStringLiteral("`\n```")); // finish open + closing fence
             c.movePosition(QTextCursor::Up);         // back to the opening fence,
@@ -3248,7 +3333,8 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
     // Inside a fenced code block the text is verbatim: Enter and Tab insert a
     // plain newline / indent instead of continuing a list or folding markup.
     const bool inCode = insideCodeBlock(textCursor().block());
-    if (!inCode) {
+    const bool inComment = cursorInsideComment(textCursor());
+    if (!inCode && !inComment) {
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
             !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
             handleTableHeaderEnter()) {
@@ -3747,15 +3833,20 @@ QTextBlock MarkdownEditor::foldSectionEnd(const QTextBlock &heading) const {
     // heading.next() down to the next same-or-higher heading (or EOF), minus any
     // trailing blank lines — so the blank separation before that next heading
     // stays visible. Invalid when the section has no foldable content.
-    const int level = headingLevel(sourceHeading.text());
+    const int level = headingLevel(
+        commentAnalysisForBlock(sourceHeading).masked(sourceHeading.text()));
     QTextBlock lastContent;
     for (QTextBlock b = sourceHeading.next(); b.isValid(); b = b.next()) {
         // A "# ..." line inside a code block is literal text, not a heading,
         // so it must not end the section early.
-        const int l = insideCodeBlock(b) ? 0 : headingLevel(b.text());
+        const bool code = insideCodeBlock(b);
+        const QString structure =
+            code ? b.text()
+                 : commentAnalysisForBlock(b).masked(b.text());
+        const int l = code ? 0 : headingLevel(structure);
         if (l > 0 && l <= level)
             break;
-        if (!b.text().trimmed().isEmpty())
+        if (!structure.trimmed().isEmpty())
             lastContent = b;
     }
     return lastContent;
@@ -3765,33 +3856,42 @@ bool MarkdownEditor::headingFoldable(const QTextBlock &heading) const {
     const QTextBlock sourceHeading = sourceBlockForDisplay(heading);
     if (!sourceHeading.isValid() || insideCodeBlock(sourceHeading))
         return false; // a "# ..." line inside a code block isn't a heading
-    if (headingLevel(sourceHeading.text()) == 0)
+    if (headingLevel(commentAnalysisForBlock(sourceHeading)
+                         .masked(sourceHeading.text())) == 0)
         return false;
     return foldSectionEnd(sourceHeading).isValid();
 }
 
 QTextBlock MarkdownEditor::listSubtreeEnd(const QTextBlock &item) const {
     const QTextBlock sourceItem = sourceBlockForDisplay(item);
-    if (!sourceItem.isValid() || insideCodeBlock(sourceItem) ||
-        quotePrefix(sourceItem.text()).depth > 0)
+    if (!sourceItem.isValid() || insideCodeBlock(sourceItem))
         return {};
-    const ListPrefix parent = listPrefix(sourceItem.text());
+    const QString sourceStructure =
+        commentAnalysisForBlock(sourceItem).masked(sourceItem.text());
+    if (quotePrefix(sourceStructure).depth > 0)
+        return {};
+    const ListPrefix parent = listPrefix(sourceStructure);
     if (!parent.valid())
         return {};
 
     QTextBlock block = sourceItem.next();
-    if (!block.isValid() || insideCodeBlock(block) ||
-        quotePrefix(block.text()).depth > 0)
+    if (!block.isValid() || insideCodeBlock(block))
         return {};
-    const ListPrefix firstChild = listPrefix(block.text());
+    QString blockStructure =
+        commentAnalysisForBlock(block).masked(block.text());
+    if (quotePrefix(blockStructure).depth > 0)
+        return {};
+    const ListPrefix firstChild = listPrefix(blockStructure);
     if (!firstChild.valid() || firstChild.depth <= parent.depth)
         return {};
 
     QTextBlock end = block;
     for (block = block.next(); block.isValid(); block = block.next()) {
-        if (insideCodeBlock(block) || quotePrefix(block.text()).depth > 0)
+        blockStructure =
+            commentAnalysisForBlock(block).masked(block.text());
+        if (insideCodeBlock(block) || quotePrefix(blockStructure).depth > 0)
             break;
-        const ListPrefix descendant = listPrefix(block.text());
+        const ListPrefix descendant = listPrefix(blockStructure);
         if (!descendant.valid() || descendant.depth <= parent.depth)
             break;
         end = block;
@@ -3902,7 +4002,9 @@ void MarkdownEditor::reapplyFolds() {
                                      if (!f.anchor.isValid())
                                          return true;
                                      if (f.kind == Fold::Kind::Heading)
-                                         return headingLevel(f.anchor.text()) == 0 ||
+                                         return headingLevel(
+                                                    commentAnalysisForBlock(f.anchor)
+                                                        .masked(f.anchor.text())) == 0 ||
                                                 !foldSectionEnd(f.anchor).isValid();
                                      return !listSubtreeEnd(f.anchor).isValid();
                                  }),
@@ -3948,12 +4050,16 @@ void MarkdownEditor::reapplyFolds() {
 
 void MarkdownEditor::prettifyTableAt(int blockNumber) {
     QTextBlock first = document()->findBlockByNumber(blockNumber);
-    if (!first.isValid() || !isTableRow(first.text()))
+    const auto structuralTableRow = [this](const QTextBlock &block) {
+        return block.isValid() && !insideCodeBlock(block) &&
+               isTableRow(commentMaskedBlockText(block));
+    };
+    if (!structuralTableRow(first))
         return;
-    while (first.previous().isValid() && isTableRow(first.previous().text()))
+    while (structuralTableRow(first.previous()))
         first = first.previous();
     QTextBlock last = first;
-    while (last.next().isValid() && isTableRow(last.next().text()))
+    while (structuralTableRow(last.next()))
         last = last.next();
 
     QList<QStringList> rows;
@@ -4389,10 +4495,22 @@ void MarkdownEditor::drawQuotePanels(QPainter &painter,
     const qreal documentMargin = document()->documentMargin();
 
     const auto effectiveQuoteDepth = [this](const QTextBlock &block) {
+        if (!block.isValid())
+            return 0;
+        if (m_readMode) {
+            // Read Mode already carries the rendered quote surface and its
+            // nesting margin. Derive depth from that presentation metadata so
+            // painting remains correct even when a new source note was loaded
+            // while its detached syntax highlighter was suspended.
+            const QTextBlockFormat format = block.blockFormat();
+            if (format.background().style() == Qt::NoBrush)
+                return 0;
+            return qMax(1, qRound(format.leftMargin() / 16.0) + 1);
+        }
         const QTextBlock source =
-            m_readMode ? sourceBlockForDisplay(block) : block;
+            block;
         return source.isValid() && !insideCodeBlock(source)
-                   ? quotePrefix(source.text()).depth
+                   ? quotePrefix(commentMaskedBlockText(source)).depth
                    : 0;
     };
     for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
@@ -4474,7 +4592,8 @@ void MarkdownEditor::drawQuotePanels(QPainter &painter,
         if (!m_readMode && isCalloutTitle) {
             const MarkdownCallout::TitleLine title =
                 MarkdownCallout::titleLine(
-                    block.text(), effectiveQuoteDepth(block.previous()));
+                    commentMaskedBlockText(block),
+                    effectiveQuoteDepth(block.previous()));
             const bool sourceRevealed =
                 block.blockNumber() >= m_visualSelectionFirst &&
                 block.blockNumber() <= m_visualSelectionLast;
@@ -4617,7 +4736,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 block.blockNumber() <= selLast)
                 continue;
 
-            const QString target = imageTargetFromLine(block.text());
+            const QString target =
+                imageTargetFromLine(commentMaskedBlockText(block));
             if (target.isEmpty())
                 continue;
             const QRectF area = imagePreviewArea(block);
@@ -4707,11 +4827,12 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         if (geo.bottom() < event->rect().top() ||
             (block.blockNumber() >= selFirst && block.blockNumber() <= selLast))
             continue;
+        const QString structureText = commentMaskedBlockText(block);
 
         // Horizontal rule: a full-width line across the (hidden) dashes.
         static const QRegularExpression ruleRe(
             QStringLiteral("^\\s*([-*_])\\s*(?:\\1\\s*){2,}$"));
-        if (ruleRe.match(block.text()).hasMatch()) {
+        if (ruleRe.match(structureText).hasMatch()) {
             const qreal margin = document()->documentMargin();
             const qreal y = geo.center().y();
             QPen pen(QColor(0x2f, 0x4a, 0x3b));
@@ -4723,7 +4844,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
 
         // Task checkbox, drawn over the hidden "- [ ] " markup.
-        if (const auto t = taskRe().match(block.text()); t.hasMatch()) {
+        if (const auto t = taskRe().match(structureText); t.hasMatch()) {
             const QRectF box = taskCheckboxRect(block);
             const qreal s = box.width();
             const bool checked = t.captured(2).compare(QStringLiteral("x"),
@@ -4753,7 +4874,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         }
 
         // Bullet glyph, drawn over the hidden dash.
-        const auto m = re.match(block.text());
+        const auto m = re.match(structureText);
         if (!m.hasMatch())
             continue;
 
@@ -4765,7 +4886,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         const QPointF c(cell.left() + cw / 2.0, cell.center().y());
         const qreal r = diameter / 2.0;
 
-        switch (listPrefix(block.text()).depth % 3) {
+        switch (listPrefix(structureText).depth % 3) {
         case 0: // filled disc
             p.setPen(Qt::NoPen);
             p.setBrush(color);
@@ -4876,7 +4997,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 (bn >= selFirst && bn <= selLast) || insideCodeBlock(block) ||
                 block.userState() == 2) // part of a multi-line $$ region (above)
                 continue;
-            const QString btext = block.text();
+            const QString btext = commentMaskedBlockText(block);
 
             const auto disp = MathRender::displayPattern().match(btext);
             if (disp.hasMatch()) {

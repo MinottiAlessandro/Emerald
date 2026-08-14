@@ -1,5 +1,6 @@
 #include "MarkdownWikiLinkScanner.h"
 
+#include "MarkdownComment.h"
 #include "WikiLink.h"
 
 #include <QRegularExpression>
@@ -33,6 +34,8 @@ QVector<QPair<int, int>> inlineCodeSpans(const QString &line) {
 
 QVector<Link> scan(const QString &content) {
   QVector<Link> links;
+  const QList<MarkdownComment::Range> commentRanges =
+      MarkdownComment::ranges(content);
   static const QRegularExpression fenceRe(
       QStringLiteral("^\\s*(`{3,}|~{3,})\\s*(\\S*).*$"));
 
@@ -74,7 +77,9 @@ QVector<Link> scan(const QString &content) {
         const QRegularExpressionMatch match = linkIt.next();
         const int start = int(match.capturedStart());
         const int end = int(match.capturedEnd());
-        if (overlapsCode(start, end))
+        if (overlapsCode(start, end) ||
+            MarkdownComment::overlaps(commentRanges, lineStart + start,
+                                      lineStart + end))
           continue;
         links.push_back({WikiLink::cleanTarget(match.captured(1)),
                          lineStart + start, end - start, lineNumber});

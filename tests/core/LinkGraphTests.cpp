@@ -1,4 +1,5 @@
 #include "core/LinkGraphIndex.h"
+#include "core/MarkdownComment.h"
 #include "core/MarkdownWikiLinkScanner.h"
 
 #include <QCoreApplication>
@@ -38,6 +39,9 @@ void testSemanticScanner() {
   const QString content =
       QStringLiteral("[[Target|label]] and [[Other#Heading]] and [[#Local]]\n"
                      "`[[inline]]` ``[[also inline]]`` [[Visible]]\n"
+                     "<!-- [[inline comment]] -->\n"
+                     "before <!-- [[hidden comment link]] --> after\n"
+                     "<!--\n[[block comment link]]\n-->\n"
                      "```md\n[[fenced]]\n```\n"
                      "~~~\n[[tilde fenced]]\n~~~~\n");
   const QVector<MarkdownWikiLinkScanner::Link> links =
@@ -55,6 +59,32 @@ void testSemanticScanner() {
               raw.endsWith(QStringLiteral("]]")),
           QStringLiteral("scanner preserves exact source span"));
   }
+
+  const QString commentFixture = QStringLiteral(
+      "before <!-- hidden words --> after\n"
+      "<!--\n# hidden heading\n-->\n"
+      "`<!-- inline code -->`\n"
+      "```md\n<!-- fenced code -->\n```\n"
+      "``` still code\n<!-- still fenced code -->\n```\n"
+      "$$ <!-- formula text --> $$\n"
+      "$$\n<!-- block formula text -->\n$$\n"
+      "stray $$ <!-- hidden after stray display marker -->\n"
+      "$5 and <!-- hidden between currency --> $10\n"
+      "<!-- unclosed comment\n[[hidden to end]]");
+  const QString stripped = MarkdownComment::strip(commentFixture);
+  check(stripped.contains(QStringLiteral("before  after")) &&
+            !stripped.contains(QStringLiteral("hidden words")) &&
+            !stripped.contains(QStringLiteral("hidden heading")) &&
+            stripped.contains(QStringLiteral("`<!-- inline code -->`")) &&
+            stripped.contains(QStringLiteral("<!-- fenced code -->")) &&
+            stripped.contains(QStringLiteral("<!-- still fenced code -->")) &&
+            stripped.contains(QStringLiteral("<!-- formula text -->")) &&
+            stripped.contains(QStringLiteral("<!-- block formula text -->")) &&
+            !stripped.contains(QStringLiteral("hidden after stray")) &&
+            !stripped.contains(QStringLiteral("hidden between currency")) &&
+            !stripped.contains(QStringLiteral("hidden to end")),
+        QStringLiteral("comment stripping hides author comments while keeping "
+                       "code and math literal"));
 }
 
 void testGraphIndex() {

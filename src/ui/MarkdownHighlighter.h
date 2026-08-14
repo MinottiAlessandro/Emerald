@@ -67,6 +67,7 @@ private:
         StateNormal = 0,
         StateCode = 1,
         StateMath = 2,
+        StateComment = 3,
         StateQuoteBase = 100
     };
 
@@ -126,11 +127,12 @@ private:
     void applyMath(const QString &text, QList<bool> &consumed, bool reveal);
     // Per-character mask of the line's struck text: a completed task's label and
     // every ~~…~~ span (ignoring ~~ inside inline `code`). Used to extend the
-    // strike onto inline code/math, which consume their span before emphasis.
+    // strike onto inline code/math and link labels, which consume their span
+    // before emphasis.
     QList<bool> struckMask(const QString &text, int doneStart, int doneEnd) const;
-    // After the inline passes, add strikethrough to inline code (and revealed
-    // inline math) that falls inside a struck span — so a ~~`code`~~ or a done
-    // task's `code`/$math$ reads as struck like the surrounding text.
+    // After the inline passes, add strikethrough to inline code, link labels,
+    // and revealed inline math that fall inside a struck span — so consumed
+    // constructs read as struck like the surrounding text.
     void strikeConsumedInline(const QString &text, bool reveal, int doneStart,
                               int doneEnd);
     void applySpelling(const QString &text);
@@ -182,6 +184,7 @@ private:
     QTextCharFormat m_taskDone;
     QTextCharFormat m_marker; // dimmed markers, shown on the active line
     QTextCharFormat m_mascot; // a recognised mascot seed line (first line only)
+    QTextCharFormat m_comment; // visible author-only HTML comment source
     QTextCharFormat m_math;   // inline $…$ formula body
 
     QRegularExpression m_reHeading;

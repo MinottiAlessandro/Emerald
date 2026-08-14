@@ -5,6 +5,7 @@
 #include "MarkdownReadObjectRenderer.h"
 #include "MarkdownStyle.h"
 #include "core/ContentSecurity.h"
+#include "core/MarkdownComment.h"
 #include "core/MascotSeed.h"
 #include "core/WikiLink.h"
 
@@ -33,6 +34,12 @@ struct ReadSourceRange {
 };
 
 using ReadSourceRanges = QList<ReadSourceRange>;
+
+constexpr ushort CommentPlaceholderValue = 0xfdd0;
+
+QChar commentPlaceholder() {
+    return QChar(CommentPlaceholderValue);
+}
 
 class ReadBlockData final : public QTextBlockUserData {
 public:
@@ -70,6 +77,25 @@ void insertMappedText(QTextCursor &cursor, const QString &display,
     cursor.insertText(display, format);
     appendSourceRange(ranges, readStart, display.size(), sourceStart,
                       sourceLength);
+}
+
+void insertMappedLiteral(QTextCursor &cursor, const QString &display,
+                         const QTextCharFormat &format, int sourceStart,
+                         ReadSourceRanges *ranges) {
+    int pos = 0;
+    while (pos < display.size()) {
+        if (display.at(pos).unicode() == CommentPlaceholderValue) {
+            ++pos;
+            continue;
+        }
+        int end = pos + 1;
+        while (end < display.size() &&
+               display.at(end).unicode() != CommentPlaceholderValue)
+            ++end;
+        insertMappedText(cursor, display.mid(pos, end - pos), format,
+                         sourceStart + pos, end - pos, ranges);
+        pos = end;
+    }
 }
 
 double headingScale(int level) {
@@ -335,6 +361,10 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
     };
     int pos = 0;
     while (pos < text.size()) {
+        if (text.at(pos).unicode() == CommentPlaceholderValue) {
+            ++pos;
+            continue;
+        }
         if (isDelimiter(pos)) {
             ++pos;
             continue;
@@ -476,6 +506,7 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
         const int mask = styleAt(pos);
         while (next < text.size() &&
                !QStringLiteral("\\[!*_`~=$").contains(text.at(next)) &&
+               text.at(next).unicode() != CommentPlaceholderValue &&
                !isDelimiter(next) && styleAt(next) == mask)
             ++next;
         insertMappedText(cursor, text.mid(pos, next - pos),
@@ -651,10 +682,12 @@ void insertReadTable(QTextCursor &cursor, const QList<ReadTableRow> &rows,
     const QFontMetricsF metrics(options.baseFont);
     for (const ReadTableRow &row : rows) {
         for (int column = 0; column < row.size(); ++column) {
+            QString visibleCell = row.at(column).text;
+            visibleCell.remove(commentPlaceholder());
             naturalWidths[column] =
                 qMax(naturalWidths.at(column),
                      qBound(qreal(48.0),
-                            metrics.horizontalAdvance(row.at(column).text) +
+                            metrics.horizontalAdvance(visibleCell) +
                                 18.0,
                             qreal(240.0)));
         }
@@ -898,11 +931,23 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     target->setDocumentMargin(16.0);
 
     QTextCursor cursor(target);
-    const QStringList lines = source.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    const QStringList sourceLines =
+        source.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    // Keep source length and line boundaries stable while comments disappear.
+    // Spaces feed structural recognisers; a private noncharacter feeds the
+    // inline renderer, which skips it without creating a selectable gap.
+    const QList<MarkdownComment::Range> commentRanges =
+        MarkdownComment::ranges(source);
+    const QStringList lines =
+        MarkdownComment::masked(source, commentRanges)
+            .split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    const QStringList renderLines =
+        MarkdownComment::masked(source, commentRanges, commentPlaceholder())
+            .split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     QVector<int> lineStarts;
-    lineStarts.reserve(lines.size());
+    lineStarts.reserve(sourceLines.size());
     int nextLineStart = 0;
-    for (const QString &line : lines) {
+    for (const QString &line : sourceLines) {
         lineStarts.append(nextLineStart);
         nextLineStart += line.size() + 1;
     }
@@ -937,10 +982,17 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     QVector<ListAncestor> listAncestors;
     for (int sourceBlock = 0; sourceBlock < lines.size(); ++sourceBlock) {
         const QString line = lines.at(sourceBlock);
+        const QString renderLine = renderLines.at(sourceBlock);
+        const QString sourceLine = sourceLines.at(sourceBlock);
         const int lineStart = lineStarts.at(sourceBlock);
         int sourceEndBlock = sourceBlock;
 
-        if (sourceBlock == 0 && MascotSeed::fromLine(line) != 0)
+        if (sourceBlock == 0 && MascotSeed::fromLine(sourceLine) != 0)
+            continue;
+        // A source row made entirely from comment text has no Read Mode block,
+        // so consecutive comments do not leave vertical seams or blank gaps.
+        if (line.trimmed().isEmpty() &&
+            renderLine.contains(commentPlaceholder()))
             continue;
 
         const MarkdownCallout::QuotePrefix sourceQuote =
@@ -971,7 +1023,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         }
 
         if (isPipeTableRow(line) && sourceBlock + 1 < lines.size()) {
-            const ReadTableRow header = splitMarkdownTableRow(line);
+            const ReadTableRow header = splitMarkdownTableRow(renderLine);
             QList<Qt::Alignment> alignments;
             if (tableSeparator(splitMarkdownTableRow(lines.at(sourceBlock + 1)),
                                &alignments)) {
@@ -983,12 +1035,12 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                      isPipeTableRow(lines.at(blockNumber));
                      ++blockNumber) {
                     tableRows.append(
-                        splitMarkdownTableRow(lines.at(blockNumber)));
+                        splitMarkdownTableRow(renderLines.at(blockNumber)));
                     sourceRows.append(blockNumber);
                     sourceEndBlock = blockNumber;
                 }
                 insertReadTable(cursor, tableRows, sourceRows, alignments,
-                                lines, lineStarts, options);
+                                sourceLines, lineStarts, options);
                 firstOutput = false;
                 reuseCurrentBlock = true;
                 listAncestors.clear();
@@ -1000,7 +1052,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         QTextBlockFormat block = baseBlockFormat(options.lineSpacing);
         QTextCharFormat text = body;
         QTextCharFormat object;
-        QString content = line;
+        QString content = renderLine;
         int contentSourceOffset = lineStart;
         QString renderedPrefix;
         int prefixSourceStart = lineStart;
@@ -1089,7 +1141,8 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         } else if (const auto heading = headingRe.match(line);
                    heading.hasMatch()) {
             const int level = heading.capturedLength(1);
-            content = heading.captured(2);
+            content = renderLine.mid(heading.capturedStart(2),
+                                     heading.capturedLength(2));
             contentSourceOffset = lineStart + heading.capturedStart(2);
             text.setFontPointSize(baseSize * headingScale(level));
             text.setFontWeight(level <= 3 ? QFont::Bold : QFont::DemiBold);
@@ -1149,7 +1202,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
 
                 if (calloutTitle.valid()) {
                     if (calloutTitle.hasCustomTitle()) {
-                        content = line.mid(calloutTitle.titleStart);
+                        content = renderLine.mid(calloutTitle.titleStart);
                         contentSourceOffset =
                             lineStart + calloutTitle.titleStart;
                     } else {
@@ -1177,7 +1230,8 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                     listParentBlock =
                         listAncestors.constLast().readBlock;
                 QString marker = list.captured(2);
-                content = list.captured(4);
+                content = renderLine.mid(list.capturedStart(4),
+                                         list.capturedLength(4));
                 contentSourceOffset =
                     lineStart + list.capturedStart(4);
                 if (list.capturedStart(3) >= 0) {
@@ -1263,8 +1317,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
             insertInline(cursor, content, text, options, contentSourceOffset,
                          &ranges);
         } else {
-            insertMappedText(cursor, content, text, lineStart, line.size(),
-                             &ranges);
+            insertMappedLiteral(cursor, content, text, lineStart, &ranges);
         }
         attachSourceData(cursor.block(), sourceBlock, lineStart,
                          sourceEnd - lineStart, ranges);
@@ -1275,7 +1328,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         sourceBlock = sourceEndBlock;
     }
 
-    // A note containing only a mascot header still needs a valid visible block.
+    // A note containing only comments still needs a valid visible block.
     if (firstOutput) {
         cursor.setBlockFormat(baseBlockFormat(options.lineSpacing));
         attachSourceData(cursor.block(), 0, 0, 0);

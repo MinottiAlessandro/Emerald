@@ -5,8 +5,9 @@
 
 // Semantic wiki-link discovery for vault-wide features. Unlike the visual
 // highlighter, this scanner deliberately ignores examples inside inline and
-// fenced code. Broken-link reporting, the graph index, and future backlink
-// features share it so they cannot disagree about what constitutes a link.
+// fenced code and author-only HTML comments. Broken-link reporting, the graph
+// index, and future backlink features share it so they cannot disagree about
+// what constitutes a link.
 namespace MarkdownWikiLinkScanner {
 
 struct Link {

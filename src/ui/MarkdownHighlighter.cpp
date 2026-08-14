@@ -4,6 +4,7 @@
 #include "MarkdownStyle.h"
 
 #include "MathRender.h"
+#include "core/MarkdownComment.h"
 #include "core/MascotSeed.h"
 #include "core/SpellChecker.h"
 #include "core/WikiLink.h"
@@ -119,6 +120,11 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     // (after revealing it with Up) reads clearly as "this seed is understood".
     m_mascot.setForeground(QColor("#2bbf74"));
     m_mascot.setFontItalic(true);
+
+    // Comments remain editable source in Edit Mode, but use a subdued italic
+    // so they read as author annotations rather than rendered note content.
+    m_comment.setForeground(QColor("#5e7d6d"));
+    m_comment.setFontItalic(true);
 
     // Inline math: a soft teal italic so a formula reads as a distinct mode.
     m_math.setForeground(QColor("#6fcfc0"));
@@ -421,7 +427,14 @@ int MarkdownHighlighter::inlinePreviewColumnCount(const QString &text) {
     };
 
     // Keep this order in lock-step with highlightBlock's exclusive inline
-    // passes: code, math, internet links, wiki links, then emphasis.
+    // passes: comments, code, math, internet links, wiki links, then emphasis.
+    const MarkdownComment::LineAnalysis comments =
+        MarkdownComment::analyzeLine(text);
+    for (const MarkdownComment::Range &range : comments.ranges) {
+        hide(range.start, range.end);
+        consume(range.start, range.end);
+    }
+
     auto codeIt = inlineCodeRe().globalMatch(text);
     while (codeIt.hasNext()) {
         const auto match = codeIt.next();
@@ -498,6 +511,12 @@ QList<int> MarkdownHighlighter::tablePipePositions(const QString &text) {
     protectMatches(MathRender::pattern());
     protectMatches(internetLinkRe());
     protectMatches(WikiLink::pattern());
+    const MarkdownComment::LineAnalysis comments =
+        MarkdownComment::analyzeLine(text);
+    for (const MarkdownComment::Range &range : comments.ranges)
+        for (int i = range.start; i < range.end && i < protectedSpan.size(); ++i)
+            if (i >= 0)
+                protectedSpan[i] = true;
 
     QList<int> pipes;
     for (int i = 0; i < text.size(); ++i) {
@@ -846,17 +865,8 @@ void MarkdownHighlighter::applyMath(const QString &text, QList<bool> &consumed,
     }
 }
 
-void MarkdownHighlighter::highlightBlock(const QString &text) {
+void MarkdownHighlighter::highlightBlock(const QString &sourceText) {
     if (m_suspended) {
-        setCurrentBlockState(StateNormal);
-        return;
-    }
-
-    // The mascot seed lives on the first line (a hidden HTML comment). When the
-    // user reveals and edits it, tint a *valid* seed so they can see it's being
-    // interpreted correctly; a malformed line falls through to normal rendering.
-    if (currentBlock().blockNumber() == 0 && MascotSeed::fromLine(text) != 0) {
-        setFormat(0, text.size(), m_mascot);
         setCurrentBlockState(StateNormal);
         return;
     }
@@ -868,22 +878,23 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // (m_selFirst == m_selLast == m_activeBlock, set in setActiveBlock).
     const int bn = currentBlock().blockNumber();
     const bool reveal = bn >= m_selFirst && bn <= m_selLast;
+    const bool continuingComment = previousBlockState() == StateComment;
 
     // --- Fenced code blocks: a multi-line construct tracked via block state.
     // The editor paints the block's rounded background + copy button; here we
     // just colour the text and hide the ``` fences off the active line (so the
     // fence lines collapse to almost nothing).
-    const auto fence = m_reFence.match(text);
+    const auto fence = m_reFence.match(sourceText);
     const bool fenceHere = fence.hasMatch();
-    if (previousBlockState() == StateCode) {
+    if (!continuingComment && previousBlockState() == StateCode) {
         // Inside a code block: render verbatim, no inline parsing.
-        setFormat(0, text.size(), m_codeBlock);
+        setFormat(0, sourceText.size(), m_codeBlock);
         if (fenceHere) {                       // closing fence
             // Reveal the closing fence whenever the caret is anywhere inside the
             // block (not only on this line), so both fences show together while
             // editing the code.
             if (caretInCodeRegion(currentBlock(), false))
-                setFormat(0, text.size(), m_marker);
+                setFormat(0, sourceText.size(), m_marker);
             else
                 setFormat(fence.capturedStart(1), fence.capturedLength(1),
                           conceal());
@@ -893,9 +904,9 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         }
         return;
     }
-    if (fenceHere) {                            // opening fence ```lang
+    if (!continuingComment && fenceHere) {       // opening fence ```lang
         if (caretInCodeRegion(currentBlock(), true)) {
-            setFormat(0, text.size(), m_codeBlock);
+            setFormat(0, sourceText.size(), m_codeBlock);
             if (fence.capturedLength(2) > 0)   // language tag
                 setFormat(fence.capturedStart(2), fence.capturedLength(2),
                           m_codeLang);
@@ -905,7 +916,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
             // paints the header bar (language + copy button) over it.
             QTextCharFormat hidden;
             hidden.setForeground(QColor(0, 0, 0, 0));
-            setFormat(0, text.size(), hidden);
+            setFormat(0, sourceText.size(), hidden);
         }
         setCurrentBlockState(StateCode);
         return;
@@ -915,41 +926,41 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // spanning one or more lines — rendered as one centred formula by the
     // editor. The whole block shows raw source whenever the caret/selection
     // touches it.
-    if (previousBlockState() == StateMath) {
+    if (!continuingComment && previousBlockState() == StateMath) {
         // Inside a block: this line continues it, and closes it if it has "$$".
-        const bool closes = text.contains(QStringLiteral("$$"));
+        const bool closes = sourceText.contains(QStringLiteral("$$"));
         if (caretInMathRegion(currentBlock(), false))
-            setFormat(0, text.size(), m_math); // raw, editable
+            setFormat(0, sourceText.size(), m_math); // raw, editable
         else
-            setFormat(0, text.size(), conceal()); // collapse continuation lines
+            setFormat(0, sourceText.size(), conceal()); // collapse continuation lines
         setCurrentBlockState(closes ? StateNormal : StateMath);
         return;
     }
 
     // Display math on a single line: $$ … $$.
-    const auto disp = MathRender::displayPattern().match(text);
-    if (disp.hasMatch()) {
+    const auto disp = MathRender::displayPattern().match(sourceText);
+    if (!continuingComment && disp.hasMatch()) {
         const int bodyStart = disp.capturedStart(1);
         const int bodyEnd = disp.capturedEnd(1);
         if (reveal) {
             setFormat(0, bodyStart, m_marker);
             setFormat(bodyStart, bodyEnd - bodyStart, m_math);
-            setFormat(bodyEnd, text.size() - bodyEnd, m_marker);
+            setFormat(bodyEnd, sourceText.size() - bodyEnd, m_marker);
         } else {
-            reserveDisplayHeight(text.size(), disp.captured(1));
+            reserveDisplayHeight(sourceText.size(), disp.captured(1));
         }
         setCurrentBlockState(StateNormal);
         return;
     }
 
     // The opening line of a multi-line block.
-    if (MathRender::opensBlock(text)) {
+    if (!continuingComment && MathRender::opensBlock(sourceText)) {
         if (caretInMathRegion(currentBlock(), true)) {
-            setFormat(0, text.size(), m_math);
+            setFormat(0, sourceText.size(), m_math);
         } else {
             // Grow this line to the whole formula's height (the body parts of
             // every line joined); the continuation lines collapse to nothing.
-            QString body = MathRender::bodyAfterOpen(text);
+            QString body = MathRender::bodyAfterOpen(sourceText);
             for (QTextBlock b = currentBlock().next(); b.isValid();
                  b = b.next()) {
                 const QString t = b.text();
@@ -959,18 +970,41 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
                 }
                 body += QLatin1Char(' ') + t;
             }
-            reserveDisplayHeight(text.size(), body);
+            reserveDisplayHeight(sourceText.size(), body);
         }
         setCurrentBlockState(StateMath);
         return;
     }
+
+    const MarkdownComment::LineAnalysis comment =
+        MarkdownComment::analyzeLine(sourceText, continuingComment);
+    const bool mascotLine =
+        bn == 0 && MascotSeed::fromLine(sourceText) != 0;
+    auto finish = [&](int ordinaryState) {
+        setCurrentBlockState(comment.continuesComment ? StateComment
+                                                      : ordinaryState);
+        const QTextCharFormat visibleComment =
+            mascotLine ? m_mascot : m_comment;
+        for (const MarkdownComment::Range &range : comment.ranges)
+            setFormat(range.start, range.end - range.start, visibleComment);
+    };
+    // Mask comment bytes before all structural and inline parsing. Positions do
+    // not move, so formats and source editing remain exact; the final overlay
+    // above restores the original source span with its visible comment style.
+    const QString text = comment.masked(sourceText);
+    if (!comment.ranges.isEmpty() && text.trimmed().isEmpty()) {
+        finish(StateNormal);
+        return;
+    }
+
     const MarkdownCallout::QuotePrefix quote =
         MarkdownCallout::quotePrefix(text);
     // Encode quote depth in the block state so changing the previous line's
     // quote prefix automatically makes QSyntaxHighlighter revisit this line.
     // Code/math retain their compact historic states used by the editor.
-    setCurrentBlockState(quote.depth > 0 ? StateQuoteBase + quote.depth
-                                         : StateNormal);
+    const int ordinaryState = quote.depth > 0
+                                  ? StateQuoteBase + quote.depth
+                                  : StateNormal;
 
     QList<bool> consumed(text.size(), false);
     int doneStart = -1, doneEnd = -1; // a completed task's label, struck below
@@ -994,6 +1028,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
             setFormat(0, contentStart, conceal());
         }
         applySpelling(text);
+        finish(ordinaryState);
         return;
     }
 
@@ -1008,6 +1043,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
             hidden.setForeground(QColor(0, 0, 0, 0));
             setFormat(0, text.size(), hidden);
         }
+        finish(ordinaryState);
         return;
     }
 
@@ -1016,6 +1052,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     if (imageLineRe().match(text).hasMatch()) {
         if (!reveal)
             reserveImageHeight(text.size());
+        finish(ordinaryState);
         return;
     }
 
@@ -1201,6 +1238,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // (MarkdownEditor::paintEvent) and here we only need the revealed source.
     strikeConsumedInline(text, reveal, doneStart, doneEnd);
     applySpelling(text);
+    finish(ordinaryState);
 }
 
 void MarkdownHighlighter::applySpelling(const QString &text) {
@@ -1290,37 +1328,50 @@ void MarkdownHighlighter::strikeConsumedInline(const QString &text, bool reveal,
         }
     }
 
-    // Wiki links are rendered before (and therefore excluded from) the
-    // emphasis pass. Reapply their visible label with the link styling plus a
-    // strike whenever an enclosing ~~...~~ span crosses the link.
-    QList<bool> wikiProtected(text.size(), false);
-    auto protectForWiki = [&](const QRegularExpression &pattern) {
+    // Links are rendered before (and therefore excluded from) the emphasis
+    // pass. Reapply their visible labels with link styling plus a strike when
+    // an enclosing ~~...~~ span or completed task crosses the link.
+    QList<bool> linkProtected(text.size(), false);
+    auto protectForLink = [&](const QRegularExpression &pattern) {
         auto it = pattern.globalMatch(text);
         while (it.hasNext()) {
             const auto match = it.next();
             for (int i = qMax(0, match.capturedStart(0));
-                 i < match.capturedEnd(0) && i < wikiProtected.size(); ++i)
-                wikiProtected[i] = true;
+                 i < match.capturedEnd(0) && i < linkProtected.size(); ++i)
+                linkProtected[i] = true;
         }
     };
-    protectForWiki(m_reCode);
-    protectForWiki(MathRender::pattern());
-    protectForWiki(m_reLink);
+    auto overlapsProtected = [&](int start, int end) {
+        for (int i = qMax(0, start); i < end && i < linkProtected.size(); ++i)
+            if (linkProtected.at(i))
+                return true;
+        return false;
+    };
+    protectForLink(m_reCode);
+    protectForLink(MathRender::pattern());
+
+    // Standard [label](target) links win over link-looking text nested inside
+    // their label, matching the order of the main inline passes.
+    auto internetIt = m_reLink.globalMatch(text);
+    while (internetIt.hasNext()) {
+        const auto match = internetIt.next();
+        if (!spanStruck(match.capturedStart(0), match.capturedEnd(0)) ||
+            overlapsProtected(match.capturedStart(0), match.capturedEnd(0)))
+            continue;
+        QTextCharFormat link = inlineFormat(m_link);
+        link.setFontStrikeOut(true);
+        setFormat(match.capturedStart(1), match.capturedLength(1), link);
+    }
+
+    // Once standard links have been handled, protect them from the wiki pass.
+    protectForLink(m_reLink);
 
     auto wikiIt = WikiLink::pattern().globalMatch(text);
     while (wikiIt.hasNext()) {
         const auto match = wikiIt.next();
         if (!spanStruck(match.capturedStart(0), match.capturedEnd(0)))
             continue;
-        bool protectedOverlap = false;
-        for (int i = match.capturedStart(0);
-             i < match.capturedEnd(0) && i < wikiProtected.size(); ++i) {
-            if (i >= 0 && wikiProtected.at(i)) {
-                protectedOverlap = true;
-                break;
-            }
-        }
-        if (protectedOverlap)
+        if (overlapsProtected(match.capturedStart(0), match.capturedEnd(0)))
             continue;
         const QString inner = match.captured(1);
         const int innerStart = match.capturedStart(1);

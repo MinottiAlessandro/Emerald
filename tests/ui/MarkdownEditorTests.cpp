@@ -7,6 +7,7 @@
 #include "ui/MathRender.h"
 
 #include "core/Perf.h"
+#include "core/MascotSeed.h"
 #include "core/SpellChecker.h"
 
 #include <QAbstractTextDocumentLayout>
@@ -255,7 +256,8 @@ int main(int argc, char **argv) {
     const QList<SpellChecker::WordRange> spellRanges =
         SpellChecker::wordsInMarkdown(QStringLiteral(
             "Prose `codde` [[Targget]] [[Note|aliass]] "
-            "[labell](https://bad.example/misstake) $formulla$ <tag>"));
+            "[labell](https://bad.example/misstake) $formulla$ <tag> "
+            "<!-- commmentword -->"));
     QStringList spellWords;
     for (const auto &range : spellRanges)
         spellWords.append(range.word);
@@ -266,7 +268,8 @@ int main(int argc, char **argv) {
               !spellWords.contains(QStringLiteral("Targget")) &&
               !spellWords.contains(QStringLiteral("misstake")) &&
               !spellWords.contains(QStringLiteral("formulla")) &&
-              !spellWords.contains(QStringLiteral("tag")),
+              !spellWords.contains(QStringLiteral("tag")) &&
+              !spellWords.contains(QStringLiteral("commmentword")),
           QStringLiteral("spell ranges should include prose and visible labels "
                          "but exclude Markdown targets, code, math, URLs, and HTML"));
 
@@ -1828,6 +1831,242 @@ int main(int argc, char **argv) {
           QStringLiteral("one redo should restore source while skipping "
                          "visual-only layout commands"));
 
+    // HTML comments are visible author-only source in Edit Mode, disappear
+    // completely from Read Mode and semantic links, and remain
+    // literal inside code/math. Inline emphasis may cross a removed comment.
+    const QString commentSource = QStringLiteral(
+        "Visible <!-- private inline [[Hidden Inline]] --> tail\n"
+        "**bold <!-- private emphasis --> still bold**\n"
+        "<!--\n"
+        "# private heading\n"
+        "[[Hidden Block]]\n"
+        "-->\n"
+        "`<!-- literal inline code -->`\n"
+        "```md\n"
+        "<!-- literal fenced code -->\n"
+        "```\n"
+        "$$ <!-- literal math --> $$\n"
+        "After comments");
+    editor.setPlainText(commentSource);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock inlineCommentBlock = editor.document()->firstBlock();
+    settleLayout(editor, inlineCommentBlock);
+    const int inlineCommentStart =
+        inlineCommentBlock.text().indexOf(QStringLiteral("<!--"));
+    const QTextCharFormat inactiveComment =
+        highlighterFormatAt(inlineCommentBlock, inlineCommentStart + 1);
+    check(inactiveComment.foreground().color() == QColor("#5e7d6d") &&
+              inactiveComment.fontItalic(),
+          QStringLiteral("an inactive HTML comment should remain visible with "
+                         "subdued Edit Mode styling"));
+    const QTextBlock hiddenHeading = editor.document()->findBlockByNumber(3);
+    settleLayout(editor, hiddenHeading);
+    check(qFuzzyIsNull(hiddenHeading.blockFormat().topMargin()),
+          QStringLiteral("Markdown-looking text inside a block comment must "
+                         "not receive heading layout"));
+
+    QTextCursor revealComment(inlineCommentBlock);
+    revealComment.setPosition(inlineCommentBlock.position() +
+                              inlineCommentStart + 5);
+    editor.setTextCursor(revealComment);
+    settleLayout(editor, inlineCommentBlock);
+    const QTextCharFormat visibleComment =
+        highlighterFormatAt(inlineCommentBlock, inlineCommentStart + 5);
+    check(visibleComment.foreground().color() == QColor("#5e7d6d") &&
+              visibleComment.fontItalic(),
+          QStringLiteral("comment styling should remain stable while its "
+                         "source is edited"));
+    check(editor.bodyText().contains(QStringLiteral("Visible  tail")) &&
+              !editor.bodyText().contains(QStringLiteral("private inline")) &&
+              !editor.bodyText().contains(QStringLiteral("private heading")) &&
+              editor.bodyText().contains(
+                  QStringLiteral("`<!-- literal inline code -->`")) &&
+              editor.bodyText().contains(
+                  QStringLiteral("<!-- literal fenced code -->")) &&
+              editor.bodyText().contains(
+                  QStringLiteral("<!-- literal math -->")),
+          QStringLiteral("comment-free body text should retain literal code "
+                         "and math examples"));
+
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    const QString renderedComments = editor.document()->toPlainText();
+    check(renderedComments.contains(QStringLiteral("Visible")) &&
+              renderedComments.contains(QStringLiteral("tail")) &&
+              renderedComments.contains(QStringLiteral("still bold")) &&
+              renderedComments.contains(
+                  QStringLiteral("<!-- literal inline code -->")) &&
+              renderedComments.contains(QStringLiteral("After comments")) &&
+              !renderedComments.contains(QStringLiteral("private inline")) &&
+              !renderedComments.contains(QStringLiteral("private emphasis")) &&
+              !renderedComments.contains(QStringLiteral("private heading")) &&
+              !renderedComments.contains(QStringLiteral("Hidden Block")),
+          QStringLiteral("Read Mode should omit inline and multi-line comments "
+                         "without hiding code literals"));
+    QTextCursor boldAfterComment =
+        editor.document()->find(QStringLiteral("still bold"));
+    boldAfterComment.setPosition(boldAfterComment.selectionStart());
+    boldAfterComment.movePosition(QTextCursor::NextCharacter,
+                                  QTextCursor::KeepAnchor);
+    check(boldAfterComment.charFormat().fontWeight() >= QFont::Bold,
+          QStringLiteral("inline bold styling should continue across a removed "
+                         "comment"));
+    bool sawCommentedWikiAnchor = false;
+    for (QTextBlock block = editor.document()->firstBlock(); block.isValid();
+         block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (fragment.isValid() && fragment.charFormat().isAnchor()) {
+                const QString target = MarkdownReadRenderer::wikiTargetFromHref(
+                    fragment.charFormat().anchorHref());
+                if (target == QStringLiteral("Hidden Inline") ||
+                    target == QStringLiteral("Hidden Block"))
+                    sawCommentedWikiAnchor = true;
+            }
+        }
+    }
+    check(!sawCommentedWikiAnchor,
+          QStringLiteral("commented wiki links must not become Read Mode "
+                         "anchors"));
+    QTextCursor renderedTail = editor.document()->find(QStringLiteral("tail"));
+    editor.setTextCursor(renderedTail);
+    QApplication::processEvents();
+    check(editor.sourceTextCursor().selectedText() == QStringLiteral("tail"),
+          QStringLiteral("selection mapping after an omitted inline comment "
+                         "should retain the exact source text"));
+    editor.setReadMode(false);
+    check(editor.toPlainText() == commentSource,
+          QStringLiteral("comment rendering must never change Markdown source"));
+
+    // Commented Markdown is inert in the editor's custom layout, painting and
+    // smart-key paths as well: it must not become a list/callout/image or be
+    // rewritten as a table merely because its private text resembles one.
+    editor.setPlainText(QStringLiteral(
+        "<!--\n"
+        "- [ ] private task\n"
+        "> private quote\n"
+        "![private](missing.png)\n"
+        "---\n"
+        "-->\n"
+        "Visible"));
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock commentedTask =
+        editor.document()->findBlockByNumber(1);
+    const QTextBlock commentedQuote =
+        editor.document()->findBlockByNumber(2);
+    const QTextBlock commentedImage =
+        editor.document()->findBlockByNumber(3);
+    settleLayout(editor, commentedTask);
+    settleLayout(editor, commentedQuote);
+    settleLayout(editor, commentedImage);
+    check(!commentedTask.blockFormat().hasProperty(
+              MarkdownStyle::ListDepthProperty) &&
+              commentedQuote.blockFormat()
+                      .property(MarkdownStyle::CalloutDepthProperty)
+                      .toInt() == 0 &&
+              commentedImage.blockFormat().lineHeightType() !=
+                  QTextBlockFormat::FixedHeight,
+          QStringLiteral("commented structures must not reserve list, quote, "
+                         "or image-preview layout"));
+
+    QTextCursor commentedEnter(commentedTask);
+    commentedEnter.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(commentedEnter);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+            QStringLiteral("\n"));
+    check(editor.toPlainText().contains(
+              QStringLiteral("- [ ] private task\n\n> private quote")),
+          QStringLiteral("Enter inside a comment should insert a plain newline "
+                         "instead of continuing Markdown structure"));
+
+    const QString commentedTable =
+        QStringLiteral("<!--\n|a|b|\n-->\nVisible");
+    editor.setPlainText(commentedTable);
+    QTextCursor tableComment(editor.document()->findBlockByNumber(1));
+    tableComment.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(tableComment);
+    QTextCursor outsideComment(editor.document()->lastBlock());
+    outsideComment.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(outsideComment);
+    QApplication::processEvents();
+    check(editor.toPlainText() == commentedTable,
+          QStringLiteral("leaving a table-shaped comment must not auto-format "
+                         "its private source"));
+
+    editor.setPlainText(MascotSeed::line(42) +
+                        QStringLiteral("\nBody <!-- private --> text"));
+    check(editor.mascotSeed() == 42 &&
+              editor.bodyText() == QStringLiteral("Body  text"),
+          QStringLiteral("the mascot header should remain compatible while "
+                         "ordinary comments are generalized"));
+
+    // Standard Markdown links retain their link styling while inheriting both
+    // explicit ~~strikethrough~~ and a completed task's strike effect.
+    const QString struckInternetLinkSource = QStringLiteral(
+        "plain\n"
+        "~~before [Strike site](www.example.com) after~~\n"
+        "- [x] Completed [task link](www.example.com)");
+    editor.setPlainText(struckInternetLinkSource);
+    editor.setTextCursor(QTextCursor(editor.document()->firstBlock()));
+    const QTextBlock explicitStrikeLinkBlock =
+        editor.document()->findBlockByNumber(1);
+    const QTextBlock completedTaskLinkBlock =
+        editor.document()->findBlockByNumber(2);
+    settleLayout(editor, explicitStrikeLinkBlock);
+    settleLayout(editor, completedTaskLinkBlock);
+    const int explicitStrikeLinkOffset =
+        explicitStrikeLinkBlock.text().indexOf(QStringLiteral("Strike site"));
+    const int completedTaskLinkOffset =
+        completedTaskLinkBlock.text().indexOf(QStringLiteral("task link"));
+    check(explicitStrikeLinkOffset >= 0 &&
+              highlighterFormatAt(explicitStrikeLinkBlock,
+                                  explicitStrikeLinkOffset)
+                  .fontUnderline() &&
+              highlighterFormatAt(explicitStrikeLinkBlock,
+                                  explicitStrikeLinkOffset)
+                  .fontStrikeOut(),
+          QStringLiteral("an internet link inside strikethrough should retain "
+                         "its link style and be struck in Edit Mode"));
+    check(completedTaskLinkOffset >= 0 &&
+              highlighterFormatAt(completedTaskLinkBlock,
+                                  completedTaskLinkOffset)
+                  .fontUnderline() &&
+              highlighterFormatAt(completedTaskLinkBlock,
+                                  completedTaskLinkOffset)
+                  .fontStrikeOut(),
+          QStringLiteral("an internet link in a completed task should retain "
+                         "its link style and be struck in Edit Mode"));
+
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    QTextCursor renderedStruckInternet =
+        editor.document()->find(QStringLiteral("Strike site"));
+    renderedStruckInternet.setPosition(
+        renderedStruckInternet.selectionStart());
+    renderedStruckInternet.movePosition(QTextCursor::NextCharacter,
+                                        QTextCursor::KeepAnchor);
+    QTextCursor renderedTaskLink =
+        editor.document()->find(QStringLiteral("task link"));
+    renderedTaskLink.setPosition(renderedTaskLink.selectionStart());
+    renderedTaskLink.movePosition(QTextCursor::NextCharacter,
+                                  QTextCursor::KeepAnchor);
+    check(renderedStruckInternet.charFormat().isAnchor() &&
+              renderedStruckInternet.charFormat().fontUnderline() &&
+              renderedStruckInternet.charFormat().fontStrikeOut(),
+          QStringLiteral("Read Mode should strike an internet link inside "
+                         "strikethrough"));
+    check(renderedTaskLink.charFormat().isAnchor() &&
+              renderedTaskLink.charFormat().fontUnderline() &&
+              renderedTaskLink.charFormat().fontStrikeOut(),
+          QStringLiteral("Read Mode should strike an internet link inside a "
+                         "completed task"));
+    editor.setReadMode(false);
+    check(editor.toPlainText() == struckInternetLinkSource,
+          QStringLiteral("striking internet links must not change Markdown "
+                         "source"));
+
     // Read Mode removes the caret, rejects editing keys, and turns plain arrow
     // navigation into viewport scrolling without relocating the text cursor.
     QStringList readingLines{
@@ -1844,7 +2083,8 @@ int main(int argc, char **argv) {
         QStringLiteral("> A quoted paragraph"),
         QStringLiteral("> [!danger] continuation, not a title"),
         QStringLiteral("- A list item"),
-        QStringLiteral("- [x] A completed task"), QStringLiteral("---"),
+        QStringLiteral("- [x] A completed task"),
+        QStringLiteral("---"),
         QStringLiteral("![Wide preview](wide.png)"),
         QStringLiteral("| Name | Value | Formula |"),
         QStringLiteral("| :--- | ---: | :---: |"),

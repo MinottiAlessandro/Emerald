@@ -1,5 +1,6 @@
 #include "SearchIndex.h"
 
+#include "MarkdownComment.h"
 #include "MascotSeed.h"
 #include "Perf.h"
 #include "Vault.h"
@@ -29,7 +30,7 @@ QString readSnippetContent(const QString &path) {
     QString content = QString::fromUtf8(f.readAll());
     content.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     content.replace(QLatin1Char('\r'), QLatin1Char('\n'));
-    return MascotSeed::strip(content);
+    return MarkdownComment::strip(MascotSeed::strip(content));
 }
 
 template <typename Fn>
@@ -93,8 +94,10 @@ void SearchIndex::rebuild(const Vault &vault) {
     clear();
     for (const Note &n : vault.notes()) {
         const int id = m_nextId++;
-        // Drop a leading mascot header line so it doesn't pollute the index.
-        const QString body = MascotSeed::strip(vault.read(n.path));
+        // Author-only HTML comments (including the mascot header) are not
+        // searchable note content.
+        const QString body = MarkdownComment::strip(
+            MascotSeed::strip(vault.read(n.path)));
         m_docs.insert(id, Doc{n.path, n.title, {}});
         m_byPath.insert(n.path, id);
         indexDoc(id, body);
@@ -114,7 +117,7 @@ void SearchIndex::updateNote(const QString &path, const QString &title,
                              const QString &content) {
     auto it = m_byPath.find(path);
     int id;
-    const QString body = MascotSeed::strip(content); // ignore the header line
+    const QString body = MarkdownComment::strip(MascotSeed::strip(content));
     if (it != m_byPath.end()) {
         id = it.value();
         unindexDoc(id);

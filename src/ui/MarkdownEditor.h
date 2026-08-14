@@ -84,8 +84,8 @@ public:
     // Write/replace (seed != 0) or remove (seed == 0) the mascot header line,
     // carrying an optional user-creature kind.
     void setMascot(quint64 seed, const QString &kind = QString());
-    // The body text with any leading mascot header line removed (for hashing /
-    // indexing — the header line isn't note content).
+    // The author-visible body text with the mascot header and ordinary HTML
+    // comments removed (for hashing / indexing — comments are not note content).
     QString bodyText() const;
     // The first document position the caret may land on: just past a hidden
     // mascot header line, or 0 when there isn't one.

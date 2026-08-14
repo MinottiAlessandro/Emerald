@@ -70,8 +70,9 @@ public:
     // collision or an invalid title).
     QString renameNote(const QString &oldPath, const QString &newTitle);
 
-    // Rewrite every [[oldTitle]] link (preserving any |alias or #heading) to
-    // point at newTitle, across all notes. Returns the number of files changed.
+    // Rewrite every semantic [[oldTitle]] link (preserving any |alias or
+    // #heading) to point at newTitle across all notes. Commented links remain
+    // untouched. Returns the number of files changed.
     int updateLinksTo(const QString &oldTitle, const QString &newTitle);
     // Same rewrite, returning the paths that actually changed so callers can
     // incrementally refresh dependent indexes.

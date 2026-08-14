@@ -124,6 +124,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/SpellChecker.cpp
   src/core/Perf.h
   src/core/MascotSeed.h
+  src/core/MarkdownComment.h
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
   src/ui/GraphView.h
@@ -294,6 +295,7 @@ if(EMERALD_BUILD_PERF_TESTS)
     src/core/LinkGraphIndex.h
     src/core/LinkGraphIndex.cpp
     src/core/MascotSeed.h
+    src/core/MarkdownComment.h
     src/core/Perf.h
     src/core/SpellChecker.h
     src/core/SpellChecker.cpp
@@ -339,6 +341,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/ContentSecurity.h
     src/core/ContentSecurity.cpp
     src/core/MascotSeed.h
+    src/core/MarkdownComment.h
     src/core/Perf.h
     src/core/WikiLink.h
     src/core/WikiLink.cpp
@@ -405,6 +408,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/SpellChecker.cpp
     src/core/Perf.h
     src/core/MascotSeed.h
+    src/core/MarkdownComment.h
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
     src/ui/GraphView.h
@@ -467,6 +471,7 @@ if(EMERALD_BUILD_CORE_TESTS)
   add_executable(emerald_broken_links_tests
     tests/core/BrokenLinksTests.cpp
     src/core/MascotSeed.h
+    src/core/MarkdownComment.h
     src/core/Note.h
     src/core/Perf.h
     src/core/Vault.h
@@ -483,6 +488,7 @@ if(EMERALD_BUILD_CORE_TESTS)
 
   add_executable(emerald_link_graph_tests
     tests/core/LinkGraphTests.cpp
+    src/core/MarkdownComment.h
     src/core/Note.h
     src/core/WikiLink.h
     src/core/WikiLink.cpp
@@ -510,6 +516,7 @@ if(EMERALD_BUILD_SECURITY_TESTS)
     src/core/LegacyMascotMigration.h
     src/core/LegacyMascotMigration.cpp
     src/core/MascotSeed.h
+    src/core/MarkdownComment.h
     src/core/Note.h
     src/core/Vault.h
     src/core/Vault.cpp
@@ -538,6 +545,7 @@ if(EMERALD_BUILD_FUZZ_TESTS)
     src/core/ContentSecurity.h
     src/core/ContentSecurity.cpp
     src/core/MascotSeed.h
+    src/core/MarkdownComment.h
     src/core/Note.h
     src/core/Perf.h
     src/core/Vault.h

@@ -14,6 +14,7 @@ class Vault;
 // word prefixes; a note matches when it contains every prefix (AND). Candidates
 // come straight from the index, so a query only touches the postings for its
 // words — not the whole corpus — which keeps it fast as the vault grows.
+// Author-only HTML comments are stripped before content enters the index.
 class SearchIndex {
 public:
     struct Result {

@@ -121,6 +121,13 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] Moving the caret onto an image line reveals compact editable Markdown source; moving away restores the preview without an undo step.
 - [ ] A missing image shows a bounded fallback card with its target instead of leaving a large blank area.
 
+## 7b. HTML comments
+- [ ] An inline or multi-line `<!-- private -->` comment remains visible as subdued, editable source in Edit Mode without changing the note.
+- [ ] Inline comments leave the surrounding sentence joined naturally, and a `<!--` / `-->` block spanning several rows leaves no visible rows or gaps in Read Mode.
+- [ ] Comment text is absent from vault search, spelling suggestions, Graph View, Quick Jump, Broken Links, and link rewrites after renaming a note. ◆
+- [ ] `<!-- literal -->` inside inline code, fenced code, inline math, or display math remains literal rather than becoming a comment. ◆
+- [ ] A note containing only comments is treated as empty; the first-line `<!-- mascot: … -->` metadata continues to hide/reveal and generate the same mascot as before.
+
 ## 8. Links & navigation
 - [ ] `[[Note]]` renders, click jumps to the target.
 - [ ] A wrapped link remains clickable only on its rendered text; blank space after it does nothing.
