@@ -1,5 +1,6 @@
 #include "MarkdownEditor.h"
 
+#include "AppTheme.h"
 #include "MarkdownCallout.h"
 #include "MarkdownHighlighter.h"
 #include "MarkdownReadObjectRenderer.h"
@@ -105,7 +106,7 @@ constexpr int QuickJumpHoldMs = 100;
 QColor ordinaryQuoteSurface(const QPalette &palette) {
     QColor accent = palette.color(QPalette::Highlight);
     if (!accent.isValid())
-        accent = QColor(0x2b, 0xbf, 0x74);
+        accent = AppTheme::color(QColor(0x2b, 0xbf, 0x74));
     const QColor base = palette.color(QPalette::Base);
     const auto blend = [](int background, int foreground) {
         constexpr int alpha = 10;
@@ -780,6 +781,16 @@ void MarkdownEditor::applyFont(const QFont &font) {
         rebuildReadDocument(currentScrollRatio());
     else
         applyLineSpacing(); // extra leading is measured in font line-heights
+}
+
+void MarkdownEditor::applyTheme() {
+    if (m_highlighter)
+        m_highlighter->applyTheme();
+    if (m_readMode)
+        rebuildReadDocument(currentScrollRatio());
+    else
+        applyVisualBlockFormats();
+    viewport()->update();
 }
 
 void MarkdownEditor::setLineSpacing(int percent) {
@@ -2741,11 +2752,11 @@ void MarkdownEditor::drawQuickJumpOverlay(QPainter &painter) {
     refreshQuickJumpTargets();
     const QFont oldFont = painter.font();
     painter.setFont(quickJumpFont(font()));
-    painter.setPen(QPen(QColor(0x0b, 0x24, 0x18), 1));
+    painter.setPen(QPen(AppTheme::color(QColor(0x0b, 0x24, 0x18)), 1));
     for (const QuickJumpTarget &target : std::as_const(m_quickJumpTargets)) {
         if (!target.hint.startsWith(m_quickJumpPrefix))
             continue;
-        painter.setBrush(QColor(0x39, 0xd9, 0x83));
+        painter.setBrush(AppTheme::color(QColor(0x39, 0xd9, 0x83)));
         painter.drawRoundedRect(target.badgeRect, 4, 4);
         painter.drawText(target.badgeRect, Qt::AlignCenter, target.hint);
     }
@@ -4503,7 +4514,7 @@ void MarkdownEditor::drawFoldControls(QPainter &painter,
         const QPointF center = control.center();
         const bool folded = isFolded(block);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(0x4f, 0x75, 0x65));
+        painter.setBrush(AppTheme::color(QColor(0x4f, 0x75, 0x65)));
         QPointF triangle[3];
         if (folded) {
             triangle[0] = {center.x() - 3, center.y() - 4};
@@ -4540,7 +4551,7 @@ void MarkdownEditor::drawQuotePanels(QPainter &painter,
     painter.setFont(font());
     QColor accent = palette().color(QPalette::Highlight);
     if (!accent.isValid())
-        accent = QColor(0x2b, 0xbf, 0x74);
+        accent = AppTheme::color(QColor(0x2b, 0xbf, 0x74));
     const qreal lineHeight = QFontMetricsF(font()).lineSpacing();
     const qreal quoteIndent = lineHeight * 1.18;
     const qreal documentMargin = document()->documentMargin();
@@ -4695,8 +4706,9 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 return;
             if (cb.active) // editing or selected: show the raw ``` source, no box
                 return;
-            bg.setPen(QPen(QColor(0x2a, 0x49, 0x39), 1.0));
-            bg.setBrush(QColor(0x12, 0x1d, 0x18));
+            bg.setPen(QPen(AppTheme::color(QColor(0x2a, 0x49, 0x39)),
+                           1.0));
+            bg.setBrush(AppTheme::color(QColor(0x12, 0x1d, 0x18)));
             bg.drawRoundedRect(full, 6, 6);
             const qreal r = 6;
             const QRectF h = cb.header;
@@ -4708,8 +4720,9 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             path.quadTo(h.right(), h.top(), h.right(), h.top() + r);
             path.lineTo(h.right(), h.bottom());
             path.closeSubpath();
-            bg.fillPath(path, QColor(0x1f, 0x47, 0x33));
-            bg.setPen(QPen(QColor(0x2d, 0x5c, 0x43), 1.0));
+            bg.fillPath(path, AppTheme::color(QColor(0x1f, 0x47, 0x33)));
+            bg.setPen(QPen(AppTheme::color(QColor(0x2d, 0x5c, 0x43)),
+                           1.0));
             bg.drawLine(QPointF(h.left() + 1, h.bottom()),
                         QPointF(h.right() - 1, h.bottom()));
         });
@@ -4731,8 +4744,9 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             QStringLiteral("`([^`]+)`"));
         QPainter codePainter(viewport());
         codePainter.setRenderHint(QPainter::Antialiasing);
-        codePainter.setPen(QPen(QColor(0x29, 0x46, 0x37), 1.0));
-        codePainter.setBrush(QColor(0x16, 0x24, 0x1c));
+        codePainter.setPen(QPen(AppTheme::color(QColor(0x29, 0x46, 0x37)),
+                                1.0));
+        codePainter.setBrush(AppTheme::color(QColor(0x16, 0x24, 0x1c)));
         for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
              block = block.next()) {
             if (!block.isVisible() || block.userState() == 1)
@@ -4810,10 +4824,13 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 const QRectF placeholder(
                     area.center() - QPointF(placeholderWidth / 2.0, 34),
                     QSizeF(placeholderWidth, 68));
-                imgPainter.setPen(QPen(QColor(0x20, 0x38, 0x2b), 1));
-                imgPainter.setBrush(QColor(0x10, 0x11, 0x13));
+                imgPainter.setPen(QPen(
+                    AppTheme::color(QColor(0x20, 0x38, 0x2b)), 1));
+                imgPainter.setBrush(
+                    AppTheme::color(QColor(0x10, 0x11, 0x13)));
                 imgPainter.drawRoundedRect(placeholder, 6, 6);
-                imgPainter.setPen(QColor(0x6f, 0x8e, 0x7e));
+                imgPainter.setPen(
+                    AppTheme::color(QColor(0x6f, 0x8e, 0x7e)));
                 const QString label = target.size() > 42
                                           ? target.left(39) + QStringLiteral("…")
                                           : target;
@@ -4829,8 +4846,10 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 area.left() + (area.width() - logicalSize.width()) / 2.0,
                 area.top() + (area.height() - logicalSize.height()) / 2.0);
             const QRectF imageRect(topLeft, logicalSize);
-            imgPainter.setPen(QPen(QColor(0x2b, 0x4a, 0x39), 1));
-            imgPainter.setBrush(QColor(0x10, 0x11, 0x13));
+            imgPainter.setPen(QPen(
+                AppTheme::color(QColor(0x2b, 0x4a, 0x39)), 1));
+            imgPainter.setBrush(
+                AppTheme::color(QColor(0x10, 0x11, 0x13)));
             imgPainter.drawRoundedRect(imageRect, 6, 6);
             imgPainter.setClipRect(imageRect.adjusted(1, 1, -1, -1));
             imgPainter.drawPixmap(topLeft, pm);
@@ -4886,7 +4905,7 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
         if (ruleRe.match(structureText).hasMatch()) {
             const qreal margin = document()->documentMargin();
             const qreal y = geo.center().y();
-            QPen pen(QColor(0x2f, 0x4a, 0x3b));
+            QPen pen(AppTheme::color(QColor(0x2f, 0x4a, 0x3b)));
             pen.setWidthF(1.4);
             p.setPen(pen);
             p.drawLine(QPointF(margin, y),
@@ -4900,12 +4919,15 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             const qreal s = box.width();
             const bool checked = t.captured(2).compare(QStringLiteral("x"),
                                                        Qt::CaseInsensitive) == 0;
-            const QColor accent(0x2b, 0xbf, 0x74);
+            const QColor accent =
+                AppTheme::color(QColor(0x2b, 0xbf, 0x74));
             if (checked) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(accent);
                 p.drawRoundedRect(box, 3, 3);
-                QPen tick(QColor(0x10, 0x18, 0x14));
+                QPen tick(AppTheme::current() == AppTheme::Id::Light
+                              ? QColor(Qt::white)
+                              : QColor(0x10, 0x18, 0x14));
                 tick.setWidthF(1.6);
                 tick.setCapStyle(Qt::RoundCap);
                 tick.setJoinStyle(Qt::RoundJoin);
@@ -5131,7 +5153,8 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                             ? geo.top() + tline.y() + tline.ascent() -
                                   fmText.strikeOutPos()
                             : rect.center().y();
-                    QPen strikePen(QColor(0x5e, 0x7d, 0x6d)); // == m_strike colour
+                    QPen strikePen(
+                        AppTheme::color(QColor(0x5e, 0x7d, 0x6d)));
                     strikePen.setWidthF(1.3);
                     p.setPen(strikePen);
                     p.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
@@ -5156,23 +5179,23 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                                    labelMetrics.height() * 0.58,
                                qMax(qreal(24), labelWidth),
                                labelMetrics.height() * 1.16);
-        p.setPen(QPen(QColor(0x39, 0x79, 0x57), 1.0));
-        p.setBrush(QColor(0x19, 0x37, 0x28));
+        p.setPen(QPen(AppTheme::color(QColor(0x39, 0x79, 0x57)), 1.0));
+        p.setBrush(AppTheme::color(QColor(0x19, 0x37, 0x28)));
         p.drawRoundedRect(labelRect, labelRect.height() / 2.0,
                           labelRect.height() / 2.0);
-        p.setPen(QColor(0x7e, 0xe0, 0xb0));
+        p.setPen(AppTheme::color(QColor(0x7e, 0xe0, 0xb0)));
         p.drawText(labelRect, Qt::AlignCenter, cb.language);
         p.setFont(font());
 
         // Two offset rounded rects = a "copy" (stacked pages) glyph.
         const QRectF btn = cb.copyBtn;
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x19, 0x37, 0x28));
+        p.setBrush(AppTheme::color(QColor(0x19, 0x37, 0x28)));
         p.drawRoundedRect(btn.adjusted(-3, -2, 3, 2), 4, 4);
-        QPen pen(QColor(0x92, 0xb3, 0xa2));
+        QPen pen(AppTheme::color(QColor(0x92, 0xb3, 0xa2)));
         pen.setWidthF(1.3);
         p.setPen(pen);
-        p.setBrush(QColor(0x1f, 0x47, 0x33)); // the header bar's colour
+        p.setBrush(AppTheme::color(QColor(0x1f, 0x47, 0x33)));
         p.drawRoundedRect(QRectF(btn.left() + 5, btn.top() + 2, 8, 10), 2, 2);
         p.drawRoundedRect(QRectF(btn.left() + 2, btn.top() + 4, 8, 10), 2, 2);
     });

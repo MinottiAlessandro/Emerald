@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "AppTheme.h"
 #include "GraphPage.h"
 #include "MarkdownEditor.h"
 #include "Mascot.h"
@@ -711,7 +712,8 @@ protected:
 
     void drawBranches(QPainter *painter, const QRect &rect,
                       const QModelIndex &index) const override {
-        painter->fillRect(rect, QColor(0x10, 0x11, 0x13));
+        painter->fillRect(
+            rect, AppTheme::color(QColor(0x10, 0x11, 0x13)));
         QTreeView::drawBranches(painter, rect, index);
         int depth = 0;
         for (QModelIndex a = index.parent(); a.isValid(); a = a.parent())
@@ -720,7 +722,7 @@ protected:
             return;
         const int ind = indentation();
         painter->save();
-        painter->setPen(QColor(0x1f, 0x47, 0x33));
+        painter->setPen(AppTheme::color(QColor(0x1f, 0x47, 0x33)));
         for (int level = 1; level <= depth; ++level) {
             const int x = rect.right() - ind * (depth - level) - ind / 2;
             painter->drawLine(x, rect.top(), x, rect.bottom());
@@ -736,7 +738,7 @@ QIcon makeChevron(bool up) {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(QColor("#52b58a"));
+    QPen pen(AppTheme::color(QColor("#52b58a")));
     pen.setWidthF(1.7);
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
@@ -747,8 +749,14 @@ QIcon makeChevron(bool up) {
     return QIcon(pm);
 }
 const QIcon &chevronIcon(bool expanded) {
-    static const QIcon up = makeChevron(true);
-    static const QIcon down = makeChevron(false);
+    static AppTheme::Id cachedTheme = AppTheme::current();
+    static QIcon up = makeChevron(true);
+    static QIcon down = makeChevron(false);
+    if (cachedTheme != AppTheme::current()) {
+        cachedTheme = AppTheme::current();
+        up = makeChevron(true);
+        down = makeChevron(false);
+    }
     return expanded ? up : down;
 }
 
@@ -759,7 +767,7 @@ QIcon makeNavArrow(bool back) {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(QColor("#a9c8b8"));
+    QPen pen(AppTheme::color(QColor("#a9c8b8")));
     pen.setWidthF(2.0);
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
@@ -2145,6 +2153,12 @@ void MainWindow::buildActions() {
 
 void MainWindow::loadSettings() {
     QSettings s;
+    const AppTheme::Id savedTheme = AppTheme::fromKey(
+        s.value(QStringLiteral("theme"), QStringLiteral("dark")).toString());
+    if (AppTheme::current() != savedTheme) {
+        AppTheme::apply(*qApp, savedTheme);
+        refreshThemeUi();
+    }
     m_editorColumnWidth =
         s.value(QStringLiteral("editorWidth"), m_editorColumnWidth).toInt();
     m_editorFullWidth =
@@ -2191,6 +2205,20 @@ void MainWindow::loadSettings() {
     if (s.contains(QStringLiteral("editorFontSize")))
         f.setPointSize(s.value(QStringLiteral("editorFontSize")).toInt());
     m_editor->applyFont(f);
+}
+
+void MainWindow::refreshThemeUi() {
+    if (m_editor)
+        m_editor->applyTheme();
+    if (m_backAction)
+        m_backAction->setIcon(makeNavArrow(true));
+    if (m_forwardAction)
+        m_forwardAction->setIcon(makeNavArrow(false));
+    if (m_noteTree)
+        m_noteTree->viewport()->update();
+    if (m_graphPage)
+        m_graphPage->update();
+    update();
 }
 
 void MainWindow::setReadMode(bool enabled, bool persist) {
@@ -2423,7 +2451,8 @@ void MainWindow::openSettings() {
     auto *heading = new QLabel(tr("Settings"), content);
     heading->setObjectName(QStringLiteral("settingsTitle"));
     auto *subtitle = new QLabel(
-        tr("Tune the editor, spelling, vault defaults, and mascot behavior."),
+        tr("Tune appearance, editor, spelling, vault defaults, and mascot "
+           "behavior."),
         content);
     subtitle->setObjectName(QStringLiteral("settingsSubtitle"));
     subtitle->setWordWrap(true);
@@ -2483,6 +2512,13 @@ void MainWindow::openSettings() {
     };
 
     QSettings s;
+
+    auto *themeBox = new QComboBox(&dlg);
+    themeBox->setObjectName(QStringLiteral("appTheme"));
+    themeBox->addItem(tr("Emerald Dark"), QStringLiteral("dark"));
+    themeBox->addItem(tr("Emerald Light"), QStringLiteral("light"));
+    const int themeIndex = themeBox->findData(AppTheme::key(AppTheme::current()));
+    themeBox->setCurrentIndex(qMax(0, themeIndex));
 
     auto *fontBox = new QFontComboBox(&dlg);
     fontBox->view()->setObjectName(QStringLiteral("fontFamilyPopup"));
@@ -2651,6 +2687,10 @@ void MainWindow::openSettings() {
     openGraphButton->setEnabled(m_vault != nullptr);
     openLocalGraphButton->setEnabled(m_vault && !m_currentPath.isEmpty());
 
+    auto *appearanceForm = addSection(
+        tr("Appearance"), tr("Choose the palette used throughout Emerald."));
+    addSettingRow(appearanceForm, tr("Theme"), themeBox);
+
     auto *editorForm =
         addSection(tr("Editor"), tr("Reading comfort and writing column size."));
     addSettingRow(editorForm, tr("Font"), fontBox);
@@ -2702,25 +2742,60 @@ void MainWindow::openSettings() {
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
-    // Live preview of font + width + line spacing as the user changes controls.
-    auto preview = [this, fontBox, sizeBox, fullWidthBox, widthBox,
-                    spacingBox] {
-        QFont f = fontBox->currentFont();
-        f.setPointSize(sizeBox->value());
-        m_editor->applyFont(f);
-        m_editorFullWidth = fullWidthBox->isChecked();
+    auto applyEditorPreview = [this, widthBox](const QFont &font,
+                                               bool fullWidth,
+                                               int columnWidth,
+                                               int lineSpacing) {
+        m_editor->applyFont(font);
+        m_editorFullWidth = fullWidth;
         widthBox->setEnabled(!m_editorFullWidth);
-        m_editorColumnWidth = widthBox->value();
+        m_editorColumnWidth = columnWidth;
         applyEditorColumnWidth();
-        m_editor->setLineSpacing(spacingBox->value());
+        m_editor->setLineSpacing(lineSpacing);
     };
-    connect(fontBox, &QFontComboBox::currentFontChanged, &dlg, preview);
-    connect(sizeBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
-    connect(fullWidthBox, &QCheckBox::toggled, &dlg, preview);
-    connect(widthBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
-    connect(spacingBox, qOverload<int>(&QSpinBox::valueChanged), &dlg, preview);
+
+    // Live preview of font + width + line spacing as the user changes controls.
+    auto previewEditor = [fontBox, sizeBox, fullWidthBox, widthBox, spacingBox,
+                          applyEditorPreview] {
+        QFont font = fontBox->currentFont();
+        font.setPointSize(sizeBox->value());
+        applyEditorPreview(font, fullWidthBox->isChecked(), widthBox->value(),
+                           spacingBox->value());
+    };
+    connect(fontBox, &QFontComboBox::currentFontChanged, &dlg, previewEditor);
+    connect(sizeBox, qOverload<int>(&QSpinBox::valueChanged), &dlg,
+            previewEditor);
+    connect(fullWidthBox, &QCheckBox::toggled, &dlg, previewEditor);
+    connect(widthBox, qOverload<int>(&QSpinBox::valueChanged), &dlg,
+            previewEditor);
+    connect(spacingBox, qOverload<int>(&QSpinBox::valueChanged), &dlg,
+            previewEditor);
+
+    auto previewTheme = [this, themeBox, applyEditorPreview] {
+        const AppTheme::Id selected =
+            AppTheme::fromKey(themeBox->currentData().toString());
+        if (selected == AppTheme::current())
+            return;
+
+        // QApplication::setStyleSheet() repolishes every widget and can reset
+        // an explicitly assigned editor font. Capture the complete preview
+        // state before applying the theme, then restore it as one unit. This
+        // also preserves unsaved font/layout choices made earlier in this
+        // Settings session, rather than falling back to persisted defaults.
+        const QFont previewFont = m_editor->font();
+        const bool previewFullWidth = m_editorFullWidth;
+        const int previewColumnWidth = m_editorColumnWidth;
+        const int previewLineSpacing = m_editor->lineSpacing();
+        AppTheme::apply(*qApp, selected);
+        refreshThemeUi();
+        applyEditorPreview(previewFont, previewFullWidth, previewColumnWidth,
+                           previewLineSpacing);
+    };
+    connect(themeBox, qOverload<int>(&QComboBox::currentIndexChanged), &dlg,
+            previewTheme);
 
     const QFont originalFont = m_editor->font();
+    const AppTheme::Id originalTheme = AppTheme::current();
     const int originalWidth = m_editorColumnWidth;
     const bool originalFullWidth = m_editorFullWidth;
     const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
@@ -2750,6 +2825,13 @@ void MainWindow::openSettings() {
         m_editorColumnWidth = widthBox->value();
         applyEditorColumnWidth();
         m_editor->setLineSpacing(spacingBox->value());
+        const AppTheme::Id selectedTheme =
+            AppTheme::fromKey(themeBox->currentData().toString());
+        if (selectedTheme != AppTheme::current()) {
+            AppTheme::apply(*qApp, selectedTheme);
+            refreshThemeUi();
+        }
+        s.setValue(QStringLiteral("theme"), AppTheme::key(selectedTheme));
         s.setValue(QStringLiteral("editorFontFamily"), f.family());
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
         s.setValue(QStringLiteral("editorWidth"), widthBox->value());
@@ -2796,6 +2878,10 @@ void MainWindow::openSettings() {
             setReadMode(readModeBox->isChecked());
         }
     } else {
+        if (AppTheme::current() != originalTheme) {
+            AppTheme::apply(*qApp, originalTheme);
+            refreshThemeUi();
+        }
         m_editor->applyFont(originalFont); // revert the live preview
         m_editorFullWidth = originalFullWidth;
         m_editorColumnWidth = originalWidth;

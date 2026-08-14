@@ -1,4 +1,5 @@
 #include "ui/MarkdownEditor.h"
+#include "ui/AppTheme.h"
 #include "ui/MarkdownCallout.h"
 #include "ui/MarkdownHighlighter.h"
 #include "ui/MarkdownReadObjectRenderer.h"
@@ -283,6 +284,41 @@ int main(int argc, char **argv) {
         scrollEditor.verticalScrollBar()->setValue(0);
         scrollEditor.setReadMode(true);
         checkCanScrollPastLastLine(scrollEditor, QStringLiteral("Read Mode"));
+    }
+
+    // Theme changes refresh both the cached live highlighter formats and the
+    // separately rendered Read Mode document without altering Markdown text.
+    {
+        AppTheme::apply(app, AppTheme::Id::Light);
+        MarkdownEditor themedEditor;
+        themedEditor.resize(320, 180);
+        themedEditor.show();
+        themedEditor.setPlainText(
+            QStringLiteral("# Themed heading\nordinary text"));
+        themedEditor.moveCursor(QTextCursor::End);
+        const QTextBlock sourceHeading = themedEditor.document()->firstBlock();
+        settleLayout(themedEditor, sourceHeading);
+        check(formatAt(sourceHeading, 3).foreground().color() ==
+                  AppTheme::color(QColor(QStringLiteral("#d7eee2"))),
+              QStringLiteral("Emerald Light recolors Edit Mode Markdown"));
+
+        themedEditor.setReadMode(true);
+        const QTextCursor readHeading =
+            themedEditor.document()->find(QStringLiteral("Themed heading"));
+        settleLayout(themedEditor, readHeading.block());
+        check(readHeading.charFormat().foreground().color() ==
+                  AppTheme::color(QColor(QStringLiteral("#e3f5ec"))),
+              QStringLiteral("Emerald Light recolors Read Mode Markdown"));
+
+        AppTheme::apply(app, AppTheme::Id::Dark);
+        themedEditor.applyTheme();
+        const QTextCursor restoredHeading =
+            themedEditor.document()->find(QStringLiteral("Themed heading"));
+        check(restoredHeading.charFormat().foreground().color() ==
+                  QColor(QStringLiteral("#e3f5ec")) &&
+                  themedEditor.sourceDocument()->toPlainText() ==
+                      QStringLiteral("# Themed heading\nordinary text"),
+              QStringLiteral("switching themes rebuilds presentation only"));
     }
 
     // The bundled English dictionary loads without a network connection at

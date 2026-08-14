@@ -1,4 +1,5 @@
 #include "core/Perf.h"
+#include "ui/AppTheme.h"
 #include "ui/GraphPage.h"
 #include "ui/GraphView.h"
 #include "ui/MainWindow.h"
@@ -638,6 +639,126 @@ void testFullWidthEditorPreference() {
 
   settings.clear();
 }
+
+void testThemePreference() {
+  QSettings settings;
+  settings.clear();
+  settings.setValue(QStringLiteral("editorFontFamily"),
+                    QStringLiteral("DejaVu Sans Mono"));
+  settings.setValue(QStringLiteral("editorFontSize"), 18);
+  settings.setValue(QStringLiteral("editorWidth"), 560);
+  settings.setValue(QStringLiteral("editorFullWidth"), false);
+  settings.setValue(QStringLiteral("lineSpacing"), 170);
+  settings.sync();
+  AppTheme::apply(*qApp, AppTheme::Id::Dark);
+
+  {
+    MainWindow window;
+    window.resize(1000, 680);
+    window.show();
+    check(waitUntil([&window] { return window.isVisible(); }),
+          QStringLiteral("theme settings test window becomes visible"));
+    auto *settingsAction =
+        window.findChild<QAction *>(QStringLiteral("settingsAction"));
+
+    bool selectorSeen = false;
+    bool lightPreviewSeen = false;
+    bool editorStylePreviewSeen = false;
+    QString previewFamily;
+    int previewSize = -1;
+    int previewSpacing = -1;
+    int previewWidth = -1;
+    QTimer::singleShot(0, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *theme = dialog ? dialog->findChild<QComboBox *>(
+                                 QStringLiteral("appTheme"))
+                           : nullptr;
+      selectorSeen = theme && theme->count() == 2 &&
+                     theme->currentData() == QStringLiteral("dark");
+      if (theme) {
+        theme->setCurrentIndex(theme->findData(QStringLiteral("light")));
+        QApplication::processEvents();
+        lightPreviewSeen =
+            AppTheme::current() == AppTheme::Id::Light &&
+            qApp->palette().color(QPalette::Base) ==
+                QColor(QStringLiteral("#fbfcfb")) &&
+            qApp->styleSheet().contains(QStringLiteral("#fbfcfb"));
+        auto *editor = window.findChild<MarkdownEditor *>(
+            QStringLiteral("editor"));
+        auto *editorColumn = window.findChild<QWidget *>(
+            QStringLiteral("editorColumn"));
+        previewFamily = editor ? editor->font().family() : QString();
+        previewSize = editor ? editor->font().pointSize() : -1;
+        previewSpacing = editor ? editor->lineSpacing() : -1;
+        previewWidth = editorColumn ? editorColumn->maximumWidth() : -1;
+        editorStylePreviewSeen =
+            previewSize == 18 &&
+            previewFamily == QStringLiteral("DejaVu Sans Mono") &&
+            previewSpacing == 170 && previewWidth == 560;
+        const QString screenshot = QString::fromLocal8Bit(
+            qgetenv("EMERALD_TEST_LIGHT_THEME_SCREENSHOT"));
+        if (dialog && !screenshot.isEmpty())
+          dialog->grab().save(screenshot);
+      }
+      if (dialog)
+        dialog->reject();
+    });
+    if (settingsAction)
+      settingsAction->trigger();
+
+    check(selectorSeen,
+          QStringLiteral("Settings exposes the two bundled themes"));
+    check(lightPreviewSeen,
+          QStringLiteral("selecting Emerald Light previews the complete app "
+                         "palette immediately"));
+    check(editorStylePreviewSeen,
+          QStringLiteral("theme preview retains the saved editor font, size, "
+                         "spacing, and column width (actual %1 %2pt, %3%%, "
+                         "%4px)")
+              .arg(previewFamily)
+              .arg(previewSize)
+              .arg(previewSpacing)
+              .arg(previewWidth));
+    check(AppTheme::current() == AppTheme::Id::Dark &&
+              !settings.contains(QStringLiteral("theme")),
+          QStringLiteral("cancelling Settings restores the original theme "
+                         "without persisting the preview"));
+
+    QTimer::singleShot(0, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *theme = dialog ? dialog->findChild<QComboBox *>(
+                                 QStringLiteral("appTheme"))
+                           : nullptr;
+      if (theme)
+        theme->setCurrentIndex(theme->findData(QStringLiteral("light")));
+      if (dialog)
+        dialog->accept();
+    });
+    if (settingsAction)
+      settingsAction->trigger();
+    check(settings.value(QStringLiteral("theme")).toString() ==
+                  QStringLiteral("light") &&
+              AppTheme::current() == AppTheme::Id::Light,
+          QStringLiteral("accepting Settings persists Emerald Light"));
+    window.close();
+    QApplication::processEvents();
+  }
+
+  // Prove restoration comes from QSettings rather than retained process state.
+  AppTheme::apply(*qApp, AppTheme::Id::Dark);
+  {
+    MainWindow restored;
+    restored.show();
+    check(waitUntil([&restored] { return restored.isVisible(); }) &&
+              AppTheme::current() == AppTheme::Id::Light,
+          QStringLiteral("the saved theme is restored when a window starts"));
+    restored.close();
+    QApplication::processEvents();
+  }
+
+  settings.clear();
+  AppTheme::apply(*qApp, AppTheme::Id::Dark);
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -652,12 +773,11 @@ int main(int argc, char **argv) {
   QSettings::setDefaultFormat(QSettings::IniFormat);
   QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                      settingsDir.path());
-  QFile qss(QStringLiteral(":/emerald.qss"));
-  if (qss.open(QIODevice::ReadOnly))
-    app.setStyleSheet(QString::fromUtf8(qss.readAll()));
+  AppTheme::apply(app, AppTheme::Id::Dark);
 
   testInPaneGraphNavigation(settingsDir.path());
   testFullWidthEditorPreference();
+  testThemePreference();
   if (failures == 0)
     QTextStream(stdout) << "All MainWindow graph tests passed.\n";
   return failures == 0 ? 0 : 1;

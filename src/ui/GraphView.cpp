@@ -1,5 +1,7 @@
 #include "GraphView.h"
 
+#include "AppTheme.h"
+
 #include <QApplication>
 #include <QGestureEvent>
 #include <QKeyEvent>
@@ -515,18 +517,19 @@ int GraphView::nodeAt(const QPointF &screenPoint) const {
 QColor GraphView::nodeColor(int index) const {
   const auto &node = m_graph.nodes.at(index);
   if (node.unresolved)
-    return QColor(QStringLiteral("#b18172"));
+    return AppTheme::color(QColor(QStringLiteral("#b18172")));
   if (node.folder.isEmpty())
-    return QColor(QStringLiteral("#2bbf74"));
+    return AppTheme::color(QColor(QStringLiteral("#2bbf74")));
   const int hue = int(qHash(node.folder.toCaseFolded(), 0) % 360);
   return QColor::fromHsv(hue, 125, 205);
 }
 
 void GraphView::paintEvent(QPaintEvent *) {
   QPainter painter(this);
-  painter.fillRect(rect(), QColor(QStringLiteral("#141619")));
+  painter.fillRect(
+      rect(), AppTheme::color(QColor(QStringLiteral("#141619"))));
   if (m_graph.nodes.isEmpty()) {
-    painter.setPen(QColor(QStringLiteral("#6d8e7c")));
+    painter.setPen(AppTheme::color(QColor(QStringLiteral("#6d8e7c"))));
     painter.drawText(rect(), Qt::AlignCenter, tr("No notes in this vault yet"));
     return;
   }
@@ -552,8 +555,9 @@ void GraphView::paintEvent(QPaintEvent *) {
       continue;
     const bool highlighted =
         emphasis >= 0 && (edge.from == emphasis || edge.to == emphasis);
-    QColor color = highlighted ? QColor(QStringLiteral("#56d995"))
-                               : QColor(QStringLiteral("#496558"));
+    QColor color = AppTheme::color(
+        highlighted ? QColor(QStringLiteral("#56d995"))
+                    : QColor(QStringLiteral("#496558")));
     color.setAlpha(highlighted ? 215 : (emphasis >= 0 ? 42 : 120));
     QPen pen(color);
     pen.setWidthF(
@@ -613,7 +617,7 @@ void GraphView::paintEvent(QPaintEvent *) {
     painter.setBrush(node.unresolved ? Qt::NoBrush : QBrush(color));
     painter.drawEllipse(point, radius, radius);
     if (current || localRoot) {
-      QPen ring(QColor(QStringLiteral("#d7eee2")));
+      QPen ring(AppTheme::color(QColor(QStringLiteral("#d7eee2"))));
       ring.setWidthF(1.3);
       painter.setPen(ring);
       painter.setBrush(Qt::NoBrush);
@@ -637,10 +641,11 @@ void GraphView::paintEvent(QPaintEvent *) {
         point.x(), point.y() + radius + labelRect.height() * 0.75 + 3.0));
     if (selected || hovered) {
       painter.setPen(Qt::NoPen);
-      painter.setBrush(QColor(16, 17, 19, 220));
+      painter.setBrush(AppTheme::color(QColor(16, 17, 19, 220)));
       painter.drawRoundedRect(labelRect.adjusted(-5, -2, 5, 2), 4, 4);
     }
-    QColor textColor = QColor(QStringLiteral("#cfe8dc"));
+    QColor textColor =
+        AppTheme::color(QColor(QStringLiteral("#cfe8dc")));
     if (emphasis >= 0 && !adjacent.at(i))
       textColor.setAlpha(75);
     painter.setPen(textColor);

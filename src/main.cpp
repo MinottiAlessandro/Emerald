@@ -1,10 +1,11 @@
 #include "ui/MainWindow.h"
+#include "ui/AppTheme.h"
 
 #include <QApplication>
 #include <QByteArray>
-#include <QFile>
 #include <QIcon>
 #include <QLoggingCategory>
+#include <QSettings>
 
 Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf")
 
@@ -26,9 +27,11 @@ int main(int argc, char *argv[]) {
     QApplication::setApplicationVersion(QStringLiteral(EMERALD_VERSION));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/EmeraldClean.png")));
 
-    QFile qss(QStringLiteral(":/emerald.qss"));
-    if (qss.open(QIODevice::ReadOnly))
-        app.setStyleSheet(QString::fromUtf8(qss.readAll()));
+    const QSettings settings;
+    AppTheme::apply(
+        app, AppTheme::fromKey(
+                 settings.value(QStringLiteral("theme"),
+                                QStringLiteral("dark")).toString()));
 
     MainWindow window;
     window.resize(1100, 720);

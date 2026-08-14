@@ -49,6 +49,9 @@ public:
     // changes so heading sizes track it.
     void setBaseSize(double pt);
 
+    // Refresh cached text formats after the application palette changes.
+    void applyTheme();
+
     // Read Mode keeps the Markdown source authoritative but hidden. Suspend
     // parsing while notes are replaced there; resuming followed by rehighlight
     // restores the complete live-preview formatting before Edit Mode is shown.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AppTheme.h"
+
 #include <QColor>
 #include <QString>
 #include <QStringList>
@@ -171,34 +173,34 @@ inline QColor accent(const QString &type) {
     if (key == QStringLiteral("warning") ||
         key == QStringLiteral("caution") ||
         key == QStringLiteral("attention"))
-        return QColor(0xf0, 0xa3, 0x4a);
+        return AppTheme::color(QColor(0xf0, 0xa3, 0x4a));
     if (key == QStringLiteral("danger") ||
         key == QStringLiteral("error") ||
         key == QStringLiteral("failure") ||
         key == QStringLiteral("fail") || key == QStringLiteral("missing") ||
         key == QStringLiteral("bug"))
-        return QColor(0xe8, 0x66, 0x71);
+        return AppTheme::color(QColor(0xe8, 0x66, 0x71));
     if (key == QStringLiteral("question") ||
         key == QStringLiteral("help") || key == QStringLiteral("faq"))
-        return QColor(0xb2, 0x83, 0xe6);
+        return AppTheme::color(QColor(0xb2, 0x83, 0xe6));
     if (key == QStringLiteral("example"))
-        return QColor(0xa6, 0x7a, 0xdf);
+        return AppTheme::color(QColor(0xa6, 0x7a, 0xdf));
     if (key == QStringLiteral("abstract") ||
         key == QStringLiteral("summary") || key == QStringLiteral("tldr"))
-        return QColor(0x55, 0xc6, 0xd6);
+        return AppTheme::color(QColor(0x55, 0xc6, 0xd6));
     if (key == QStringLiteral("note") || key == QStringLiteral("info") ||
         key == QStringLiteral("todo"))
-        return QColor(0x58, 0xb9, 0xe8);
+        return AppTheme::color(QColor(0x58, 0xb9, 0xe8));
     if (key == QStringLiteral("quote") || key == QStringLiteral("cite"))
-        return QColor(0x9a, 0xb0, 0xa4);
+        return AppTheme::color(QColor(0x9a, 0xb0, 0xa4));
     // Tip, hint, important, success/check/done, and custom callout types use
     // Emerald's familiar green accent.
-    return QColor(0x2b, 0xbf, 0x74);
+    return AppTheme::color(QColor(0x2b, 0xbf, 0x74));
 }
 
 inline QColor surface(const QString &type, bool title) {
     const QColor tint = accent(type);
-    const QColor base(0x12, 0x1d, 0x18);
+    const QColor base = AppTheme::color(QColor(0x12, 0x1d, 0x18));
     const int strength = title ? 24 : 13;
     const auto channel = [strength](int background, int foreground) {
         return (background * (100 - strength) + foreground * strength) / 100;

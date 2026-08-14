@@ -1,5 +1,6 @@
 #include "MarkdownReadRenderer.h"
 
+#include "AppTheme.h"
 #include "MathRender.h"
 #include "MarkdownCallout.h"
 #include "MarkdownReadObjectRenderer.h"
@@ -470,8 +471,10 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
                 QTextCharFormat code =
                     withInlineStyles(base, styleAt(pos + 1));
                 code.setFont(monospaceFont(code.font()));
-                code.setBackground(QColor(0x22, 0x2f, 0x28));
-                code.setForeground(QColor(0xd5, 0xe9, 0xde));
+                code.setBackground(
+                    AppTheme::color(QColor(0x22, 0x2f, 0x28)));
+                code.setForeground(
+                    AppTheme::color(QColor(0xd5, 0xe9, 0xde)));
                 insertMappedText(cursor,
                                  text.mid(pos + 1, end - pos - 1), code,
                                  sourceOffset + pos + 1, end - pos - 1,
@@ -673,7 +676,8 @@ void insertReadTable(QTextCursor &cursor, const QList<ReadTableRow> &rows,
     tableFormat.setCellSpacing(0.0);
     tableFormat.setBorder(1.0);
     tableFormat.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
-    tableFormat.setBorderBrush(QColor(0x31, 0x51, 0x40));
+    tableFormat.setBorderBrush(
+        AppTheme::color(QColor(0x31, 0x51, 0x40)));
     tableFormat.setBorderCollapse(true);
     tableFormat.setTopMargin(7.0);
     tableFormat.setBottomMargin(9.0);
@@ -710,11 +714,14 @@ void insertReadTable(QTextCursor &cursor, const QList<ReadTableRow> &rows,
             QTextTableCell cell = table->cellAt(row, column);
             QTextTableCellFormat cellFormat = cell.format().toTableCellFormat();
             if (row == 0)
-                cellFormat.setBackground(QColor(0x1a, 0x35, 0x27));
+                cellFormat.setBackground(
+                    AppTheme::color(QColor(0x1a, 0x35, 0x27)));
             else if ((row % 2) == 0)
-                cellFormat.setBackground(QColor(0x15, 0x24, 0x1c));
+                cellFormat.setBackground(
+                    AppTheme::color(QColor(0x15, 0x24, 0x1c)));
             else
-                cellFormat.setBackground(QColor(0x11, 0x1d, 0x17));
+                cellFormat.setBackground(
+                    AppTheme::color(QColor(0x11, 0x1d, 0x17)));
             cell.setFormat(cellFormat);
 
             QTextCursor cellCursor = cell.firstCursorPosition();
@@ -727,8 +734,9 @@ void insertReadTable(QTextCursor &cursor, const QList<ReadTableRow> &rows,
 
             QTextCharFormat text;
             text.setFont(options.baseFont);
-            text.setForeground(row == 0 ? QColor(0xe3, 0xf5, 0xec)
-                                        : QColor(0xc8, 0xe0, 0xd4));
+            text.setForeground(
+                AppTheme::color(row == 0 ? QColor(0xe3, 0xf5, 0xec)
+                                         : QColor(0xc8, 0xe0, 0xd4)));
             if (row == 0)
                 text.setFontWeight(QFont::DemiBold);
             ReadSourceRanges ranges;
@@ -957,7 +965,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     const QTextCharFormat body = [&] {
         QTextCharFormat f;
         f.setFont(options.baseFont);
-        f.setForeground(QColor(0xd7, 0xee, 0xe2));
+        f.setForeground(AppTheme::color(QColor(0xd7, 0xee, 0xe2)));
         return f;
     }();
     const QFont mono = monospaceFont(options.baseFont);
@@ -1146,7 +1154,8 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
             contentSourceOffset = lineStart + heading.capturedStart(2);
             text.setFontPointSize(baseSize * headingScale(level));
             text.setFontWeight(level <= 3 ? QFont::Bold : QFont::DemiBold);
-            text.setForeground(QColor(0xe3, 0xf5, 0xec));
+            text.setForeground(
+                AppTheme::color(QColor(0xe3, 0xf5, 0xec)));
             block.setTopMargin(baseSize * (level == 1 ? 0.9 : 0.55));
             block.setBottomMargin(baseSize * (level <= 2 ? 0.42 : 0.28));
         } else {
@@ -1160,8 +1169,10 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                 // marker needs horizontal space in this presentation document.
                 block.setLeftMargin((quoteDepth - 1) * 16.0);
                 block.setRightMargin(0.0);
-                block.setBackground(QColor(0x19, 0x26, 0x1f));
-                text.setForeground(QColor(0xb9, 0xd6, 0xc7));
+                block.setBackground(
+                    AppTheme::color(QColor(0x19, 0x26, 0x1f)));
+                text.setForeground(
+                    AppTheme::color(QColor(0xb9, 0xd6, 0xc7)));
                 text.setFontItalic(true);
 
                 const int nextQuoteDepth =
@@ -1244,7 +1255,8 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                         list.capturedStart(4) - list.capturedStart(2);
                     if (checkedTask) {
                         text.setFontStrikeOut(true);
-                        text.setForeground(QColor(0x78, 0x93, 0x84));
+                        text.setForeground(
+                            AppTheme::color(QColor(0x78, 0x93, 0x84)));
                     }
                 } else if (!marker.at(0).isDigit()) {
                     static const QChar bullets[] = {QChar(0x2022), QChar(0x25E6),
@@ -1272,8 +1284,10 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                 parseInline = false;
             } else if (tableRe.match(content).hasMatch()) {
                 text.setFont(mono);
-                text.setForeground(QColor(0xb8, 0xd4, 0xc5));
-                block.setBackground(QColor(0x12, 0x1d, 0x18));
+                text.setForeground(
+                    AppTheme::color(QColor(0xb8, 0xd4, 0xc5)));
+                block.setBackground(
+                    AppTheme::color(QColor(0x12, 0x1d, 0x18)));
                 block.setLeftMargin(8.0);
                 block.setRightMargin(8.0);
                 parseInline = false;

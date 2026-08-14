@@ -127,6 +127,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/MarkdownComment.h
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
+  src/ui/AppTheme.h
+  src/ui/AppTheme.cpp
   src/ui/GraphView.h
   src/ui/GraphView.cpp
   src/ui/GraphPage.h
@@ -301,6 +303,8 @@ if(EMERALD_BUILD_PERF_TESTS)
     src/core/SpellChecker.cpp
     src/ui/MarkdownEditor.h
     src/ui/MarkdownEditor.cpp
+    src/ui/AppTheme.h
+    src/ui/AppTheme.cpp
     src/ui/GraphView.h
     src/ui/GraphView.cpp
     src/ui/MarkdownCallout.h
@@ -349,6 +353,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/SpellChecker.cpp
     src/ui/MarkdownEditor.h
     src/ui/MarkdownEditor.cpp
+    src/ui/AppTheme.h
+    src/ui/AppTheme.cpp
     src/ui/MarkdownCallout.h
     src/ui/MarkdownReadRenderer.h
     src/ui/MarkdownReadRenderer.cpp
@@ -411,6 +417,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/MarkdownComment.h
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
+    src/ui/AppTheme.h
+    src/ui/AppTheme.cpp
     src/ui/GraphView.h
     src/ui/GraphView.cpp
     src/ui/GraphPage.h

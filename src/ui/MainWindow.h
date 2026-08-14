@@ -53,6 +53,7 @@ private:
     void buildUi();
     void openSettings();
     void loadSettings();
+    void refreshThemeUi();
     void setReadMode(bool enabled, bool persist = true);
     void updateReadModeUi();
     bool ensureVaultWritable();

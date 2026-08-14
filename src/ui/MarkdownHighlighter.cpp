@@ -1,5 +1,6 @@
 #include "MarkdownHighlighter.h"
 
+#include "AppTheme.h"
 #include "MarkdownCallout.h"
 #include "MarkdownStyle.h"
 
@@ -68,13 +69,10 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
             m_baseSize = pt;
     }
 
-    m_heading.setForeground(QColor("#d7eee2"));
     m_heading.setFontWeight(QFont::Bold);
 
-    m_bold.setForeground(QColor("#d7eee2"));
     m_bold.setFontWeight(QFont::Bold);
 
-    m_code.setForeground(QColor("#7ee0b0"));
     applyMono(m_code);
 
     // No background on the fenced-code formats: the editor already paints the
@@ -83,51 +81,33 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     // fill of the same colour stacked on top — redundant, it squares off the
     // rounded corners, and where it meets the green header it can leave a
     // hairline seam under GPU/fractional-scale compositing.
-    m_codeBlock.setForeground(QColor("#a9c8b8"));
     applyMono(m_codeBlock);
 
-    m_codeLang.setForeground(QColor("#7ee0b0"));
     applyMono(m_codeLang);
     m_codeLang.setFontItalic(true);
 
-    m_strike.setForeground(QColor("#5e7d6d"));
     m_strike.setFontStrikeOut(true);
 
-    m_highlight.setForeground(MarkdownStyle::highlightForeground());
-    m_highlight.setBackground(MarkdownStyle::highlightBackground());
-
-    m_link.setForeground(QColor("#2bbf74"));
     m_link.setFontUnderline(true);
 
-    m_quote.setForeground(QColor("#92b3a2"));
     m_quote.setFontItalic(true);
 
-    m_calloutTitle.setForeground(QColor("#2bbf74"));
     m_calloutTitle.setFontWeight(QFont::Bold);
     m_calloutTitle.setFontItalic(false);
 
-    m_rule.setForeground(QColor("#4f7565"));
-
-    m_listMarker.setForeground(QColor("#2bbf74"));
     m_listMarker.setFontWeight(QFont::Bold);
 
-    m_taskDone.setForeground(QColor("#4f7565"));
     m_taskDone.setFontStrikeOut(true);
-
-    m_marker.setForeground(QColor("#4f7565"));
 
     // A recognised mascot seed line: italic + the accent green so editing it
     // (after revealing it with Up) reads clearly as "this seed is understood".
-    m_mascot.setForeground(QColor("#2bbf74"));
     m_mascot.setFontItalic(true);
 
     // Comments remain editable source in Edit Mode, but use a subdued italic
     // so they read as author annotations rather than rendered note content.
-    m_comment.setForeground(QColor("#5e7d6d"));
     m_comment.setFontItalic(true);
 
     // Inline math: a soft teal italic so a formula reads as a distinct mode.
-    m_math.setForeground(QColor("#6fcfc0"));
     m_math.setFontItalic(true);
 
     m_reHeading    = QRegularExpression(QStringLiteral("^(#{1,6})\\s+(.+)$"));
@@ -142,6 +122,29 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
         QStringLiteral("^(\\s*)([-*+]|\\d+[.)])(\\s+)"));
     m_reCode       = inlineCodeRe();
     m_reLink = internetLinkRe();
+    applyTheme();
+}
+
+void MarkdownHighlighter::applyTheme() {
+    m_heading.setForeground(AppTheme::color(QColor("#d7eee2")));
+    m_bold.setForeground(AppTheme::color(QColor("#d7eee2")));
+    m_code.setForeground(AppTheme::color(QColor("#7ee0b0")));
+    m_codeBlock.setForeground(AppTheme::color(QColor("#a9c8b8")));
+    m_codeLang.setForeground(AppTheme::color(QColor("#7ee0b0")));
+    m_strike.setForeground(AppTheme::color(QColor("#5e7d6d")));
+    m_highlight.setForeground(MarkdownStyle::highlightForeground());
+    m_highlight.setBackground(MarkdownStyle::highlightBackground());
+    m_link.setForeground(AppTheme::color(QColor("#2bbf74")));
+    m_quote.setForeground(AppTheme::color(QColor("#92b3a2")));
+    m_calloutTitle.setForeground(AppTheme::color(QColor("#2bbf74")));
+    m_rule.setForeground(AppTheme::color(QColor("#4f7565")));
+    m_listMarker.setForeground(AppTheme::color(QColor("#2bbf74")));
+    m_taskDone.setForeground(AppTheme::color(QColor("#4f7565")));
+    m_marker.setForeground(AppTheme::color(QColor("#4f7565")));
+    m_mascot.setForeground(AppTheme::color(QColor("#2bbf74")));
+    m_comment.setForeground(AppTheme::color(QColor("#5e7d6d")));
+    m_math.setForeground(AppTheme::color(QColor("#6fcfc0")));
+    rehighlight();
 }
 
 void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock,
@@ -1265,7 +1268,8 @@ void MarkdownHighlighter::applySpelling(const QString &text) {
         for (int i = word.start; i < word.start + word.length; ++i) {
             QTextCharFormat misspelled = format(i);
             misspelled.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
-            misspelled.setUnderlineColor(QColor(QStringLiteral("#ef6b73")));
+            misspelled.setUnderlineColor(
+                AppTheme::color(QColor(QStringLiteral("#ef6b73"))));
             setFormat(i, 1, misspelled);
         }
     }

@@ -53,6 +53,10 @@ public:
     // Set the editor body font (family + size) and keep heading scaling in sync.
     void applyFont(const QFont &font);
 
+    // Rebuild cached Markdown formats and repaint custom elements after the
+    // application theme changes.
+    void applyTheme();
+
     // Folder used to resolve relative Markdown image paths, plus the vault root
     // that every resolved inline preview must remain inside.
     void setImagePaths(const QString &basePath, const QString &vaultRoot);
@@ -61,6 +65,7 @@ public:
     // height (100 = normal). Persisted in settings. Handled by the document
     // layout, so it survives note loads on its own.
     void setLineSpacing(int percent);
+    int lineSpacing() const { return m_lineSpacing; }
     void applyLineSpacing(); // recompute the per-row padding from font + percent
 
     // Select and scroll to the first occurrence of `text` (case-insensitive).

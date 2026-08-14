@@ -1,5 +1,6 @@
 #include "MarkdownReadObjectRenderer.h"
 
+#include "AppTheme.h"
 #include "MathRender.h"
 
 #include <QFileInfo>
@@ -210,8 +211,9 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
         const QString path = format.stringProperty(PathProperty);
         const QPixmap pixmap = imagePixmap(
             path, imageSize.toSize(), painter->device()->devicePixelRatioF());
-        painter->setPen(QPen(QColor(0x2b, 0x4a, 0x39), 1.0));
-        painter->setBrush(QColor(0x10, 0x11, 0x13));
+        painter->setPen(
+            QPen(AppTheme::color(QColor(0x2b, 0x4a, 0x39)), 1.0));
+        painter->setBrush(AppTheme::color(QColor(0x10, 0x11, 0x13)));
         painter->drawRoundedRect(imageRect, 7.0, 7.0);
         if (!pixmap.isNull()) {
             QPainterPath clip;
@@ -223,7 +225,7 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
                 imageRect.top() + (imageRect.height() - logical.height()) / 2.0);
             painter->drawPixmap(topLeft, pixmap);
         } else {
-            painter->setPen(QColor(0x79, 0x9a, 0x88));
+            painter->setPen(AppTheme::color(QColor(0x79, 0x9a, 0x88)));
             QString label = format.stringProperty(LabelProperty).trimmed();
             if (label.isEmpty())
                 label = format.stringProperty(PayloadProperty);
@@ -239,18 +241,22 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
         MathRender::paint(*painter, rect,
                           format.stringProperty(PayloadProperty),
                           MathRender::mathFont(character.font(), false),
-                          QColor(0x6f, 0xcf, 0xc0), MathRender::Align::Inline,
+                          AppTheme::color(QColor(0x6f, 0xcf, 0xc0)),
+                          MathRender::Align::Inline,
                           rect.height() - 2.0);
         break;
     case Kind::DisplayMath:
-        painter->fillRect(rect, QColor(0x13, 0x1c, 0x18));
+        painter->fillRect(rect,
+                          AppTheme::color(QColor(0x13, 0x1c, 0x18)));
         MathRender::paint(*painter, rect,
                           format.stringProperty(PayloadProperty),
                           MathRender::mathFont(character.font(), true),
-                          QColor(0x6f, 0xcf, 0xc0), MathRender::Align::Display);
+                          AppTheme::color(QColor(0x6f, 0xcf, 0xc0)),
+                          MathRender::Align::Display);
         break;
     case Kind::Rule: {
-        painter->setPen(QPen(QColor(0x3b, 0x61, 0x4d), 1.4));
+        painter->setPen(
+            QPen(AppTheme::color(QColor(0x3b, 0x61, 0x4d)), 1.4));
         painter->drawLine(QPointF(rect.left(), rect.center().y()),
                           QPointF(rect.right(), rect.center().y()));
         break;
@@ -260,12 +266,16 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
         const QRectF box(rect.left() + 1.0,
                          rect.center().y() - side / 2.0, side, side);
         const bool checked = format.boolProperty(CheckedProperty);
-        const QColor accent(0x2b, 0xbf, 0x74);
+        const QColor accent =
+            AppTheme::color(QColor(0x2b, 0xbf, 0x74));
         painter->setPen(QPen(accent, 1.5));
         painter->setBrush(checked ? accent : Qt::NoBrush);
         painter->drawRoundedRect(box, 3.0, 3.0);
         if (checked) {
-            painter->setPen(QPen(QColor(0x10, 0x18, 0x14), 1.6,
+            painter->setPen(QPen(AppTheme::current() == AppTheme::Id::Light
+                                     ? QColor(Qt::white)
+                                     : QColor(0x10, 0x18, 0x14),
+                                 1.6,
                                  Qt::SolidLine, Qt::RoundCap,
                                  Qt::RoundJoin));
             const QPointF points[] = {
@@ -277,12 +287,13 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
         break;
     }
     case Kind::CodeBlock: {
-        painter->setPen(QPen(QColor(0x2a, 0x49, 0x39), 1.0));
-        painter->setBrush(QColor(0x12, 0x1d, 0x18));
+        painter->setPen(
+            QPen(AppTheme::color(QColor(0x2a, 0x49, 0x39)), 1.0));
+        painter->setBrush(AppTheme::color(QColor(0x12, 0x1d, 0x18)));
         painter->drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 7, 7);
         QRectF header(rect.left(), rect.top(), rect.width(), CodeHeaderHeight);
         painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(0x19, 0x2a, 0x21));
+        painter->setBrush(AppTheme::color(QColor(0x19, 0x2a, 0x21)));
         painter->drawRoundedRect(header.adjusted(1, 1, -1, 5), 6, 6);
         painter->drawRect(header.adjusted(1, 6, -1, 0));
 
@@ -290,16 +301,17 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
         labelFont.setPointSizeF(qMax(8.0, labelFont.pointSizeF() * 0.78));
         labelFont.setWeight(QFont::DemiBold);
         painter->setFont(labelFont);
-        painter->setPen(QColor(0x83, 0xa6, 0x93));
+        painter->setPen(AppTheme::color(QColor(0x83, 0xa6, 0x93)));
         painter->drawText(header.adjusted(10, 0, -76, 0),
                           Qt::AlignVCenter | Qt::AlignLeft,
                           format.stringProperty(LanguageProperty));
 
         const QRectF copy = codeCopyButtonRect(rect);
-        painter->setPen(QPen(QColor(0x3a, 0x61, 0x4d), 1.0));
-        painter->setBrush(QColor(0x16, 0x24, 0x1c));
+        painter->setPen(
+            QPen(AppTheme::color(QColor(0x3a, 0x61, 0x4d)), 1.0));
+        painter->setBrush(AppTheme::color(QColor(0x16, 0x24, 0x1c)));
         painter->drawRoundedRect(copy, 4, 4);
-        painter->setPen(QColor(0xa3, 0xc4, 0xb3));
+        painter->setPen(AppTheme::color(QColor(0xa3, 0xc4, 0xb3)));
         painter->drawText(copy, Qt::AlignCenter, tr("Copy"));
 
         const QRectF body = rect.adjusted(CodePadding,
@@ -308,7 +320,7 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
         painter->setClipRect(body);
         const QFont font = codeFont(character.font());
         painter->setFont(font);
-        painter->setPen(QColor(0xc7, 0xdd, 0xd1));
+        painter->setPen(AppTheme::color(QColor(0xc7, 0xdd, 0xd1)));
         drawWrappedCode(*painter, body,
                         format.stringProperty(PayloadProperty), font);
         break;
