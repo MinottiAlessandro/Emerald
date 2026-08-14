@@ -663,14 +663,38 @@ QFileDialog QToolButton:focus,
 QToolButton#mascotGalleryItem:focus {
     border-color: #39bd79;
 }
-QDialog QComboBox QAbstractItemView {
-    background: #121512;
+/* Qt renders combo-box popups as separate top-level windows, so a QDialog
+   ancestor selector does not match them. The view rules cover both ordinary
+   combo boxes and the font picker's explicitly named internal view. Item
+   padding keeps the spacing painted instead of leaving a transparent gutter
+   around the list. */
+QComboBox QAbstractItemView,
+QAbstractItemView#fontFamilyPopup,
+QFrame#settingsSection QAbstractItemView#fontFamilyPopup {
+    background-color: #121512;
     color: #a8c3b5;
     border: 1px solid #315140;
     selection-background-color: #1d3d2d;
     selection-color: #e1f4ea;
     outline: 0;
+}
+QComboBox QAbstractItemView::viewport,
+QAbstractItemView#fontFamilyPopup::viewport,
+QFrame#settingsSection QAbstractItemView#fontFamilyPopup::viewport {
+    background-color: #121512;
+}
+QComboBox QAbstractItemView::item,
+QAbstractItemView#fontFamilyPopup::item,
+QFrame#settingsSection QAbstractItemView#fontFamilyPopup::item {
+    background-color: #121512;
+    color: #a8c3b5;
     padding: 3px;
+}
+QComboBox QAbstractItemView::item:selected,
+QAbstractItemView#fontFamilyPopup::item:selected,
+QFrame#settingsSection QAbstractItemView#fontFamilyPopup::item:selected {
+    background-color: #1d3d2d;
+    color: #e1f4ea;
 }
 
 /* The gallery uses the shared dialog shell with dense selectable cards. */

@@ -2482,6 +2482,7 @@ void MainWindow::openSettings() {
     QSettings s;
 
     auto *fontBox = new QFontComboBox(&dlg);
+    fontBox->view()->setObjectName(QStringLiteral("fontFamilyPopup"));
     fontBox->setFontFilters(QFontComboBox::AllFonts);
     fontBox->setEditable(false);
     fontBox->setCurrentFont(m_editor->font());

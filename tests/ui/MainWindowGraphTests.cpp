@@ -4,6 +4,7 @@
 #include "ui/MainWindow.h"
 #include "ui/MarkdownEditor.h"
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -12,11 +13,14 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFontComboBox>
 #include <QFrame>
+#include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -38,6 +42,20 @@ void check(bool condition, const QString &message) {
     return;
   QTextStream(stderr) << "FAIL: " << message << '\n';
   ++failures;
+}
+
+bool widgetRendersOpaque(QWidget *widget) {
+  if (!widget || widget->size().isEmpty())
+    return false;
+  const QImage image =
+      widget->grab().toImage().convertToFormat(QImage::Format_ARGB32);
+  for (int y = 0; y < image.height(); ++y) {
+    const auto *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+    for (int x = 0; x < image.width(); ++x)
+      if (qAlpha(line[x]) != 255)
+        return false;
+  }
+  return true;
 }
 
 bool writeFile(const QString &path, const QString &content) {
@@ -241,6 +259,9 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   const int topLevels = QApplication::topLevelWidgets().size();
   bool settingsGraphControlsSeen = false;
   bool spellingControlsSeen = false;
+  bool spellingLanguagePopupOpaque = false;
+  bool spellingLanguagePopupFrameOpaque = false;
+  bool fontPopupOpaque = false;
   bool spellingManagerSeen = false;
   QTimer::singleShot(0, [&] {
     auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
@@ -259,6 +280,7 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     auto *manageLanguages = dialog ? dialog->findChild<QPushButton *>(
                                          QStringLiteral("manageSpellLanguages"))
                                    : nullptr;
+    auto *fontFamily = dialog ? dialog->findChild<QFontComboBox *>() : nullptr;
     const QString settingsScreenshot =
         QString::fromLocal8Bit(qgetenv("EMERALD_TEST_SETTINGS_SCREENSHOT"));
     if (dialog && !settingsScreenshot.isEmpty()) {
@@ -270,6 +292,45 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
                            spellEnabled->isChecked() &&
                            spellLanguage->currentData() ==
                                QStringLiteral("en_US");
+    if (spellLanguage) {
+      // Exercise an unselected row: selected rows have their own fill and
+      // could hide a transparent popup viewport regression.
+      spellLanguage->addItem(QStringLiteral("Test language"),
+                             QStringLiteral("test_TEST"));
+      spellLanguage->showPopup();
+      QApplication::processEvents();
+      QAbstractItemView *popup = spellLanguage->view();
+      QWidget *viewport = popup ? popup->viewport() : nullptr;
+      spellingLanguagePopupFrameOpaque =
+          popup && widgetRendersOpaque(popup->window());
+      const QModelIndex testIndex =
+          spellLanguage->model()->index(spellLanguage->count() - 1, 0);
+      const QRect testRow = popup ? popup->visualRect(testIndex) : QRect();
+      if (viewport && testRow.isValid() && !testRow.isEmpty()) {
+        QImage rendered(viewport->size(), QImage::Format_ARGB32_Premultiplied);
+        rendered.fill(Qt::transparent);
+        QPainter painter(&rendered);
+        viewport->render(&painter);
+        painter.end();
+        const QPoint sample(qMax(testRow.left(), testRow.right() - 6),
+                            testRow.center().y());
+        if (rendered.rect().contains(sample)) {
+          const QColor color = rendered.pixelColor(sample);
+          spellingLanguagePopupOpaque =
+              color.alpha() == 255 &&
+              color == QColor(QStringLiteral("#121512"));
+        }
+      }
+      spellLanguage->hidePopup();
+      spellLanguage->removeItem(spellLanguage->count() - 1);
+    }
+    if (fontFamily) {
+      fontFamily->showPopup();
+      QApplication::processEvents();
+      QAbstractItemView *fontPopup = fontFamily->view();
+      fontPopupOpaque = fontPopup && widgetRendersOpaque(fontPopup->window());
+      fontFamily->hidePopup();
+    }
     if (manageLanguages) {
       QTimer::singleShot(0, [&spellingManagerSeen] {
         auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
@@ -302,6 +363,13 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   check(spellingControlsSeen,
         QStringLiteral("Settings exposes enabled bundled-English spelling and "
                        "the optional-language manager"));
+  check(spellingLanguagePopupOpaque,
+        QStringLiteral("the spelling language popup paints unselected rows "
+                       "with an opaque background"));
+  check(spellingLanguagePopupFrameOpaque,
+        QStringLiteral("the spelling language popup paints an opaque frame"));
+  check(fontPopupOpaque,
+        QStringLiteral("the font-family popup is fully opaque"));
   check(spellingManagerSeen,
         QStringLiteral("language manager lists bundled and optional packs"));
   check(waitUntil(
