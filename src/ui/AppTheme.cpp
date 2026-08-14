@@ -2,13 +2,23 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QHash>
 #include <QRegularExpression>
+#include <QSettings>
+#include <QUuid>
+#include <QVariantList>
 
 #include <algorithm>
 #include <iterator>
+#include <optional>
 
 namespace {
 AppTheme::Id activeTheme = AppTheme::Id::Dark;
+QString activeThemeKey = QStringLiteral("dark");
+std::optional<AppTheme::CustomTheme> activeCustomTheme;
+QHash<QRgb, QColor> activeColorCache;
+
+const QString customThemesSetting = QStringLiteral("customThemes");
 
 struct ColorPair {
     QRgb dark;
@@ -93,30 +103,153 @@ QColor mappedColor(const QColor &reference, AppTheme::Id theme) {
     }
     return reference;
 }
-} // namespace
 
-namespace AppTheme {
-
-Id current() { return activeTheme; }
-
-Id fromKey(const QString &value) {
-    return value.compare(QStringLiteral("light"), Qt::CaseInsensitive) == 0
-               ? Id::Light
-               : Id::Dark;
+const QList<AppTheme::ColorRole> &roles() {
+    static const QList<AppTheme::ColorRole> value = {
+        {QStringLiteral("background"), QStringLiteral("Note background"),
+         QColor(QStringLiteral("#17181b"))},
+        {QStringLiteral("sidebar"), QStringLiteral("Sidebar background"),
+         QColor(QStringLiteral("#101113"))},
+        {QStringLiteral("surface"), QStringLiteral("Panels and menus"),
+         QColor(QStringLiteral("#121512"))},
+        {QStringLiteral("field"), QStringLiteral("Fields and buttons"),
+         QColor(QStringLiteral("#1b1f1c"))},
+        {QStringLiteral("border"), QStringLiteral("Borders"),
+         QColor(QStringLiteral("#315140"))},
+        {QStringLiteral("text"), QStringLiteral("Main text"),
+         QColor(QStringLiteral("#d7eee2"))},
+        {QStringLiteral("muted"), QStringLiteral("Muted text"),
+         QColor(QStringLiteral("#789384"))},
+        {QStringLiteral("accent"), QStringLiteral("Accent and links"),
+         QColor(QStringLiteral("#2bbf74"))},
+        {QStringLiteral("selection"), QStringLiteral("Selection"),
+         QColor(QStringLiteral("#1f4a33"))},
+        {QStringLiteral("code"), QStringLiteral("Code and math"),
+         QColor(QStringLiteral("#7ee0b0"))},
+        {QStringLiteral("quote"), QStringLiteral("Quotes"),
+         QColor(QStringLiteral("#92b3a2"))},
+        {QStringLiteral("warning"), QStringLiteral("Warnings"),
+         QColor(QStringLiteral("#f0a34a"))},
+        {QStringLiteral("error"), QStringLiteral("Errors"),
+         QColor(QStringLiteral("#ef6b73"))},
+    };
+    return value;
 }
 
-QString key(Id id) {
-    return id == Id::Light ? QStringLiteral("light")
-                           : QStringLiteral("dark");
+QList<AppTheme::CustomTheme> readCustomThemes() {
+    QList<AppTheme::CustomTheme> result;
+    const QVariantList stored = QSettings().value(customThemesSetting).toList();
+    for (const QVariant &entry : stored) {
+        const QVariantMap data = entry.toMap();
+        AppTheme::CustomTheme theme;
+        theme.key = data.value(QStringLiteral("key")).toString();
+        theme.name = data.value(QStringLiteral("name")).toString().trimmed();
+        theme.base = data.value(QStringLiteral("base")).toString() ==
+                             QLatin1String("light")
+                         ? AppTheme::Id::Light
+                         : AppTheme::Id::Dark;
+        const QVariantMap storedColors =
+            data.value(QStringLiteral("colors")).toMap();
+        for (const AppTheme::ColorRole &role : roles()) {
+            QColor value(storedColors.value(role.key).toString());
+            if (!value.isValid())
+                value = mappedColor(role.darkReference, theme.base);
+            theme.colors.insert(role.key, value);
+        }
+        if (theme.key.startsWith(QLatin1String("custom:")) &&
+            !theme.name.isEmpty())
+            result.append(theme);
+    }
+    return result;
 }
 
-QColor color(const QColor &darkReference) {
-    return mappedColor(darkReference, activeTheme);
+void writeCustomThemes(const QList<AppTheme::CustomTheme> &themes) {
+    QVariantList stored;
+    stored.reserve(themes.size());
+    for (const AppTheme::CustomTheme &theme : themes) {
+        QVariantMap colors;
+        for (const AppTheme::ColorRole &role : roles())
+            colors.insert(role.key,
+                          theme.colors.value(role.key).name(QColor::HexRgb));
+        QVariantMap data;
+        data.insert(QStringLiteral("key"), theme.key);
+        data.insert(QStringLiteral("name"), theme.name.trimmed());
+        data.insert(QStringLiteral("base"),
+                    theme.base == AppTheme::Id::Light
+                        ? QStringLiteral("light")
+                        : QStringLiteral("dark"));
+        data.insert(QStringLiteral("colors"), colors);
+        stored.append(data);
+    }
+    QSettings settings;
+    settings.setValue(customThemesSetting, stored);
+    settings.sync();
 }
 
-QPalette palette(Id id) {
-    const auto themed = [id](const char *hex) {
-        return mappedColor(QColor(QString::fromLatin1(hex)), id);
+std::optional<AppTheme::CustomTheme> findCustomTheme(const QString &key) {
+    if (activeCustomTheme && activeCustomTheme->key == key)
+        return activeCustomTheme;
+    const QList<AppTheme::CustomTheme> stored = readCustomThemes();
+    const auto match = std::find_if(
+        stored.cbegin(), stored.cend(),
+        [&key](const AppTheme::CustomTheme &theme) { return theme.key == key; });
+    if (match == stored.cend())
+        return std::nullopt;
+    return *match;
+}
+
+int colorDistanceSquared(const QColor &first, const QColor &second) {
+    const int red = first.red() - second.red();
+    const int green = first.green() - second.green();
+    const int blue = first.blue() - second.blue();
+    return red * red + green * green + blue * blue;
+}
+
+QColor mappedCustomColor(const QColor &reference,
+                         const AppTheme::CustomTheme &theme) {
+    if (!reference.isValid())
+        return reference;
+
+    // Every stylesheet and custom-painter color originates in the canonical
+    // dark palette. Associate it with the nearest user-facing semantic role,
+    // then retain its offset from that role in the selected base palette. A
+    // dozen editable colors can therefore preserve all the small hover,
+    // border, and typography shade differences used throughout the app.
+    const AppTheme::ColorRole *nearest = &roles().first();
+    int nearestDistance = colorDistanceSquared(reference, nearest->darkReference);
+    for (const AppTheme::ColorRole &role : roles()) {
+        const int distance = colorDistanceSquared(reference, role.darkReference);
+        if (distance < nearestDistance) {
+            nearest = &role;
+            nearestDistance = distance;
+        }
+    }
+
+    const QColor baseReference = mappedColor(reference, theme.base);
+    const QColor baseAnchor = mappedColor(nearest->darkReference, theme.base);
+    const QColor chosen = theme.colors.value(nearest->key, baseAnchor);
+    QColor result(qBound(0, chosen.red() + baseReference.red() - baseAnchor.red(),
+                         255),
+                  qBound(0, chosen.green() + baseReference.green() -
+                                  baseAnchor.green(),
+                         255),
+                  qBound(0, chosen.blue() + baseReference.blue() -
+                                 baseAnchor.blue(),
+                         255),
+                  reference.alpha());
+    return result;
+}
+
+QColor mappedForTheme(const QColor &reference, AppTheme::Id id,
+                      const std::optional<AppTheme::CustomTheme> &custom) {
+    return custom ? mappedCustomColor(reference, *custom)
+                  : mappedColor(reference, id);
+}
+
+QPalette makePalette(AppTheme::Id id,
+                     const std::optional<AppTheme::CustomTheme> &custom) {
+    const auto themed = [id, &custom](const char *hex) {
+        return mappedForTheme(QColor(QString::fromLatin1(hex)), id, custom);
     };
     QPalette result;
     result.setColor(QPalette::Window, themed("#17181b"));
@@ -132,8 +265,7 @@ QPalette palette(Id id) {
     result.setColor(QPalette::ToolTipBase, themed("#121512"));
     result.setColor(QPalette::ToolTipText, themed("#d7eee2"));
     result.setColor(QPalette::PlaceholderText, themed("#4f6555"));
-    result.setColor(QPalette::Disabled, QPalette::Text,
-                    themed("#4f6559"));
+    result.setColor(QPalette::Disabled, QPalette::Text, themed("#4f6559"));
     result.setColor(QPalette::Disabled, QPalette::WindowText,
                     themed("#4f6559"));
     result.setColor(QPalette::Disabled, QPalette::ButtonText,
@@ -141,12 +273,13 @@ QPalette palette(Id id) {
     return result;
 }
 
-QString styleSheet(Id id) {
+QString makeStyleSheet(AppTheme::Id id,
+                       const std::optional<AppTheme::CustomTheme> &custom) {
     QFile source(QStringLiteral(":/emerald.qss"));
     if (!source.open(QIODevice::ReadOnly))
         return {};
     const QString darkStyle = QString::fromUtf8(source.readAll());
-    if (id == Id::Dark)
+    if (id == AppTheme::Id::Dark && !custom)
         return darkStyle;
 
     static const QRegularExpression hexColor(
@@ -158,19 +291,187 @@ QString styleSheet(Id id) {
     while (matches.hasNext()) {
         const QRegularExpressionMatch match = matches.next();
         result += darkStyle.sliced(copied, match.capturedStart() - copied);
-        result += mappedColor(QColor(match.captured()), id).name();
+        result += mappedForTheme(QColor(match.captured()), id, custom).name();
         copied = match.capturedEnd();
     }
     result += darkStyle.sliced(copied);
-    result.replace(QStringLiteral("rgba(16, 17, 19, 205)"),
-                   QStringLiteral("rgba(255, 255, 255, 225)"));
+
+    if (id == AppTheme::Id::Light && !custom) {
+        result.replace(QStringLiteral("rgba(16, 17, 19, 205)"),
+                       QStringLiteral("rgba(255, 255, 255, 225)"));
+    } else if (custom) {
+        const QColor overlay =
+            mappedCustomColor(QColor(16, 17, 19, 205), *custom);
+        result.replace(
+            QStringLiteral("rgba(16, 17, 19, 205)"),
+            QStringLiteral("rgba(%1, %2, %3, %4)")
+                .arg(overlay.red())
+                .arg(overlay.green())
+                .arg(overlay.blue())
+                .arg(overlay.alpha()));
+    }
     return result;
+}
+} // namespace
+
+namespace AppTheme {
+
+Id current() { return activeTheme; }
+
+QString currentKey() { return activeThemeKey; }
+
+Id fromKey(const QString &value) {
+    if (value.compare(QStringLiteral("light"), Qt::CaseInsensitive) == 0)
+        return Id::Light;
+    if (const auto custom = findCustomTheme(value))
+        return custom->base;
+    return Id::Dark;
+}
+
+QString key(Id id) {
+    return id == Id::Light ? QStringLiteral("light")
+                           : QStringLiteral("dark");
+}
+
+bool isAvailable(const QString &value) {
+    return value == QLatin1String("dark") || value == QLatin1String("light") ||
+           findCustomTheme(value).has_value();
+}
+
+bool isCustom(const QString &value) {
+    return value.startsWith(QLatin1String("custom:")) &&
+           findCustomTheme(value).has_value();
+}
+
+QString displayName(const QString &value) {
+    if (value == QLatin1String("dark"))
+        return QStringLiteral("Emerald Dark");
+    if (value == QLatin1String("light"))
+        return QStringLiteral("Emerald Light");
+    if (const auto custom = findCustomTheme(value))
+        return custom->name;
+    return QStringLiteral("Emerald Dark");
+}
+
+QList<ColorRole> colorRoles() { return roles(); }
+
+QList<CustomTheme> customThemes() { return readCustomThemes(); }
+
+CustomTheme customTheme(const QString &value) {
+    if (const auto custom = findCustomTheme(value))
+        return *custom;
+    return {};
+}
+
+CustomTheme makeCustomTheme(const QString &name, const QString &basedOnKey) {
+    CustomTheme theme;
+    theme.key = QStringLiteral("custom:") +
+                QUuid::createUuid().toString(QUuid::WithoutBraces);
+    theme.name = name.trimmed();
+    theme.base = fromKey(basedOnKey);
+    const std::optional<CustomTheme> basedOn = findCustomTheme(basedOnKey);
+    for (const ColorRole &role : roles())
+        theme.colors.insert(
+            role.key,
+            mappedForTheme(role.darkReference, theme.base, basedOn));
+    return theme;
+}
+
+void saveCustomTheme(const CustomTheme &theme) {
+    if (!theme.isValid() || !theme.key.startsWith(QLatin1String("custom:")))
+        return;
+    QList<CustomTheme> stored = readCustomThemes();
+    const auto match = std::find_if(
+        stored.begin(), stored.end(), [&theme](const CustomTheme &candidate) {
+            return candidate.key == theme.key;
+        });
+    if (match == stored.end())
+        stored.append(theme);
+    else
+        *match = theme;
+    writeCustomThemes(stored);
+    if (activeThemeKey == theme.key) {
+        activeCustomTheme = theme;
+        activeColorCache.clear();
+    }
+}
+
+bool deleteCustomTheme(const QString &value) {
+    QList<CustomTheme> stored = readCustomThemes();
+    const qsizetype before = stored.size();
+    stored.erase(std::remove_if(stored.begin(), stored.end(),
+                                [&value](const CustomTheme &theme) {
+                                    return theme.key == value;
+                                }),
+                 stored.end());
+    if (stored.size() == before)
+        return false;
+    writeCustomThemes(stored);
+    QSettings settings;
+    if (settings.value(QStringLiteral("theme")).toString() == value)
+        settings.setValue(QStringLiteral("theme"), QStringLiteral("dark"));
+    if (activeThemeKey == value) {
+        activeThemeKey = QStringLiteral("dark");
+        activeTheme = Id::Dark;
+        activeCustomTheme.reset();
+        activeColorCache.clear();
+    }
+    return true;
+}
+
+QColor color(const QColor &darkReference) {
+    if (!activeCustomTheme)
+        return mappedColor(darkReference, activeTheme);
+    const QRgb cacheKey = darkReference.rgba();
+    const auto cached = activeColorCache.constFind(cacheKey);
+    if (cached != activeColorCache.cend())
+        return *cached;
+    const QColor result = mappedCustomColor(darkReference, *activeCustomTheme);
+    activeColorCache.insert(cacheKey, result);
+    return result;
+}
+
+QPalette palette(Id id) {
+    return makePalette(id, std::nullopt);
+}
+
+QPalette palette(const QString &value) {
+    const std::optional<CustomTheme> custom = findCustomTheme(value);
+    return makePalette(custom ? custom->base : fromKey(value), custom);
+}
+
+QString styleSheet(Id id) {
+    return makeStyleSheet(id, std::nullopt);
+}
+
+QString styleSheet(const QString &value) {
+    const std::optional<CustomTheme> custom = findCustomTheme(value);
+    return makeStyleSheet(custom ? custom->base : fromKey(value), custom);
 }
 
 void apply(QApplication &application, Id id) {
     activeTheme = id;
+    activeThemeKey = key(id);
+    activeCustomTheme.reset();
+    activeColorCache.clear();
     application.setPalette(palette(id));
     application.setStyleSheet(styleSheet(id));
+}
+
+void apply(QApplication &application, const QString &value) {
+    const std::optional<CustomTheme> custom = findCustomTheme(value);
+    if (!custom) {
+        apply(application, value == QLatin1String("light") ? Id::Light
+                                                            : Id::Dark);
+        return;
+    }
+    activeTheme = custom->base;
+    activeThemeKey = custom->key;
+    activeCustomTheme = custom;
+    activeColorCache.clear();
+    application.setPalette(makePalette(activeTheme, activeCustomTheme));
+    application.setStyleSheet(
+        makeStyleSheet(activeTheme, activeCustomTheme));
 }
 
 } // namespace AppTheme

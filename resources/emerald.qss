@@ -503,6 +503,10 @@ QLabel#settingsFieldLabel {
     color: #9fbaac;
     font-size: 12px;
 }
+QLabel#themeNameError {
+    color: #ef6b73;
+    font-size: 12px;
+}
 QDialog QComboBox,
 QDialog QAbstractSpinBox,
 QDialog QLineEdit {
@@ -563,6 +567,11 @@ QDialog QPushButton:hover {
 QDialog QPushButton:pressed {
     background: #18221d;
 }
+QDialog QPushButton[themeColorRole="true"]:checked {
+    background: #1d3d2d;
+    color: #e1f4ea;
+    border-color: #39bd79;
+}
 QDialog QPushButton:disabled {
     background: #171b18;
     color: #4f6257;
@@ -603,6 +612,25 @@ QDialog QProgressBar {
 QDialog QProgressBar::chunk {
     background: #39bd79;
     border-radius: 3px;
+}
+QDialog QSlider::groove:horizontal {
+    background: #263c31;
+    height: 5px;
+    border-radius: 2px;
+}
+QDialog QSlider::sub-page:horizontal {
+    background: #2bbf74;
+    border-radius: 2px;
+}
+QDialog QSlider::handle:horizontal {
+    background: #39bd79;
+    border: 1px solid #237349;
+    width: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+QDialog QSlider::handle:horizontal:hover {
+    background: #56cf8c;
 }
 
 /* System-style dialogs still receive Emerald's compact content treatment. */

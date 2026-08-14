@@ -28,7 +28,9 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QSlider>
 #include <QTemporaryDir>
+#include <QTextBrowser>
 #include <QTextStream>
 #include <QThread>
 #include <QTimer>
@@ -759,6 +761,193 @@ void testThemePreference() {
   settings.clear();
   AppTheme::apply(*qApp, AppTheme::Id::Dark);
 }
+
+void testCustomThemes() {
+  QSettings settings;
+  settings.clear();
+  AppTheme::apply(*qApp, AppTheme::Id::Dark);
+
+  AppTheme::CustomTheme stored = AppTheme::makeCustomTheme(
+      QStringLiteral("Ocean Ink"), QStringLiteral("dark"));
+  stored.colors[QStringLiteral("background")] = QColor("#182638");
+  stored.colors[QStringLiteral("accent")] = QColor("#48a9e6");
+  stored.colors[QStringLiteral("text")] = QColor("#e8f2ff");
+  AppTheme::saveCustomTheme(stored);
+  check(AppTheme::customThemes().size() == 1 &&
+            AppTheme::isAvailable(stored.key) &&
+            AppTheme::displayName(stored.key) == QStringLiteral("Ocean Ink"),
+        QStringLiteral("named custom themes persist in application settings"));
+
+  AppTheme::apply(*qApp, stored.key);
+  check(AppTheme::currentKey() == stored.key &&
+            qApp->palette().color(QPalette::Base) == QColor("#182638") &&
+            AppTheme::color(QColor("#2bbf74")) == QColor("#48a9e6") &&
+            qApp->styleSheet().contains(QStringLiteral("#182638")),
+        QStringLiteral("custom semantic colors reach the palette, stylesheet, "
+                       "and custom painters"));
+
+  AppTheme::apply(*qApp, AppTheme::Id::Dark);
+  bool editorSeen = false;
+  bool slidersSeen = false;
+  bool isolatedPreviewSeen = false;
+  bool customAddedToSelector = false;
+  QString createdKey;
+  {
+    MainWindow window;
+    window.resize(1100, 760);
+    window.show();
+    check(waitUntil([&window] { return window.isVisible(); }),
+          QStringLiteral("custom-theme test window becomes visible"));
+    auto *settingsAction =
+        window.findChild<QAction *>(QStringLiteral("settingsAction"));
+
+    QTimer::singleShot(0, [&] {
+      auto *settingsDialog =
+          qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *themeBox = settingsDialog
+                           ? settingsDialog->findChild<QComboBox *>(
+                                 QStringLiteral("appTheme"))
+                           : nullptr;
+      auto *create = settingsDialog
+                         ? settingsDialog->findChild<QPushButton *>(
+                               QStringLiteral("createCustomTheme"))
+                         : nullptr;
+      auto *remove = settingsDialog
+                         ? settingsDialog->findChild<QPushButton *>(
+                               QStringLiteral("deleteCustomTheme"))
+                         : nullptr;
+      check(themeBox && themeBox->count() == 3 && create && remove &&
+                !remove->isEnabled(),
+            QStringLiteral("Settings lists stored custom themes and protects "
+                           "bundled themes from deletion"));
+      if (!create) {
+        if (settingsDialog)
+          settingsDialog->reject();
+        return;
+      }
+
+      QTimer::singleShot(0, [&] {
+        auto *editorDialog =
+            qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        auto *name = editorDialog
+                         ? editorDialog->findChild<QLineEdit *>(
+                               QStringLiteral("customThemeName"))
+                         : nullptr;
+        auto *hue = editorDialog
+                        ? editorDialog->findChild<QSlider *>(
+                              QStringLiteral("themeHue"))
+                        : nullptr;
+        auto *saturation = editorDialog
+                               ? editorDialog->findChild<QSlider *>(
+                                     QStringLiteral("themeSaturation"))
+                               : nullptr;
+        auto *lightness = editorDialog
+                              ? editorDialog->findChild<QSlider *>(
+                                    QStringLiteral("themeLightness"))
+                              : nullptr;
+        auto *preview = editorDialog
+                            ? editorDialog->findChild<QTextBrowser *>(
+                                  QStringLiteral("themePreviewNote"))
+                            : nullptr;
+        editorSeen = editorDialog &&
+                     editorDialog->objectName() ==
+                         QStringLiteral("themeEditorDialog") &&
+                     preview &&
+                     preview->toPlainText().contains(
+                         QStringLiteral("external link"));
+        slidersSeen = hue && saturation && lightness;
+        const QString applicationThemeBefore = AppTheme::currentKey();
+        const QColor applicationBaseBefore =
+            qApp->palette().color(QPalette::Base);
+        const QString applicationStyleBefore = qApp->styleSheet();
+        const QString previewStyleBefore =
+            preview ? preview->styleSheet() : QString();
+        const QString screenshot = QString::fromLocal8Bit(
+            qgetenv("EMERALD_TEST_CUSTOM_THEME_SCREENSHOT"));
+        if (editorDialog && !screenshot.isEmpty())
+          editorDialog->grab().save(screenshot);
+        if (name)
+          name->setText(QStringLiteral("Sunset Draft"));
+        if (hue)
+          hue->setValue((hue->value() + 45) % 360);
+
+        QTimer::singleShot(
+            60, [&, applicationThemeBefore, applicationBaseBefore,
+                 applicationStyleBefore, previewStyleBefore] {
+              auto *activeEditor =
+                  qobject_cast<QDialog *>(QApplication::activeModalWidget());
+              auto *activePreview =
+                  activeEditor
+                      ? activeEditor->findChild<QTextBrowser *>(
+                            QStringLiteral("themePreviewNote"))
+                      : nullptr;
+              isolatedPreviewSeen =
+                  activePreview &&
+                  activePreview->styleSheet() != previewStyleBefore &&
+                  AppTheme::currentKey() == applicationThemeBefore &&
+                  qApp->palette().color(QPalette::Base) ==
+                      applicationBaseBefore &&
+                  qApp->styleSheet() == applicationStyleBefore;
+              if (auto *save =
+                      activeEditor
+                          ? activeEditor->findChild<QPushButton *>(
+                                QStringLiteral("saveCustomTheme"))
+                          : nullptr)
+                save->click();
+              else if (activeEditor)
+                activeEditor->reject();
+            });
+      });
+      create->click();
+
+      createdKey = themeBox ? themeBox->currentData().toString() : QString();
+      customAddedToSelector =
+          themeBox && themeBox->count() == 4 &&
+          themeBox->currentText() == QStringLiteral("Sunset Draft") &&
+          createdKey.startsWith(QStringLiteral("custom:")) &&
+          createdKey != stored.key && remove->isEnabled();
+      if (settingsDialog)
+        settingsDialog->accept();
+    });
+    if (settingsAction)
+      settingsAction->trigger();
+
+    check(editorSeen,
+          QStringLiteral("Create your theme opens a representative test note"));
+    check(slidersSeen,
+          QStringLiteral("theme editor exposes live hue, saturation, and "
+                         "lightness controls"));
+    check(isolatedPreviewSeen,
+          QStringLiteral("theme slider changes stay inside the test note until "
+                         "the theme is saved"));
+    check(customAddedToSelector &&
+              settings.value(QStringLiteral("theme")).toString() == createdKey,
+          QStringLiteral("saving a named theme adds and selects it in Settings"));
+    window.close();
+    QApplication::processEvents();
+  }
+
+  AppTheme::apply(*qApp, AppTheme::Id::Dark);
+  {
+    MainWindow restored;
+    restored.show();
+    check(waitUntil([&restored] { return restored.isVisible(); }) &&
+              AppTheme::currentKey() == createdKey,
+          QStringLiteral("a selected custom theme is restored on startup"));
+    restored.close();
+    QApplication::processEvents();
+  }
+
+  check(AppTheme::deleteCustomTheme(createdKey) &&
+            !AppTheme::isAvailable(createdKey) &&
+            settings.value(QStringLiteral("theme")).toString() ==
+                QStringLiteral("dark"),
+        QStringLiteral("custom themes can be deleted and a stale selection "
+                       "falls back safely"));
+  AppTheme::deleteCustomTheme(stored.key);
+  settings.clear();
+  AppTheme::apply(*qApp, AppTheme::Id::Dark);
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -778,6 +967,7 @@ int main(int argc, char **argv) {
   testInPaneGraphNavigation(settingsDir.path());
   testFullWidthEditorPreference();
   testThemePreference();
+  testCustomThemes();
   if (failures == 0)
     QTextStream(stdout) << "All MainWindow graph tests passed.\n";
   return failures == 0 ? 0 : 1;

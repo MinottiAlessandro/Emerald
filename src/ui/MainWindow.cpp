@@ -7,6 +7,7 @@
 #include "MascotCatalog.h"
 #include "SearchPopup.h"
 #include "SpellLanguageDialog.h"
+#include "ThemeEditorDialog.h"
 #include "Updater.h"
 #include "core/LegacyMascotMigration.h"
 #include "core/MascotSeed.h"
@@ -66,6 +67,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QResizeEvent>
 #include <QTextCursor>
@@ -2153,9 +2155,13 @@ void MainWindow::buildActions() {
 
 void MainWindow::loadSettings() {
     QSettings s;
-    const AppTheme::Id savedTheme = AppTheme::fromKey(
-        s.value(QStringLiteral("theme"), QStringLiteral("dark")).toString());
-    if (AppTheme::current() != savedTheme) {
+    QString savedTheme =
+        s.value(QStringLiteral("theme"), QStringLiteral("dark")).toString();
+    if (!AppTheme::isAvailable(savedTheme)) {
+        savedTheme = QStringLiteral("dark");
+        s.setValue(QStringLiteral("theme"), savedTheme);
+    }
+    if (AppTheme::currentKey() != savedTheme) {
         AppTheme::apply(*qApp, savedTheme);
         refreshThemeUi();
     }
@@ -2513,12 +2519,50 @@ void MainWindow::openSettings() {
 
     QSettings s;
 
-    auto *themeBox = new QComboBox(&dlg);
+    auto *themeWidget = new QWidget(&dlg);
+    auto *themeLayout = new QVBoxLayout(themeWidget);
+    themeLayout->setContentsMargins(0, 0, 0, 0);
+    themeLayout->setSpacing(8);
+    auto *themeBox = new QComboBox(themeWidget);
     themeBox->setObjectName(QStringLiteral("appTheme"));
-    themeBox->addItem(tr("Emerald Dark"), QStringLiteral("dark"));
-    themeBox->addItem(tr("Emerald Light"), QStringLiteral("light"));
-    const int themeIndex = themeBox->findData(AppTheme::key(AppTheme::current()));
-    themeBox->setCurrentIndex(qMax(0, themeIndex));
+    auto *themeActions = new QWidget(themeWidget);
+    auto *themeActionsLayout = new QHBoxLayout(themeActions);
+    themeActionsLayout->setContentsMargins(0, 0, 0, 0);
+    themeActionsLayout->setSpacing(8);
+    auto *createThemeButton =
+        new QPushButton(tr("Create your theme…"), themeActions);
+    createThemeButton->setObjectName(QStringLiteral("createCustomTheme"));
+    auto *deleteThemeButton = new QPushButton(tr("Delete"), themeActions);
+    deleteThemeButton->setObjectName(QStringLiteral("deleteCustomTheme"));
+    deleteThemeButton->setProperty("dialogRole", QStringLiteral("destructive"));
+    themeActionsLayout->addWidget(createThemeButton);
+    themeActionsLayout->addWidget(deleteThemeButton);
+    themeActionsLayout->addStretch();
+    themeLayout->addWidget(themeBox);
+    themeLayout->addWidget(themeActions);
+
+    auto populateThemes = [themeBox, deleteThemeButton](
+                              const QString &selectedKey) {
+        const QSignalBlocker blocker(themeBox);
+        themeBox->clear();
+        themeBox->addItem(QCoreApplication::translate("MainWindow",
+                                                       "Emerald Dark"),
+                          QStringLiteral("dark"));
+        themeBox->addItem(QCoreApplication::translate("MainWindow",
+                                                       "Emerald Light"),
+                          QStringLiteral("light"));
+        for (const AppTheme::CustomTheme &theme : AppTheme::customThemes())
+            themeBox->addItem(theme.name, theme.key);
+        int index = themeBox->findData(selectedKey);
+        if (index < 0)
+            index = 0;
+        themeBox->setCurrentIndex(index);
+        deleteThemeButton->setEnabled(AppTheme::isCustom(
+            themeBox->currentData().toString()));
+    };
+    populateThemes(AppTheme::currentKey());
+    deleteThemeButton->setEnabled(
+        AppTheme::isCustom(themeBox->currentData().toString()));
 
     auto *fontBox = new QFontComboBox(&dlg);
     fontBox->view()->setObjectName(QStringLiteral("fontFamilyPopup"));
@@ -2689,7 +2733,7 @@ void MainWindow::openSettings() {
 
     auto *appearanceForm = addSection(
         tr("Appearance"), tr("Choose the palette used throughout Emerald."));
-    addSettingRow(appearanceForm, tr("Theme"), themeBox);
+    addSettingRow(appearanceForm, tr("Theme"), themeWidget);
 
     auto *editorForm =
         addSection(tr("Editor"), tr("Reading comfort and writing column size."));
@@ -2772,9 +2816,8 @@ void MainWindow::openSettings() {
             previewEditor);
 
     auto previewTheme = [this, themeBox, applyEditorPreview] {
-        const AppTheme::Id selected =
-            AppTheme::fromKey(themeBox->currentData().toString());
-        if (selected == AppTheme::current())
+        const QString selected = themeBox->currentData().toString();
+        if (selected == AppTheme::currentKey())
             return;
 
         // QApplication::setStyleSheet() repolishes every widget and can reset
@@ -2793,12 +2836,59 @@ void MainWindow::openSettings() {
     };
     connect(themeBox, qOverload<int>(&QComboBox::currentIndexChanged), &dlg,
             previewTheme);
+    connect(themeBox, qOverload<int>(&QComboBox::currentIndexChanged), &dlg,
+            [themeBox, deleteThemeButton] {
+                deleteThemeButton->setEnabled(
+                    AppTheme::isCustom(themeBox->currentData().toString()));
+            });
 
     const QFont originalFont = m_editor->font();
-    const AppTheme::Id originalTheme = AppTheme::current();
+    const QString originalTheme = AppTheme::currentKey();
     const int originalWidth = m_editorColumnWidth;
     const bool originalFullWidth = m_editorFullWidth;
     const int originalSpacing = s.value(QStringLiteral("lineSpacing"), 100).toInt();
+    auto restoreEditorPreview = [this, fontBox, sizeBox, fullWidthBox, widthBox,
+                                 spacingBox, applyEditorPreview] {
+        const QFont current = [&] {
+            QFont font = fontBox->currentFont();
+            font.setPointSize(sizeBox->value());
+            return font;
+        }();
+        refreshThemeUi();
+        applyEditorPreview(current, fullWidthBox->isChecked(), widthBox->value(),
+                           spacingBox->value());
+    };
+    connect(createThemeButton, &QPushButton::clicked, &dlg,
+            [this, &dlg, themeBox, populateThemes, restoreEditorPreview] {
+                const QString basedOn = themeBox->currentData().toString();
+                ThemeEditorDialog editor(basedOn, &dlg);
+                if (editor.exec() == QDialog::Accepted) {
+                    const AppTheme::CustomTheme theme = editor.theme();
+                    AppTheme::saveCustomTheme(theme);
+                    populateThemes(theme.key);
+                    AppTheme::apply(*qApp, theme.key);
+                    restoreEditorPreview();
+                }
+            });
+    connect(deleteThemeButton, &QPushButton::clicked, &dlg,
+            [this, themeBox, populateThemes, restoreEditorPreview] {
+                const QString selected = themeBox->currentData().toString();
+                if (!AppTheme::isCustom(selected))
+                    return;
+                const QString name = AppTheme::displayName(selected);
+                const QMessageBox::StandardButton answer = QMessageBox::question(
+                    themeBox, tr("Delete custom theme"),
+                    tr("Delete the custom theme “%1”? This cannot be undone.")
+                        .arg(name),
+                    QMessageBox::Yes | QMessageBox::Cancel,
+                    QMessageBox::Cancel);
+                if (answer != QMessageBox::Yes)
+                    return;
+                AppTheme::deleteCustomTheme(selected);
+                populateThemes(QStringLiteral("dark"));
+                AppTheme::apply(*qApp, AppTheme::Id::Dark);
+                restoreEditorPreview();
+            });
     bool openBrokenLinksAfterSettings = false;
     enum class GraphToOpen { None, Global, Local };
     GraphToOpen graphToOpen = GraphToOpen::None;
@@ -2825,13 +2915,12 @@ void MainWindow::openSettings() {
         m_editorColumnWidth = widthBox->value();
         applyEditorColumnWidth();
         m_editor->setLineSpacing(spacingBox->value());
-        const AppTheme::Id selectedTheme =
-            AppTheme::fromKey(themeBox->currentData().toString());
-        if (selectedTheme != AppTheme::current()) {
+        const QString selectedTheme = themeBox->currentData().toString();
+        if (selectedTheme != AppTheme::currentKey()) {
             AppTheme::apply(*qApp, selectedTheme);
             refreshThemeUi();
         }
-        s.setValue(QStringLiteral("theme"), AppTheme::key(selectedTheme));
+        s.setValue(QStringLiteral("theme"), selectedTheme);
         s.setValue(QStringLiteral("editorFontFamily"), f.family());
         s.setValue(QStringLiteral("editorFontSize"), f.pointSize());
         s.setValue(QStringLiteral("editorWidth"), widthBox->value());
@@ -2878,8 +2967,11 @@ void MainWindow::openSettings() {
             setReadMode(readModeBox->isChecked());
         }
     } else {
-        if (AppTheme::current() != originalTheme) {
-            AppTheme::apply(*qApp, originalTheme);
+        const QString restoredTheme = AppTheme::isAvailable(originalTheme)
+                                          ? originalTheme
+                                          : QStringLiteral("dark");
+        if (AppTheme::currentKey() != restoredTheme) {
+            AppTheme::apply(*qApp, restoredTheme);
             refreshThemeUi();
         }
         m_editor->applyFont(originalFont); // revert the live preview

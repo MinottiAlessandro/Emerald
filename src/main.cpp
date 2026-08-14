@@ -28,10 +28,10 @@ int main(int argc, char *argv[]) {
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/EmeraldClean.png")));
 
     const QSettings settings;
-    AppTheme::apply(
-        app, AppTheme::fromKey(
-                 settings.value(QStringLiteral("theme"),
-                                QStringLiteral("dark")).toString()));
+    AppTheme::apply(app,
+                    settings.value(QStringLiteral("theme"),
+                                   QStringLiteral("dark"))
+                        .toString());
 
     MainWindow window;
     window.resize(1100, 720);

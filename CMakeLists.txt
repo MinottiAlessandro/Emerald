@@ -129,6 +129,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/MainWindow.cpp
   src/ui/AppTheme.h
   src/ui/AppTheme.cpp
+  src/ui/ThemeEditorDialog.h
+  src/ui/ThemeEditorDialog.cpp
   src/ui/GraphView.h
   src/ui/GraphView.cpp
   src/ui/GraphPage.h
@@ -419,6 +421,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/ui/MainWindow.cpp
     src/ui/AppTheme.h
     src/ui/AppTheme.cpp
+    src/ui/ThemeEditorDialog.h
+    src/ui/ThemeEditorDialog.cpp
     src/ui/GraphView.h
     src/ui/GraphView.cpp
     src/ui/GraphPage.h
