@@ -108,10 +108,14 @@ public:
     // hints cannot remain behind the owning overlay.
     void suppressQuickJump();
 
-    // Incremental Hunspell integration. These settings are global application
-    // preferences; the selected dictionary itself remains outside every vault.
+    // Incremental Hunspell integration. Multiple selected dictionaries are
+    // checked as one stack; the dictionary files remain outside every vault.
     void setSpellCheckingEnabled(bool enabled);
     bool spellCheckingEnabled() const;
+    bool setSpellCheckingLanguages(const QStringList &locales,
+                                   QString *error = nullptr);
+    QStringList spellCheckingLanguages() const;
+    // Singular helpers retained for focused callers and compatibility.
     bool setSpellCheckingLanguage(const QString &locale,
                                   QString *error = nullptr);
     QString spellCheckingLanguage() const;

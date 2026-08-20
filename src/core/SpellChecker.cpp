@@ -183,6 +183,13 @@ QByteArray hunspellPath(const QString &path) {
 }
 } // namespace
 
+struct SpellChecker::Dictionary {
+    std::unique_ptr<Hunspell> engine;
+    QString locale;
+    QByteArray encoding;
+    QSet<QString> personalWords;
+};
+
 SpellChecker::SpellChecker(QObject *parent) : QObject(parent) {}
 
 SpellChecker::~SpellChecker() = default;
@@ -199,58 +206,91 @@ void SpellChecker::setOptions(bool ignoreWordsWithNumbers, bool ignoreAllCaps) {
 }
 
 bool SpellChecker::setLanguage(const QString &locale, QString *error) {
-    if (error)
-        error->clear();
-    const SpellLanguage *info = languageInfo(locale);
-    if (!info) {
-        if (error)
-            *error = tr("Unknown spelling language: %1").arg(locale);
-        return false;
-    }
-    if (info->builtIn && !ensureBundledEnglish(error))
-        return false;
-    if (!isLanguageInstalled(locale)) {
-        if (error)
-            *error = tr("The %1 dictionary is not installed").arg(info->name);
-        return false;
-    }
-
-    const QString dir = languageDirectory(locale);
-    const QByteArray aff = hunspellPath(dir + QLatin1Char('/') + locale +
-                                       QStringLiteral(".aff"));
-    const QByteArray dic = hunspellPath(dir + QLatin1Char('/') + locale +
-                                       QStringLiteral(".dic"));
-    try {
-        auto engine = std::make_unique<Hunspell>(aff.constData(), dic.constData());
-        const QByteArray encoding =
-            QByteArray::fromStdString(engine->get_dict_encoding()).toUpper();
-        if (encoding.isEmpty())
-            throw std::runtime_error("dictionary encoding is missing");
-        m_engine = std::move(engine);
-        m_language = locale;
-        m_encoding = encoding;
-        m_sessionIgnored.clear();
-        clearCache();
-        loadPersonalDictionary();
-        return true;
-    } catch (const std::exception &exception) {
-        if (error)
-            *error = tr("Could not load %1: %2").arg(info->name,
-                                                       QString::fromUtf8(exception.what()));
-        return false;
-    }
+    return setLanguages({locale}, error);
 }
 
-QByteArray SpellChecker::encode(const QString &word) const {
-    QByteArray normalized = m_encoding;
+bool SpellChecker::setLanguages(const QStringList &locales, QString *error) {
+    if (error)
+        error->clear();
+
+    QStringList selected;
+    selected.reserve(locales.size());
+    for (const QString &rawLocale : locales) {
+        const QString locale = rawLocale.trimmed();
+        if (!locale.isEmpty() && !selected.contains(locale))
+            selected.append(locale);
+    }
+    if (selected.isEmpty()) {
+        if (error)
+            *error = tr("Select at least one spelling language");
+        return false;
+    }
+
+    std::vector<std::unique_ptr<Dictionary>> dictionaries;
+    dictionaries.reserve(size_t(selected.size()));
+    QSet<QString> personalWords;
+    for (const QString &locale : selected) {
+        const SpellLanguage *info = languageInfo(locale);
+        if (!info) {
+            if (error)
+                *error = tr("Unknown spelling language: %1").arg(locale);
+            return false;
+        }
+        if (info->builtIn && !ensureBundledEnglish(error))
+            return false;
+        if (!isLanguageInstalled(locale)) {
+            if (error)
+                *error = tr("The %1 dictionary is not installed").arg(info->name);
+            return false;
+        }
+
+        const QString dir = languageDirectory(locale);
+        const QByteArray aff = hunspellPath(
+            dir + QLatin1Char('/') + locale + QStringLiteral(".aff"));
+        const QByteArray dic = hunspellPath(
+            dir + QLatin1Char('/') + locale + QStringLiteral(".dic"));
+        try {
+            auto dictionary = std::make_unique<Dictionary>();
+            dictionary->engine =
+                std::make_unique<Hunspell>(aff.constData(), dic.constData());
+            dictionary->locale = locale;
+            dictionary->encoding = QByteArray::fromStdString(
+                                       dictionary->engine->get_dict_encoding())
+                                       .toUpper();
+            if (dictionary->encoding.isEmpty())
+                throw std::runtime_error("dictionary encoding is missing");
+            loadPersonalDictionary(*dictionary);
+            personalWords.unite(dictionary->personalWords);
+            dictionaries.push_back(std::move(dictionary));
+        } catch (const std::exception &exception) {
+            if (error)
+                *error = tr("Could not load %1: %2")
+                             .arg(info->name,
+                                  QString::fromUtf8(exception.what()));
+            return false;
+        }
+    }
+
+    m_dictionaries = std::move(dictionaries);
+    m_languages = selected;
+    m_personalWords = std::move(personalWords);
+    m_sessionIgnored.clear();
+    clearCache();
+    return true;
+}
+
+QByteArray SpellChecker::encode(const QString &word,
+                                const QByteArray &encoding) {
+    QByteArray normalized = encoding;
     normalized.replace('-', QByteArrayView());
     if (normalized == "ISO88591" || normalized == "LATIN1")
         return word.toLatin1();
     return word.toUtf8();
 }
 
-QString SpellChecker::decode(const std::string &word) const {
-    QByteArray normalized = m_encoding;
+QString SpellChecker::decode(const std::string &word,
+                             const QByteArray &encoding) {
+    QByteArray normalized = encoding;
     normalized.replace('-', QByteArrayView());
     const QByteArray bytes = QByteArray::fromStdString(word);
     if (normalized == "ISO88591" || normalized == "LATIN1")
@@ -259,7 +299,7 @@ QString SpellChecker::decode(const std::string &word) const {
 }
 
 bool SpellChecker::isCorrect(const QString &word) const {
-    if (!m_enabled || !m_engine || word.isEmpty())
+    if (!m_enabled || m_dictionaries.empty() || word.isEmpty())
         return true;
     const QString key = word.normalized(QString::NormalizationForm_C);
     if (m_personalWords.contains(key.toCaseFolded()) ||
@@ -281,7 +321,14 @@ bool SpellChecker::isCorrect(const QString &word) const {
 
     if (const auto found = m_cache.constFind(key); found != m_cache.constEnd())
         return found.value();
-    const bool correct = m_engine->spell(encode(key).toStdString());
+    bool correct = false;
+    for (const auto &dictionary : m_dictionaries) {
+        if (dictionary->engine->spell(
+                encode(key, dictionary->encoding).toStdString())) {
+            correct = true;
+            break;
+        }
+    }
     if (m_cache.size() >= kMaximumCacheEntries)
         m_cache.clear();
     m_cache.insert(key, correct);
@@ -290,16 +337,33 @@ bool SpellChecker::isCorrect(const QString &word) const {
 
 QStringList SpellChecker::suggestions(const QString &word, int limit) const {
     QStringList result;
-    if (!m_enabled || !m_engine || word.isEmpty() || limit <= 0)
+    if (!m_enabled || m_dictionaries.empty() || word.isEmpty() || limit <= 0)
         return result;
-    const std::vector<std::string> raw =
-        m_engine->suggest(encode(word).toStdString());
-    for (const std::string &entry : raw) {
-        const QString decoded = decode(entry);
-        if (!decoded.isEmpty() && !result.contains(decoded))
-            result.append(decoded);
-        if (result.size() >= limit)
-            break;
+
+    std::vector<std::vector<std::string>> suggestionsByLanguage;
+    suggestionsByLanguage.reserve(m_dictionaries.size());
+    size_t maximumSuggestions = 0;
+    for (const auto &dictionary : m_dictionaries) {
+        suggestionsByLanguage.push_back(dictionary->engine->suggest(
+            encode(word, dictionary->encoding).toStdString()));
+        maximumSuggestions =
+            qMax(maximumSuggestions, suggestionsByLanguage.back().size());
+    }
+    // Interleave languages so the first dictionary cannot crowd every other
+    // language out of the bounded context-menu list.
+    for (size_t rank = 0;
+         rank < maximumSuggestions && result.size() < limit; ++rank) {
+        for (size_t language = 0;
+             language < suggestionsByLanguage.size() && result.size() < limit;
+             ++language) {
+            if (rank >= suggestionsByLanguage.at(language).size())
+                continue;
+            const QString decoded = decode(
+                suggestionsByLanguage.at(language).at(rank),
+                m_dictionaries.at(language)->encoding);
+            if (!decoded.isEmpty() && !result.contains(decoded))
+                result.append(decoded);
+        }
     }
     return result;
 }
@@ -307,25 +371,33 @@ QStringList SpellChecker::suggestions(const QString &word, int limit) const {
 bool SpellChecker::addToPersonalDictionary(const QString &word, QString *error) {
     if (error)
         error->clear();
-    if (!m_engine || word.trimmed().isEmpty()) {
+    if (m_dictionaries.empty() || word.trimmed().isEmpty()) {
         if (error)
             *error = tr("The spell checker is not ready for that word");
         return false;
     }
     const QString clean = word.trimmed().normalized(QString::NormalizationForm_C);
     const QString folded = clean.toCaseFolded();
-    QSet<QString> updated = m_personalWords;
-    updated.insert(folded);
-    QStringList words(updated.cbegin(), updated.cend());
-    std::sort(words.begin(), words.end(), [](const QString &a, const QString &b) {
-        return a.localeAwareCompare(b) < 0;
-    });
-    QDir().mkpath(QFileInfo(personalDictionaryPath()).absolutePath());
-    if (!writeFile(personalDictionaryPath(),
-                   words.join(QLatin1Char('\n')).toUtf8() + '\n', error))
-        return false;
-    m_personalWords = std::move(updated);
-    m_engine->add(encode(clean).toStdString());
+    for (const auto &dictionary : m_dictionaries) {
+        QSet<QString> updated = dictionary->personalWords;
+        updated.insert(folded);
+        QStringList words(updated.cbegin(), updated.cend());
+        std::sort(words.begin(), words.end(),
+                  [](const QString &a, const QString &b) {
+                      return a.localeAwareCompare(b) < 0;
+                  });
+        const QString path = personalDictionaryPath(dictionary->locale);
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        if (!writeFile(path,
+                       words.join(QLatin1Char('\n')).toUtf8() + '\n', error))
+            return false;
+    }
+    for (const auto &dictionary : m_dictionaries) {
+        dictionary->personalWords.insert(folded);
+        dictionary->engine->add(
+            encode(clean, dictionary->encoding).toStdString());
+    }
+    m_personalWords.insert(folded);
     clearCache();
     return true;
 }
@@ -338,9 +410,9 @@ void SpellChecker::ignoreForSession(const QString &word) {
     clearCache();
 }
 
-void SpellChecker::loadPersonalDictionary() {
-    m_personalWords.clear();
-    QFile file(personalDictionaryPath());
+void SpellChecker::loadPersonalDictionary(Dictionary &dictionary) {
+    dictionary.personalWords.clear();
+    QFile file(personalDictionaryPath(dictionary.locale));
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text) ||
         file.size() > 2 * 1024 * 1024)
         return;
@@ -349,14 +421,15 @@ void SpellChecker::loadPersonalDictionary() {
         const QString word = line.trimmed();
         if (word.isEmpty())
             continue;
-        m_personalWords.insert(word.toCaseFolded());
-        m_engine->add(encode(word).toStdString());
+        dictionary.personalWords.insert(word.toCaseFolded());
+        dictionary.engine->add(
+            encode(word, dictionary.encoding).toStdString());
     }
 }
 
-QString SpellChecker::personalDictionaryPath() const {
+QString SpellChecker::personalDictionaryPath(const QString &locale) {
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-           QStringLiteral("/spelling/personal-") + m_language +
+           QStringLiteral("/spelling/personal-") + locale +
            QStringLiteral(".txt");
 }
 

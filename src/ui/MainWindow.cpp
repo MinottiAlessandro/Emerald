@@ -93,6 +93,110 @@ constexpr int kDesktopSplitterHandleWidth = 11;
 constexpr int kGraphSplitterHandleWidth = 2;
 constexpr int kDefaultSidebarWidth = 260;
 
+// A compact checkable combo used by spelling settings. Unlike a normal combo,
+// selecting a row toggles it without closing the popup, and the line edit shows
+// a comma-separated summary of every active dictionary.
+class SpellingLanguageCombo final : public QComboBox {
+public:
+    explicit SpellingLanguageCombo(QWidget *parent = nullptr)
+        : QComboBox(parent) {
+        setEditable(true);
+        lineEdit()->setReadOnly(true);
+        lineEdit()->installEventFilter(this);
+        view()->viewport()->installEventFilter(this);
+    }
+
+    void addLanguage(const QString &name, const QString &locale,
+                     bool checked) {
+        addItem(name, locale);
+        setItemData(count() - 1, checked ? Qt::Checked : Qt::Unchecked,
+                    Qt::CheckStateRole);
+    }
+
+    QStringList selectedLanguages() const {
+        QStringList selected;
+        for (int index = 0; index < count(); ++index)
+            if (itemData(index, Qt::CheckStateRole).toInt() == Qt::Checked)
+                selected.append(itemData(index).toString());
+        return selected;
+    }
+
+    void setSelectedLanguages(const QStringList &locales) {
+        int firstSelected = -1;
+        for (int index = 0; index < count(); ++index) {
+            const bool selected = locales.contains(itemData(index).toString());
+            setItemData(index, selected ? Qt::Checked : Qt::Unchecked,
+                        Qt::CheckStateRole);
+            if (selected && firstSelected < 0)
+                firstSelected = index;
+        }
+        if (firstSelected < 0 && count() > 0) {
+            firstSelected = 0;
+            setItemData(0, Qt::Checked, Qt::CheckStateRole);
+        }
+        if (firstSelected >= 0)
+            setCurrentIndex(firstSelected);
+        refreshSummary();
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched == lineEdit() &&
+            event->type() == QEvent::MouseButtonPress) {
+            showPopup();
+            return true;
+        }
+        if (watched == view()->viewport() &&
+            event->type() == QEvent::MouseButtonRelease) {
+            const auto *mouse = static_cast<QMouseEvent *>(event);
+            const QModelIndex item = view()->indexAt(mouse->position().toPoint());
+            if (item.isValid())
+                toggleItem(item.row());
+            return true;
+        }
+        return QComboBox::eventFilter(watched, event);
+    }
+
+private:
+    void toggleItem(int index) {
+        if (index < 0 || index >= count())
+            return;
+        const bool checked =
+            itemData(index, Qt::CheckStateRole).toInt() == Qt::Checked;
+        if (checked && selectedLanguages().size() == 1)
+            return; // an enabled spell checker always has a dictionary
+        setItemData(index, checked ? Qt::Unchecked : Qt::Checked,
+                    Qt::CheckStateRole);
+        setCurrentIndex(index);
+        refreshSummary();
+    }
+
+    void refreshSummary() {
+        QStringList names;
+        for (int index = 0; index < count(); ++index)
+            if (itemData(index, Qt::CheckStateRole).toInt() == Qt::Checked)
+                names.append(itemText(index));
+        const QString summary = names.join(QStringLiteral(", "));
+        lineEdit()->setText(summary);
+        lineEdit()->setToolTip(summary);
+        lineEdit()->setCursorPosition(0);
+    }
+};
+
+QStringList configuredSpellLanguages(QSettings &settings) {
+    QStringList languages =
+        settings.value(QStringLiteral("spellLanguages")).toStringList();
+    if (languages.isEmpty()) {
+        const QString legacy =
+            settings.value(QStringLiteral("spellLanguage"),
+                           QStringLiteral("en_US"))
+                .toString();
+        languages.append(legacy.isEmpty() ? QStringLiteral("en_US") : legacy);
+    }
+    languages.removeDuplicates();
+    return languages;
+}
+
 enum class NoteTreeSort {
     NameAscending,
     NameDescending,
@@ -456,7 +560,8 @@ QString manualText() {
         "this session**. Under **Settings → Spelling**, **Manage…** can download "
         "verified Italian, German, French, and Spanish dictionaries from "
         "versioned Emerald releases. Packs whose verified content changed are "
-        "shown as **Update available**. Language "
+        "shown as **Update available**. Select multiple installed languages to "
+        "check multilingual notes against all of them. Language "
         "packs and personal words are stored in Emerald's application-data "
         "folder, never in the vault.\n"
         "\n"
@@ -2327,21 +2432,20 @@ void MainWindow::loadSettings() {
     const bool ignoreAllCaps =
         s.value(QStringLiteral("spellIgnoreAllCaps"), true).toBool();
     m_editor->setSpellCheckingOptions(ignoreNumbers, ignoreAllCaps);
-    QString language =
-        s.value(QStringLiteral("spellLanguage"), QStringLiteral("en_US"))
-            .toString();
+    QStringList languages = configuredSpellLanguages(s);
     QString spellError;
-    if (!m_editor->setSpellCheckingLanguage(language, &spellError) &&
-        language != QLatin1String("en_US")) {
-        language = QStringLiteral("en_US");
-        s.setValue(QStringLiteral("spellLanguage"), language);
-        m_editor->setSpellCheckingLanguage(language, &spellError);
+    if (!m_editor->setSpellCheckingLanguages(languages, &spellError) &&
+        languages != QStringList{QStringLiteral("en_US")}) {
+        languages = {QStringLiteral("en_US")};
+        m_editor->setSpellCheckingLanguages(languages, &spellError);
     }
+    s.setValue(QStringLiteral("spellLanguages"), languages);
+    s.remove(QStringLiteral("spellLanguage"));
     const bool spellEnabled =
         s.value(QStringLiteral("spellCheckEnabled"), true).toBool() &&
-        !m_editor->spellCheckingLanguage().isEmpty();
+        !m_editor->spellCheckingLanguages().isEmpty();
     m_editor->setSpellCheckingEnabled(spellEnabled);
-    if (!spellError.isEmpty() && m_editor->spellCheckingLanguage().isEmpty())
+    if (!spellError.isEmpty() && m_editor->spellCheckingLanguages().isEmpty())
         QTimer::singleShot(0, this, [this, spellError] {
             notify(tr("Spell checker unavailable: %1").arg(spellError), 4000);
         });
@@ -2748,7 +2852,8 @@ void MainWindow::openSettings() {
     auto *spellLanguageLayout = new QHBoxLayout(spellLanguageWidget);
     spellLanguageLayout->setContentsMargins(0, 0, 0, 0);
     spellLanguageLayout->setSpacing(8);
-    auto *spellLanguageBox = new QComboBox(spellLanguageWidget);
+    auto *spellLanguageBox =
+        new SpellingLanguageCombo(spellLanguageWidget);
     spellLanguageBox->setObjectName(QStringLiteral("spellLanguage"));
     auto *manageSpellLanguages =
         new QPushButton(tr("Manage…"), spellLanguageWidget);
@@ -2766,27 +2871,24 @@ void MainWindow::openSettings() {
         s.value(QStringLiteral("spellIgnoreAllCaps"), true).toBool());
 
     auto refreshSpellLanguages = [spellLanguageBox] {
-        QString selected = spellLanguageBox->currentData().toString();
+        QStringList selected = spellLanguageBox->selectedLanguages();
         if (selected.isEmpty())
-            selected = QStringLiteral("en_US");
+            selected = {QStringLiteral("en_US")};
         spellLanguageBox->clear();
         const QStringList installed = SpellChecker::installedLanguages();
         for (const SpellLanguage &language :
              SpellChecker::availableLanguages())
             if (installed.contains(language.locale))
-                spellLanguageBox->addItem(language.name, language.locale);
-        int index = spellLanguageBox->findData(selected);
-        if (index < 0)
-            index = spellLanguageBox->findData(QStringLiteral("en_US"));
-        spellLanguageBox->setCurrentIndex(qMax(0, index));
+                spellLanguageBox->addLanguage(
+                    language.name, language.locale,
+                    selected.contains(language.locale));
+        spellLanguageBox->setSelectedLanguages(selected);
     };
     refreshSpellLanguages();
-    const QString savedSpellLanguage =
-        s.value(QStringLiteral("spellLanguage"), QStringLiteral("en_US"))
-            .toString();
-    if (const int index = spellLanguageBox->findData(savedSpellLanguage);
-        index >= 0)
-        spellLanguageBox->setCurrentIndex(index);
+    spellLanguageBox->setSelectedLanguages(
+        m_editor->spellCheckingLanguages().isEmpty()
+            ? configuredSpellLanguages(s)
+            : m_editor->spellCheckingLanguages());
     auto updateSpellControlState = [spellEnabledBox, spellLanguageBox,
                                     ignoreNumbersBox, ignoreCapsBox] {
         const bool enabled = spellEnabledBox->isChecked();
@@ -2798,7 +2900,7 @@ void MainWindow::openSettings() {
             updateSpellControlState);
     connect(manageSpellLanguages, &QPushButton::clicked, &dlg,
             [this, &dlg, refreshSpellLanguages] {
-                SpellLanguageDialog manager(m_editor->spellCheckingLanguage(),
+                SpellLanguageDialog manager(m_editor->spellCheckingLanguages(),
                                             &dlg);
                 connect(&manager, &SpellLanguageDialog::languagesChanged, &dlg,
                         refreshSpellLanguages);
@@ -2903,7 +3005,7 @@ void MainWindow::openSettings() {
         tr("Spelling"),
         tr("Fast local checking with English included and optional languages."));
     addSettingRow(spellingForm, tr("Spell check"), spellEnabledBox);
-    addSettingRow(spellingForm, tr("Language"), spellLanguageWidget);
+    addSettingRow(spellingForm, tr("Languages"), spellLanguageWidget);
     addSettingRow(spellingForm, tr("Numbers"), ignoreNumbersBox);
     addSettingRow(spellingForm, tr("Capitals"), ignoreCapsBox);
 
@@ -3095,16 +3197,16 @@ void MainWindow::openSettings() {
         const bool fileTreeSortChanged =
             selectedFileTreeSort != currentNoteTreeSortKey();
         s.setValue(QStringLiteral("fileTreeSort"), selectedFileTreeSort);
-        QString spellLanguage =
-            spellLanguageBox->currentData().toString();
+        QStringList spellLanguages = spellLanguageBox->selectedLanguages();
         QString spellError;
         bool languageReady =
-            m_editor->setSpellCheckingLanguage(spellLanguage, &spellError);
-        if (!languageReady && spellLanguage != QLatin1String("en_US")) {
+            m_editor->setSpellCheckingLanguages(spellLanguages, &spellError);
+        if (!languageReady &&
+            spellLanguages != QStringList{QStringLiteral("en_US")}) {
             const QString selectedError = spellError;
-            spellLanguage = QStringLiteral("en_US");
-            languageReady =
-                m_editor->setSpellCheckingLanguage(spellLanguage, &spellError);
+            spellLanguages = {QStringLiteral("en_US")};
+            languageReady = m_editor->setSpellCheckingLanguages(
+                spellLanguages, &spellError);
             spellError = selectedError;
         }
         m_editor->setSpellCheckingOptions(ignoreNumbersBox->isChecked(),
@@ -3113,7 +3215,8 @@ void MainWindow::openSettings() {
                                           languageReady);
         s.setValue(QStringLiteral("spellCheckEnabled"),
                    spellEnabledBox->isChecked() && languageReady);
-        s.setValue(QStringLiteral("spellLanguage"), spellLanguage);
+        s.setValue(QStringLiteral("spellLanguages"), spellLanguages);
+        s.remove(QStringLiteral("spellLanguage"));
         s.setValue(QStringLiteral("spellIgnoreNumbers"),
                    ignoreNumbersBox->isChecked());
         s.setValue(QStringLiteral("spellIgnoreAllCaps"),

@@ -19,7 +19,7 @@ class QVBoxLayout;
 class SpellLanguageDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit SpellLanguageDialog(const QString &activeLanguage,
+    explicit SpellLanguageDialog(const QStringList &activeLanguages,
                                  QWidget *parent = nullptr);
 
 signals:
@@ -42,7 +42,7 @@ private:
     const SpellPackFile *currentPart() const;
     void setActionsEnabled(bool enabled);
 
-    QString m_activeLanguage;
+    QStringList m_activeLanguages;
     QList<SpellLanguage> m_languages;
     QHash<QString, Row> m_rows;
     QNetworkAccessManager *m_network = nullptr;

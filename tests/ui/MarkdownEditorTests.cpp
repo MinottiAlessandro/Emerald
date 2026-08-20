@@ -521,6 +521,23 @@ int main(int argc, char **argv) {
                              "its smoke-test word: %2")
                   .arg(it.key(), spellError));
         if (it.key() == QLatin1String("it_IT")) {
+            {
+                SpellChecker stackedChecker;
+                check(stackedChecker.setLanguages(
+                          {QStringLiteral("en_US"), QStringLiteral("it_IT")},
+                          &spellError) &&
+                          stackedChecker.languages() ==
+                              QStringList{QStringLiteral("en_US"),
+                                          QStringLiteral("it_IT")} &&
+                          stackedChecker.isCorrect(QStringLiteral("hello")) &&
+                          stackedChecker.isCorrect(
+                              QStringLiteral("ghiandaia")) &&
+                          !stackedChecker.isCorrect(
+                              QStringLiteral("zzzxxyynotaword")),
+                      QStringLiteral("stacked dictionaries should accept words "
+                                     "from every selected language: %1")
+                          .arg(spellError));
+            }
             QFile installedDictionary(
                 SpellChecker::dictionaryRoot() +
                 QStringLiteral("/it_IT/it_IT.dic"));

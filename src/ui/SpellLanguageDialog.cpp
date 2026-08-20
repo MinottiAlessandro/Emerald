@@ -15,9 +15,9 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
-SpellLanguageDialog::SpellLanguageDialog(const QString &activeLanguage,
+SpellLanguageDialog::SpellLanguageDialog(const QStringList &activeLanguages,
                                          QWidget *parent)
-    : QDialog(parent), m_activeLanguage(activeLanguage),
+    : QDialog(parent), m_activeLanguages(activeLanguages),
       m_languages(SpellChecker::availableLanguages()),
       m_network(new QNetworkAccessManager(this)) {
     setObjectName(QStringLiteral("spellLanguageDialog"));
@@ -143,17 +143,17 @@ void SpellLanguageDialog::refreshRows() {
         row.action->setText(installed ? tr("Remove")
                                       : updateAvailable ? tr("Update")
                                                         : tr("Download"));
-        const bool active = language.locale == m_activeLanguage;
+        const bool active = m_activeLanguages.contains(language.locale);
         row.action->setEnabled(!active);
         row.action->setToolTip(active
-                                   ? tr("Select another language before removing this one")
+                                   ? tr("This language is currently in use")
                                    : QString());
     }
 }
 
 void SpellLanguageDialog::setActionsEnabled(bool enabled) {
     for (auto it = m_rows.begin(); it != m_rows.end(); ++it) {
-        const bool active = it.key() == m_activeLanguage;
+        const bool active = m_activeLanguages.contains(it.key());
         it.value().action->setEnabled(enabled && !active);
     }
 }
@@ -303,7 +303,7 @@ void SpellLanguageDialog::failInstall(const QString &message) {
 
 void SpellLanguageDialog::removePack(const QString &locale) {
     const SpellLanguage *language = pack(locale);
-    if (!language || language->builtIn || locale == m_activeLanguage)
+    if (!language || language->builtIn || m_activeLanguages.contains(locale))
         return;
     if (QMessageBox::question(
             this, tr("Remove language"),

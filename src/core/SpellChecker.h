@@ -9,6 +9,7 @@
 #include <QStringList>
 #include <memory>
 #include <string>
+#include <vector>
 
 class Hunspell;
 
@@ -28,9 +29,10 @@ struct SpellLanguage {
     SpellPackFile notice;
 };
 
-// A small Qt-facing wrapper around Hunspell. It owns exactly one active
-// dictionary, keeps bounded word-result caches, persists a UTF-8 personal word
-// list per language, and exposes Markdown-aware word ranges to the editor.
+// A small Qt-facing wrapper around Hunspell. Active dictionaries are stacked:
+// a word is accepted when any selected language recognizes it. The checker
+// keeps one bounded combined-result cache, persists a UTF-8 personal word list
+// per language, and exposes Markdown-aware word ranges to the editor.
 class SpellChecker : public QObject {
 public:
     struct WordRange {
@@ -44,10 +46,14 @@ public:
 
     void setEnabled(bool enabled);
     bool isEnabled() const { return m_enabled; }
-    bool isReady() const { return m_engine != nullptr; }
+    bool isReady() const { return !m_dictionaries.empty(); }
 
+    bool setLanguages(const QStringList &locales, QString *error = nullptr);
+    QStringList languages() const { return m_languages; }
+    // Singular compatibility helpers for callers that intentionally need one
+    // dictionary (for example pack smoke tests).
     bool setLanguage(const QString &locale, QString *error = nullptr);
-    QString language() const { return m_language; }
+    QString language() const { return m_languages.value(0); }
     void setOptions(bool ignoreWordsWithNumbers, bool ignoreAllCaps);
 
     bool isCorrect(const QString &word) const;
@@ -70,17 +76,18 @@ public:
                                QString *error = nullptr);
 
 private:
+    struct Dictionary;
     static const SpellLanguage *languageInfo(const QString &locale);
     static QString languageDirectory(const QString &locale);
-    QByteArray encode(const QString &word) const;
-    QString decode(const std::string &word) const;
-    void loadPersonalDictionary();
-    QString personalDictionaryPath() const;
+    static QByteArray encode(const QString &word, const QByteArray &encoding);
+    static QString decode(const std::string &word,
+                          const QByteArray &encoding);
+    void loadPersonalDictionary(Dictionary &dictionary);
+    static QString personalDictionaryPath(const QString &locale);
     void clearCache() const;
 
-    std::unique_ptr<Hunspell> m_engine;
-    QString m_language;
-    QByteArray m_encoding;
+    std::vector<std::unique_ptr<Dictionary>> m_dictionaries;
+    QStringList m_languages;
     QSet<QString> m_personalWords;
     QSet<QString> m_sessionIgnored;
     mutable QHash<QString, bool> m_cache;

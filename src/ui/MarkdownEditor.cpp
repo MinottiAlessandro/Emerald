@@ -2274,17 +2274,26 @@ bool MarkdownEditor::spellCheckingEnabled() const {
     return m_spellChecker && m_spellChecker->isEnabled();
 }
 
-bool MarkdownEditor::setSpellCheckingLanguage(const QString &locale,
-                                              QString *error) {
+bool MarkdownEditor::setSpellCheckingLanguages(const QStringList &locales,
+                                               QString *error) {
     if (!m_spellChecker)
         return false;
-    if (m_spellChecker->language() == locale && m_spellChecker->isReady())
+    if (m_spellChecker->languages() == locales && m_spellChecker->isReady())
         return true;
-    if (!m_spellChecker->setLanguage(locale, error))
+    if (!m_spellChecker->setLanguages(locales, error))
         return false;
     if (m_highlighter)
         m_highlighter->rehighlight();
     return true;
+}
+
+QStringList MarkdownEditor::spellCheckingLanguages() const {
+    return m_spellChecker ? m_spellChecker->languages() : QStringList{};
+}
+
+bool MarkdownEditor::setSpellCheckingLanguage(const QString &locale,
+                                              QString *error) {
+    return setSpellCheckingLanguages({locale}, error);
 }
 
 QString MarkdownEditor::spellCheckingLanguage() const {
