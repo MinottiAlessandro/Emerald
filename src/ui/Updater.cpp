@@ -81,7 +81,7 @@ int compareVersions(const QString &a, const QString &b) {
 // version-less names produced by the Release workflow / CPack.
 QString platformAssetName() {
 #if defined(Q_OS_WIN)
-    return QStringLiteral("Emerald-win64.zip");
+    return QStringLiteral("Emerald-win64-setup.exe");
 #elif defined(Q_OS_MACOS)
     return QStringLiteral("Emerald-macOS.dmg");
 #else

@@ -51,7 +51,10 @@ Grab the latest build for your platform — **self-contained, no Qt installation
 | 🐧 **Linux** (x86-64) | [`Emerald-x86_64.AppImage`](https://github.com/MinottiAlessandro/Emerald/releases/latest/download/Emerald-x86_64.AppImage) | `chmod +x` then run |
 | 🐧 **Linux** (ARM64) | [`Emerald-aarch64.AppImage`](https://github.com/MinottiAlessandro/Emerald/releases/latest/download/Emerald-aarch64.AppImage) | `chmod +x` then run · needs glibc ≥ 2.39 |
 | 🍎 **macOS** (universal) | [`Emerald-macOS.dmg`](https://github.com/MinottiAlessandro/Emerald/releases/latest/download/Emerald-macOS.dmg) | first launch: **right-click → Open → Open** |
-| 🪟 **Windows** | [`Emerald-win64.zip`](https://github.com/MinottiAlessandro/Emerald/releases/latest/download/Emerald-win64.zip) | extract and run `emerald.exe` |
+| 🪟 **Windows** | [`Emerald-win64-setup.exe`](https://github.com/MinottiAlessandro/Emerald/releases/latest/download/Emerald-win64-setup.exe) | installer; registers Markdown “Open with” support |
+
+The Windows release also includes a portable `Emerald-win64.zip`. Portable
+builds do not register file associations because their executable may be moved.
 
 Every release also includes `SHA256SUMS` for manual package verification. The
 in-app updater checks GitHub's published SHA-256 digest and package size before
@@ -71,6 +74,7 @@ it opens or installs a download.
 ## Why Emerald
 
 - 🗂️ **Your notes are just files.** A vault is a folder of `.md` files — no database, no lock-in, fully Obsidian-compatible.
+- 📄 **Or open one file.** Double-click a `.md`/`.markdown` document, choose Emerald from **Open with**, or run `emerald path/to/file.md` for an isolated editor that does not scan its folder.
 - ✨ **Live preview, in place.** Markdown renders as you type; the syntax markers melt away on every line except the one you're editing.
 - 🔗 **Real `[[wiki-links]]`** with fuzzy autocomplete, auto-creation, and rename-aware backlink rewriting.
 - 🕸️ **A fast, in-pane Graph View** for exploring the links and neighborhoods across a vault without opening another window.
@@ -109,6 +113,7 @@ it opens or installs a download.
 - **Graph View** — `Ctrl+Shift+G` replaces the current note inside the normal workspace with an interactive, dependency-free map of the vault. Pan, zoom around the pointer, drag nodes, search titles, filter by folder/orphan/missing status and incoming/outgoing direction, reveal arrows, and double-click a node (or select it and press Enter) to open its note. Global and depth-1–3 Local modes share browser history with notes, so Back restores the graph's camera, search, filters, and selection. Layout runs off the UI thread and stops when settled.
 
 **Vault & search**
+- **Standalone files** — open an individual `.md` or `.markdown` from the gear menu, command line, Finder/File Explorer, or a Linux file manager. It gets its own window and file watcher; Emerald neither scans nor indexes neighboring files and leaves the last-vault setting untouched. Existing relative images render, while vault-only search, graphs, templates, attachment copying, and note creation stay disabled.
 - **Folder-tree sidebar** with drag-and-drop; right-click to create notes or sub-folders anywhere.
 - **Telescope-style search popup** — ranked results, type to filter, ↑/↓ to move, Enter jumps to the first match.
 - **Broken Links** — `Ctrl+Shift+B` (or **Settings → Vault → Broken links**) opens a filterable report of every `[[wiki-link]]` whose target note is missing or empty. Each result shows its source and line; Enter opens and selects the exact link.
@@ -203,8 +208,8 @@ smooth resizing; set `QT_WIDGETS_RHI=0` to fall back to CPU raster.
 The build produces platform-native packages via the install rules and CPack:
 
 ```bash
-cmake --install build --prefix dist     # system-style install (Linux), .app (macOS), windeployqt (Windows)
-cd build && cpack                        # → .tar.gz (Linux) / .dmg (macOS) / .zip (Windows)
+  cmake --install build --prefix dist     # system-style install (Linux), .app (macOS), windeployqt (Windows)
+  cd build && cpack                        # → .tar.gz (Linux) / .dmg (macOS) / .zip (Windows)
 ./packaging/linux/make_appimage.sh       # portable Linux AppImage (via linuxdeploy)
 ```
 

@@ -1,4 +1,5 @@
 #include "core/Perf.h"
+#include "core/StandaloneFile.h"
 #include "core/VaultSettings.h"
 #include "ui/AppTheme.h"
 #include "ui/GraphPage.h"
@@ -16,6 +17,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileSystemWatcher>
 #include <QFontComboBox>
 #include <QFrame>
 #include <QImage>
@@ -78,6 +80,11 @@ bool writeFile(const QString &path, const QString &content) {
   const QByteArray bytes = content.toUtf8();
   return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
          file.write(bytes) == bytes.size();
+}
+
+QByteArray readBytes(const QString &path) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
 bool setModificationTime(const QString &path, const QDateTime &time) {
@@ -1473,6 +1480,160 @@ void testCustomThemes() {
   AppTheme::apply(*qApp, AppTheme::Id::Dark);
 }
 
+void testStandaloneFileSession() {
+  QTemporaryDir previousVault;
+  QTemporaryDir files;
+  check(previousVault.isValid() && files.isValid(),
+        QStringLiteral("standalone fixture directories exist"));
+  if (!previousVault.isValid() || !files.isValid())
+    return;
+
+  const QString previousNote =
+      previousVault.filePath(QStringLiteral("Vault Note.md"));
+  const QString standalone = files.filePath(QStringLiteral("Single.md"));
+  const QString sibling = files.filePath(QStringLiteral("Sibling.md"));
+  check(writeFile(previousNote, QStringLiteral("vault content\n")) &&
+            writeFile(sibling, QStringLiteral("sibling must stay untouched\n")),
+        QStringLiteral("standalone neighboring fixtures are writable"));
+  QFile standaloneFile(standalone);
+  const QByteArray original =
+      QByteArray::fromHex("EFBBBF") +
+      QByteArrayLiteral("Intro\r\n\r\n## Target Heading\r\nBody\r\n");
+  check(standaloneFile.open(QIODevice::WriteOnly) &&
+            standaloneFile.write(original) == original.size(),
+        QStringLiteral("UTF-8 BOM/CRLF standalone fixture is writable"));
+  standaloneFile.close();
+
+  QSettings settings;
+  settings.clear();
+  settings.setValue(QStringLiteral("lastVault"), previousVault.path());
+  settings.setValue(QStringLiteral("lastClosedVault"), previousVault.path());
+  settings.sync();
+
+  MainWindow window(standalone);
+  window.resize(1100, 720);
+  window.show();
+  check(waitUntil([&window] { return window.isVisible(); }),
+        QStringLiteral("standalone window becomes visible"));
+
+  auto *editor = window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+  auto *tree = window.findChild<QTreeView *>(QStringLiteral("noteTree"));
+  auto *sideTitle = window.findChild<QLabel *>(QStringLiteral("sideTitle"));
+  auto *title = window.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+  auto *watcher = window.findChild<QFileSystemWatcher *>();
+  auto action = [&window](const char *name) {
+    return window.findChild<QAction *>(QString::fromLatin1(name));
+  };
+  check(editor && tree && sideTitle && title && watcher &&
+            action("saveAction") && action("renameAction") &&
+            action("readModeAction") && action("findAction") &&
+            action("newNoteAction") && action("searchVaultAction") &&
+            action("graphViewAction") && action("deleteNoteAction") &&
+            action("insertImageAction"),
+        QStringLiteral("standalone controls are discoverable"));
+  if (!editor || !tree || !sideTitle || !title || !watcher ||
+      !action("saveAction") || !action("renameAction") ||
+      !action("readModeAction") || !action("findAction") ||
+      !action("newNoteAction") || !action("searchVaultAction") ||
+      !action("graphViewAction") || !action("deleteNoteAction") ||
+      !action("insertImageAction"))
+    return;
+
+  check(window.isStandaloneFile() &&
+            window.standalonePath() == QFileInfo(standalone).canonicalFilePath(),
+        QStringLiteral("the requested file opens as a standalone session"));
+  check(editor->toPlainText() ==
+            QStringLiteral("Intro\n\n## Target Heading\nBody\n"),
+        QStringLiteral("standalone content is decoded and normalized in memory"));
+  check(topLevelTreeLabels(tree) == QStringList{QStringLiteral("Single")},
+        QStringLiteral("the sidebar exposes only the explicitly opened file"));
+  check(sideTitle->text() == QStringLiteral("Single.md"),
+        QStringLiteral("the sidebar identifies the standalone document"));
+  check(watcher->directories().isEmpty() &&
+            watcher->files() == QStringList{window.standalonePath()},
+        QStringLiteral("standalone mode watches the file but not its directory"));
+  check(settings.value(QStringLiteral("lastVault")).toString() ==
+                previousVault.path() &&
+            settings.value(QStringLiteral("lastClosedVault")).toString() ==
+                previousVault.path(),
+        QStringLiteral("opening a standalone file leaves vault restoration untouched"));
+
+  check(action("saveAction")->isEnabled() &&
+            action("renameAction")->isEnabled() &&
+            action("readModeAction")->isEnabled() &&
+            action("findAction")->isEnabled(),
+        QStringLiteral("single-document editing actions stay available"));
+  check(!action("newNoteAction")->isEnabled() &&
+            !action("searchVaultAction")->isEnabled() &&
+            !action("graphViewAction")->isEnabled() &&
+            !action("deleteNoteAction")->isEnabled() &&
+            !action("insertImageAction")->isEnabled(),
+        QStringLiteral("vault-wide and attachment actions are disabled"));
+
+  const QImage pasted(12, 12, QImage::Format_ARGB32_Premultiplied);
+  QMetaObject::invokeMethod(editor, "imagePasted", Qt::DirectConnection,
+                            Q_ARG(QImage, pasted));
+  check(!QDir(files.filePath(QStringLiteral("_attachments"))).exists(),
+        QStringLiteral("pasting an image cannot create standalone attachments"));
+
+  const bool headingInvoked = QMetaObject::invokeMethod(
+      editor, "linkClicked", Qt::DirectConnection,
+      Q_ARG(QString, QStringLiteral("#Target Heading")));
+  check(headingInvoked &&
+            editor->sourceTextCursor().block().text().contains(
+                QStringLiteral("Target Heading")),
+        QStringLiteral("a standalone self-heading wiki link still navigates"));
+  QMetaObject::invokeMethod(editor, "linkClicked", Qt::DirectConnection,
+                            Q_ARG(QString, QStringLiteral("Sibling")));
+  check(readBytes(sibling) == QByteArrayLiteral("sibling must stay untouched\n"),
+        QStringLiteral("a standalone wiki link cannot open or alter a sibling"));
+
+  QTextCursor cursor = editor->sourceTextCursor();
+  cursor.movePosition(QTextCursor::End);
+  cursor.insertText(QStringLiteral("Changed\n"));
+  editor->setSourceTextCursor(cursor);
+  action("saveAction")->trigger();
+  QApplication::processEvents();
+  QByteArray saved = readBytes(standalone);
+  check(saved.startsWith(QByteArray::fromHex("EFBBBF")),
+        QStringLiteral("standalone save preserves the UTF-8 BOM"));
+  QByteArray withoutCrLf = saved;
+  withoutCrLf.replace(QByteArrayLiteral("\r\n"), QByteArray());
+  check(saved.contains(QByteArrayLiteral("Changed\r\n")) &&
+            !withoutCrLf.contains('\n') && !withoutCrLf.contains('\r'),
+        QStringLiteral("standalone save preserves CRLF line endings"));
+  check(readBytes(sibling) == QByteArrayLiteral("sibling must stay untouched\n"),
+        QStringLiteral("saving the document does not touch neighboring files"));
+
+  title->setText(QStringLiteral("Renamed"));
+  QMetaObject::invokeMethod(title, "editingFinished", Qt::DirectConnection);
+  const QString renamed = files.filePath(QStringLiteral("Renamed.md"));
+  check(!QFileInfo::exists(standalone) && QFileInfo::exists(renamed) &&
+            window.standalonePath() == QFileInfo(renamed).canonicalFilePath(),
+        QStringLiteral("standalone title editing renames only the open file"));
+  check(readBytes(renamed).startsWith(QByteArray::fromHex("EFBBBF")) &&
+            readBytes(sibling) == QByteArrayLiteral("sibling must stay untouched\n"),
+        QStringLiteral("rename preserves content and leaves the sibling alone"));
+
+  StandaloneFile::Document invalidDocument;
+  const QString invalid = files.filePath(QStringLiteral("Invalid.md"));
+  QFile invalidFile(invalid);
+  check(invalidFile.open(QIODevice::WriteOnly) &&
+            invalidFile.write(QByteArray::fromHex("FFFE")) == 2,
+        QStringLiteral("invalid UTF-8 standalone fixture is writable"));
+  invalidFile.close();
+  QString invalidError;
+  check(!StandaloneFile::load(invalid, &invalidDocument, &invalidError) &&
+            !invalidError.isEmpty(),
+        QStringLiteral("invalid UTF-8 is rejected instead of being corrupted"));
+
+  window.close();
+  QApplication::processEvents();
+  check(settings.value(QStringLiteral("lastClosedVault")).toString() ==
+            previousVault.path(),
+        QStringLiteral("closing a standalone window does not replace the last vault"));
+}
+
 void testWhatsNewAfterUpdate() {
   QSettings settings;
   settings.clear();
@@ -1589,6 +1750,7 @@ int main(int argc, char **argv) {
   testFileTreeSortPreference();
   testThemePreference();
   testCustomThemes();
+  testStandaloneFileSession();
   testWhatsNewAfterUpdate();
   if (failures == 0)
     QTextStream(stdout) << "All MainWindow graph tests passed.\n";

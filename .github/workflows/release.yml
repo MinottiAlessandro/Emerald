@@ -86,11 +86,12 @@ jobs:
           ( cd build && cpack -G DragNDrop )   # runs macdeployqt via install(SCRIPT)
           mkdir -p dist && mv build/*.dmg dist/
 
-      - name: Package — Windows zip
+      - name: Package — Windows installer + portable zip
         if: matrix.name == 'windows'
         run: |
-          ( cd build && cpack -G ZIP -C Release )   # runs windeployqt via install(SCRIPT)
-          mkdir -p dist && mv build/*.zip dist/
+          ( cd build && cpack -G ZIP -C Release -D CPACK_PACKAGE_FILE_NAME=Emerald-win64 )
+          ( cd build && cpack -G NSIS -C Release -D CPACK_PACKAGE_FILE_NAME=Emerald-win64-setup )
+          mkdir -p dist && mv build/*.zip build/*.exe dist/
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:

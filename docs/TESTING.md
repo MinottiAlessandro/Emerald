@@ -304,5 +304,17 @@ Verify each fires and that menu items show their shortcut label.
 - [ ] **Linux x86-64**: `chmod +x Emerald-x86_64.AppImage` then run.
 - [ ] **Linux ARM64**: runs on a glibc ≥ 2.39 system.
 - [ ] **macOS**: first launch **right-click → Open → Open**; if still blocked, `xattr -cr /Applications/Emerald.app`.
-- [ ] **Windows**: extract `Emerald-win64.zip`, run `emerald.exe`.
+- [ ] **Windows**: install `Emerald-win64-setup.exe`; Emerald appears under **Open with** and Default Apps for `.md`/`.markdown`. The portable ZIP still runs without registration.
 - [ ] Each package runs with no separate Qt install (bundled runtime).
+
+## 18. Standalone Markdown files
+- [ ] With a vault open, double-click a Markdown file elsewhere. It opens in a separate Emerald window without replacing the vault window.
+- [ ] Right-click an `.md` and choose **Open with → Emerald**. Test `.markdown` too.
+- [ ] Run `emerald /absolute/path/to/file.md`; the requested file opens instead of the last vault.
+- [ ] The standalone sidebar contains only that file. Neighboring notes never appear in Quick Open, search, graph, or wiki-link completion.
+- [ ] Edit and save a UTF-8 CRLF file (and one with a UTF-8 BOM); its original newline/BOM convention is preserved.
+- [ ] Rename from the title field. Only the open file moves, retaining its `.md` or `.markdown` suffix.
+- [ ] Relative images already referenced by the document render. Insert Image, pasted-image attachment creation, templates, global search, graphs, new/delete note, and mascot management are disabled.
+- [ ] Change the file in another editor; Emerald reloads it when clean and preserves/warns about local edits when dirty.
+- [ ] Close the standalone window and relaunch Emerald normally; the last closed vault still opens.
+- [ ] **Linux AppImage:** choose **Integrate with Linux Desktop…**, then confirm Emerald appears in the application menu and Markdown **Open with** list.

@@ -3,6 +3,7 @@
 #include "core/Note.h"
 #include "core/LinkGraphIndex.h"
 #include "core/SearchIndex.h"
+#include "core/StandaloneFile.h"
 #include <QDateTime>
 #include <QHash>
 #include <QList>
@@ -41,7 +42,14 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(const QString &standalonePath,
+                        QWidget *parent = nullptr);
     ~MainWindow() override;
+
+    bool isStandaloneFile() const { return m_standaloneMode; }
+    QString standalonePath() const {
+        return m_standaloneMode ? m_currentPath : QString();
+    }
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -57,6 +65,7 @@ private:
     void refreshThemeUi();
     void setReadMode(bool enabled, bool persist = true);
     void updateReadModeUi();
+    bool hasDocumentSession() const;
     bool ensureVaultWritable();
     void updateResponsiveLayout();
     void applyEditorColumnWidth();
@@ -76,6 +85,11 @@ private:
     void onEditorContextMenu(const QPoint &pos);
 
     void chooseVault();
+    void chooseStandaloneFile();
+    bool openStandaloneFile(const QString &path);
+#ifdef Q_OS_LINUX
+    void integrateLinuxDesktop();
+#endif
     void openVaultSwitcher(); // quick picker for sibling vaults (Ctrl+Shift+O)
     void openVault(const QString &path);
     void updateVaultTitle();
@@ -249,15 +263,24 @@ private:
     QAction *m_genMascotAction = nullptr;
     QAction *m_delMascotAction = nullptr;
     QAction *m_findAction = nullptr;
+    QAction *m_quickOpenAction = nullptr;
+    QAction *m_searchAction = nullptr;
+    QAction *m_brokenLinksAction = nullptr;
+    QAction *m_galleryAction = nullptr;
+    QToolButton *m_mobileNewButton = nullptr;
+    QToolButton *m_mobileSearchButton = nullptr;
 
     Mascot *m_mascot = nullptr;   // per-note creature in the bottom-right corner
 
     QFileSystemWatcher *m_watcher = nullptr;
     QString m_currentPath;
     QString m_currentTitle;
+    StandaloneFile::Document m_standaloneDocument;
     QString m_pendingNoteDir; // target folder for an unsaved New Note draft
     quint64 m_lastSavedFingerprint = 0; // body fingerprint as last written/loaded
     bool m_loading = false;
+    bool m_standaloneMode = false;
+    bool m_fileReadOnly = false;
     bool m_readMode = false; // persisted independently for each open vault
     PageLocation::Kind m_activePage = PageLocation::Kind::Note;
 

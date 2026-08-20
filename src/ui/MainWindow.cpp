@@ -50,9 +50,11 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QSplitter>
 #include <QStyle>
 #include <QStringList>
@@ -67,6 +69,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
+#include <QProcess>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -542,6 +545,16 @@ QString manualText() {
         "Ordinary mouse-wheel steps ease smoothly between pixel positions; "
         "high-resolution trackpad movement stays native and direct.\n"
         "\n"
+        "## Standalone files\n"
+        "Choose **Open File…**, double-click a `.md` / `.markdown` registered "
+        "with Emerald, or run `emerald path/to/file.md` to edit one document "
+        "without opening its folder as a vault. The file gets a separate "
+        "window; neighboring notes are never scanned, indexed, watched, or "
+        "offered as links. Existing relative images still render. Vault-wide "
+        "search, graphs, templates, attachments, note creation/deletion, and "
+        "mascot management stay disabled. Saving preserves UTF-8 BOM and line "
+        "endings, and closing the window does not change the last vault.\n"
+        "\n"
         "## Getting around\n"
         "- **Title** — the first line above the body is the file name (without "
         "`.md`); edit it to rename the note.\n"
@@ -575,7 +588,8 @@ QString manualText() {
         "Mode, Broken Links, Graph View, and automatic mascot controls. Vault "
         "choices are stored separately for each vault without adding metadata "
         "files to it. The same menu has **New "
-        "Vault…** to start a fresh vault, **Delete Note** to remove the open one "
+        "Vault…** to start a fresh vault, **Open File…** for an isolated "
+        "Markdown document, **Delete Note** to remove the open one "
         "(it asks first), and **Check for Updates…** to fetch and install the "
         "latest release. **What's New…** reopens the bundled notes for the "
         "running version. **Switch Vault…** jumps between vaults in the same "
@@ -1360,7 +1374,10 @@ private:
 };
 }
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+MainWindow::MainWindow(QWidget *parent) : MainWindow(QString(), parent) {}
+
+MainWindow::MainWindow(const QString &standalonePath, QWidget *parent)
+    : QMainWindow(parent) {
     // Capture this before startup migrations or default initialization can
     // write anything. It distinguishes a genuinely fresh install from an
     // existing Emerald installation receiving this feature for the first time.
@@ -1420,24 +1437,27 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             m_saveTimer->start();
     });
 
-    const QSettings settings;
-    // lastVault changes as soon as a vault is opened, which also happens while
-    // switching vaults. Prefer the vault from the last clean window close so a
-    // relaunch restores the session the user actually finished. Fall back only
-    // when upgrading settings that predate lastClosedVault.
-    const QString startupKey =
-        settings.contains(QStringLiteral("lastClosedVault"))
-            ? QStringLiteral("lastClosedVault")
-            : QStringLiteral("lastVault");
-    const QString last = settings.value(startupKey).toString();
-    if (!last.isEmpty() && QDir(last).exists())
-        openVault(last);
-    else
-        // Deferred so the editor is laid out first; the toast positions itself
-        // relative to the editor's size, which isn't known until then.
-        QTimer::singleShot(0, this, [this] {
-            notify(tr("Open a vault to begin  (Ctrl+O)"), 6000);
-        });
+    if (!standalonePath.isEmpty()) {
+        openStandaloneFile(standalonePath);
+    } else {
+        const QSettings settings;
+        // lastVault changes as soon as a vault is opened, which also happens
+        // while switching vaults. Prefer the vault from the last clean window
+        // close so a relaunch restores the session the user actually finished.
+        // Standalone windows deliberately bypass vault restoration.
+        const QString startupKey =
+            settings.contains(QStringLiteral("lastClosedVault"))
+                ? QStringLiteral("lastClosedVault")
+                : QStringLiteral("lastVault");
+        const QString last = settings.value(startupKey).toString();
+        if (!last.isEmpty() && QDir(last).exists())
+            openVault(last);
+        else
+            QTimer::singleShot(0, this, [this] {
+                notify(tr("Open a vault or Markdown file to begin  (Ctrl+O)"),
+                       6000);
+            });
+    }
 
     maybeShowWhatsNew(hadPersistentSettings);
 }
@@ -1457,6 +1477,14 @@ void MainWindow::buildUi() {
     m_editor = new MarkdownEditor(this);
     m_editor->setHeadingCompletionProvider(
         [this](const QString &noteTitle) {
+            if (m_standaloneMode) {
+                const QString requested = noteTitle.trimmed();
+                if (!requested.isEmpty() &&
+                    requested.compare(m_currentTitle,
+                                      Qt::CaseInsensitive) != 0)
+                    return QStringList{};
+                return WikiLink::headings(m_editor->toPlainText());
+            }
             if (!m_vault)
                 return QStringList{};
             const QString path = noteTitle.trimmed().isEmpty()
@@ -1558,12 +1586,12 @@ void MainWindow::buildUi() {
         makeMobileBarButton(m_mobileEditorBar, tr("Notes"), tr("Show notes"));
     connect(m_mobileNotesButton, &QToolButton::clicked, this,
             &MainWindow::showMobileNotes);
-    auto *mobileNewButton =
+    m_mobileNewButton =
         makeMobileBarButton(m_mobileEditorBar, QStringLiteral("+"), tr("New Note"));
-    connect(mobileNewButton, &QToolButton::clicked, this, &MainWindow::newNote);
-    auto *mobileSearchButton =
+    connect(m_mobileNewButton, &QToolButton::clicked, this, &MainWindow::newNote);
+    m_mobileSearchButton =
         makeMobileBarButton(m_mobileEditorBar, tr("Search"), tr("Search Vault"));
-    connect(mobileSearchButton, &QToolButton::clicked, this,
+    connect(m_mobileSearchButton, &QToolButton::clicked, this,
             &MainWindow::openSearch);
     auto *mobileMenuButton =
         makeMobileBarButton(m_mobileEditorBar, QStringLiteral("⚙"), tr("Menu"));
@@ -1571,8 +1599,8 @@ void MainWindow::buildUi() {
     mobileMenuButton->setMenu(m_gearMenu);
     mobileBarLayout->addWidget(m_mobileNotesButton);
     mobileBarLayout->addStretch();
-    mobileBarLayout->addWidget(mobileNewButton);
-    mobileBarLayout->addWidget(mobileSearchButton);
+    mobileBarLayout->addWidget(m_mobileNewButton);
+    mobileBarLayout->addWidget(m_mobileSearchButton);
     mobileBarLayout->addWidget(mobileMenuButton);
     m_mobileEditorBar->hide();
     centerLayout->addWidget(m_mobileEditorBar);
@@ -2172,7 +2200,8 @@ void MainWindow::updateMascotActions() {
         m_genMascotAction->setEnabled(notePage && !m_readMode && m_vault &&
                                       !m_currentPath.isEmpty());
     if (m_delMascotAction)
-        m_delMascotAction->setEnabled(notePage && !m_readMode && m_editor &&
+        m_delMascotAction->setEnabled(notePage && !m_readMode && m_vault &&
+                                      m_editor &&
                                       m_editor->mascotSeed() != 0);
 }
 
@@ -2287,33 +2316,53 @@ void MainWindow::buildActions() {
     auto *whatsNew = make(tr("What's New…"), {}, &MainWindow::showWhatsNew);
     whatsNew->setObjectName(QStringLiteral("whatsNewAction"));
     auto *update = make(tr("Check for Updates…"), {}, &MainWindow::checkForUpdates);
+#ifdef Q_OS_LINUX
+    auto *desktopIntegration =
+        make(tr("Integrate with Linux Desktop…"), {},
+             &MainWindow::integrateLinuxDesktop);
+    desktopIntegration->setObjectName(
+        QStringLiteral("desktopIntegrationAction"));
+    desktopIntegration->setVisible(!qEnvironmentVariableIsEmpty("APPIMAGE"));
+#endif
     auto *toggleSide = make(tr("Toggle Sidebar"),
                             QKeySequence(Qt::CTRL | Qt::Key_Backslash),
                             &MainWindow::toggleSidebar);
     auto *newVault = make(tr("New Vault…"), {}, &MainWindow::newVault);
     auto *openVault = make(tr("Open Vault…"), QKeySequence(QKeySequence::Open),
                            &MainWindow::chooseVault);
+    auto *openFile = make(tr("Open File…"), {},
+                          &MainWindow::chooseStandaloneFile);
+    openFile->setObjectName(QStringLiteral("openFileAction"));
     auto *switchVault = make(tr("Switch Vault…"),
                              QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O),
                              &MainWindow::openVaultSwitcher);
     switchVault->setObjectName(QStringLiteral("switchVaultAction"));
     m_newNoteAction = make(tr("New Note"), QKeySequence(QKeySequence::New),
                            &MainWindow::newNote);
-    auto *goTo = make(tr("Go to Note…"), QKeySequence(Qt::CTRL | Qt::Key_P),
-                      &MainWindow::openQuickOpen);
+    m_newNoteAction->setObjectName(QStringLiteral("newNoteAction"));
+    m_quickOpenAction =
+        make(tr("Go to Note…"), QKeySequence(Qt::CTRL | Qt::Key_P),
+             &MainWindow::openQuickOpen);
+    m_quickOpenAction->setObjectName(QStringLiteral("quickOpenAction"));
     m_insertTemplateAction = make(tr("Insert Template…"),
                                   QKeySequence(Qt::CTRL | Qt::Key_T),
                                   &MainWindow::insertTemplate);
+    m_insertTemplateAction->setObjectName(
+        QStringLiteral("insertTemplateAction"));
     m_insertImageAction = make(tr("Insert Image…"),
                                QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I),
                                &MainWindow::insertImage);
+    m_insertImageAction->setObjectName(QStringLiteral("insertImageAction"));
     // Rename focuses the title field for editing (F2 is the universal rename).
     m_renameAction = new QAction(tr("Rename Note"), this);
+    m_renameAction->setObjectName(QStringLiteral("renameAction"));
     m_renameAction->setShortcut(QKeySequence(Qt::Key_F2));
     connect(m_renameAction, &QAction::triggered, this, [this] {
-        if (!m_vault || m_readMode)
+        if (!hasDocumentSession() || m_readMode || m_fileReadOnly)
             return;
         if (m_currentPath.isEmpty() && m_pendingNoteDir.isEmpty()) {
+            if (m_standaloneMode)
+                return;
             this->newNote();
             return;
         }
@@ -2325,22 +2374,28 @@ void MainWindow::buildActions() {
     addAction(m_renameAction);
     m_saveAction = make(tr("Save"), QKeySequence(QKeySequence::Save),
                         &MainWindow::saveCurrent);
+    m_saveAction->setObjectName(QStringLiteral("saveAction"));
     // Delete Note confirms first. Ctrl+Shift+Backspace keeps it clear of
     // Ctrl+Delete (the editor's delete-word-forward) while staying deliberate.
     m_deleteAction = make(tr("Delete Note"),
                           QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Backspace),
                           &MainWindow::deleteCurrentNote);
+    m_deleteAction->setObjectName(QStringLiteral("deleteNoteAction"));
     // Context menus hide shortcut labels by default; show this one (the editor's
     // right-click menu offers Delete Note).
     m_deleteAction->setShortcutVisibleInContextMenu(true);
     m_findAction = make(tr("Find in Note…"), QKeySequence(QKeySequence::Find),
                         &MainWindow::openFindInFile);
-    auto *search = make(tr("Search Vault…"),
-                        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F),
-                        &MainWindow::openSearch);
-    auto *brokenLinks = make(tr("Broken Links…"),
-                             QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B),
-                             &MainWindow::openBrokenLinks);
+    m_findAction->setObjectName(QStringLiteral("findAction"));
+    m_searchAction = make(tr("Search Vault…"),
+                          QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F),
+                          &MainWindow::openSearch);
+    m_searchAction->setObjectName(QStringLiteral("searchVaultAction"));
+    m_brokenLinksAction =
+        make(tr("Broken Links…"),
+             QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B),
+             &MainWindow::openBrokenLinks);
+    m_brokenLinksAction->setObjectName(QStringLiteral("brokenLinksAction"));
     m_graphAction = make(tr("Graph View"),
                          QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G),
                          &MainWindow::openGraphView);
@@ -2352,6 +2407,7 @@ void MainWindow::buildActions() {
     m_localGraphAction->setObjectName(QStringLiteral("localGraphAction"));
     m_localGraphAction->setEnabled(false);
     m_readModeAction = new QAction(tr("Read Mode"), this);
+    m_readModeAction->setObjectName(QStringLiteral("readModeAction"));
     m_readModeAction->setCheckable(true);
     m_readModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
     m_readModeAction->setToolTip(tr("Read Mode  (Ctrl+E)"));
@@ -2365,9 +2421,10 @@ void MainWindow::buildActions() {
     m_delMascotAction = make(tr("Delete Mascot"),
                              QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M),
                              &MainWindow::deleteMascot);
-    auto *gallery = make(tr("Mascot Gallery…"),
-                         QKeySequence(Qt::CTRL | Qt::Key_G),
-                         &MainWindow::openMascotGallery);
+    m_galleryAction = make(tr("Mascot Gallery…"),
+                           QKeySequence(Qt::CTRL | Qt::Key_G),
+                           &MainWindow::openMascotGallery);
+    m_galleryAction->setObjectName(QStringLiteral("mascotGalleryAction"));
     // Image mode: draw each note's mascot as one of the user's own images
     // (dropped in the mascots/images folder, picked by the note's seed) instead
     // of the procedural creature. Off by default; the seed line is untouched, so
@@ -2392,7 +2449,7 @@ void MainWindow::buildActions() {
     mascotMenu->setObjectName(QStringLiteral("mascotMenu"));
     mascotMenu->addAction(m_genMascotAction);
     mascotMenu->addAction(m_delMascotAction);
-    mascotMenu->addAction(gallery);
+    mascotMenu->addAction(m_galleryAction);
     mascotMenu->addAction(imageMode);
 
     // Requested order: app → file ops → search → mascot → quit, grouped by
@@ -2401,14 +2458,18 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(manual);
     m_gearMenu->addAction(whatsNew);
     m_gearMenu->addAction(update);
+#ifdef Q_OS_LINUX
+    m_gearMenu->addAction(desktopIntegration);
+#endif
     m_gearMenu->addAction(toggleSide);
     m_gearMenu->addAction(m_readModeAction);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(newVault);
     m_gearMenu->addAction(openVault);
+    m_gearMenu->addAction(openFile);
     m_gearMenu->addAction(switchVault);
     m_gearMenu->addAction(m_newNoteAction);
-    m_gearMenu->addAction(goTo);
+    m_gearMenu->addAction(m_quickOpenAction);
     m_gearMenu->addAction(m_insertTemplateAction);
     m_gearMenu->addAction(m_insertImageAction);
     m_gearMenu->addAction(m_renameAction);
@@ -2416,8 +2477,8 @@ void MainWindow::buildActions() {
     m_gearMenu->addAction(m_deleteAction);
     m_gearMenu->addSeparator();
     m_gearMenu->addAction(m_findAction);
-    m_gearMenu->addAction(search);
-    m_gearMenu->addAction(brokenLinks);
+    m_gearMenu->addAction(m_searchAction);
+    m_gearMenu->addAction(m_brokenLinksAction);
     m_gearMenu->addSeparator();
     m_gearMenu->addMenu(mascotMenu);
     m_gearMenu->addSeparator();
@@ -2541,7 +2602,7 @@ void MainWindow::refreshThemeUi() {
 }
 
 void MainWindow::setReadMode(bool enabled, bool persist) {
-    if (!m_vault)
+    if (!hasDocumentSession())
         enabled = false;
     const bool changed = m_readMode != enabled;
 
@@ -2567,7 +2628,15 @@ void MainWindow::setReadMode(bool enabled, bool persist) {
         notify(enabled ? tr("Read Mode on") : tr("Read Mode off"), 1800);
 }
 
+bool MainWindow::hasDocumentSession() const {
+    return m_vault || m_standaloneMode;
+}
+
 bool MainWindow::ensureVaultWritable() {
+    if (m_fileReadOnly) {
+        notify(tr("This file is read-only"));
+        return false;
+    }
     if (!m_readMode)
         return true;
     notify(tr("Read Mode is on"));
@@ -2576,17 +2645,20 @@ bool MainWindow::ensureVaultWritable() {
 
 void MainWindow::updateReadModeUi() {
     const bool hasVault = m_vault != nullptr;
+    const bool hasDocument = hasDocumentSession();
     const bool notePage = m_activePage == PageLocation::Kind::Note;
-    const bool writable = hasVault && !m_readMode && notePage;
+    const bool locked = m_readMode || m_fileReadOnly;
+    const bool writableDocument = hasDocument && !locked && notePage;
+    const bool writableVault = hasVault && !locked && notePage;
 
     if (m_editor)
-        m_editor->setReadMode(m_readMode);
+        m_editor->setReadMode(locked);
     if (m_titleEdit)
-        m_titleEdit->setReadOnly(m_readMode);
+        m_titleEdit->setReadOnly(locked || !hasDocument);
     if (m_readModeAction) {
         m_readModeAction->blockSignals(true);
-        m_readModeAction->setChecked(m_readMode);
-        m_readModeAction->setEnabled(hasVault);
+        m_readModeAction->setChecked(locked);
+        m_readModeAction->setEnabled(hasDocument && !m_fileReadOnly);
         m_readModeAction->blockSignals(false);
     }
     if (m_graphAction)
@@ -2594,23 +2666,35 @@ void MainWindow::updateReadModeUi() {
     if (m_localGraphAction)
         m_localGraphAction->setEnabled(hasVault && !m_currentPath.isEmpty());
     if (m_findAction)
-        m_findAction->setEnabled(hasVault && notePage);
+        m_findAction->setEnabled(hasDocument && notePage);
     if (m_newNoteAction)
-        m_newNoteAction->setEnabled(writable);
+        m_newNoteAction->setEnabled(writableVault);
     if (m_renameAction)
-        m_renameAction->setEnabled(writable);
+        m_renameAction->setEnabled(writableDocument && !m_currentPath.isEmpty());
     if (m_saveAction)
-        m_saveAction->setEnabled(writable);
+        m_saveAction->setEnabled(writableDocument);
     if (m_insertTemplateAction)
-        m_insertTemplateAction->setEnabled(writable);
+        m_insertTemplateAction->setEnabled(writableVault);
     if (m_insertImageAction)
-        m_insertImageAction->setEnabled(writable);
+        m_insertImageAction->setEnabled(writableVault);
     if (m_deleteAction)
-        m_deleteAction->setEnabled(writable);
+        m_deleteAction->setEnabled(writableVault);
+    if (m_quickOpenAction)
+        m_quickOpenAction->setEnabled(hasVault);
+    if (m_searchAction)
+        m_searchAction->setEnabled(hasVault);
+    if (m_brokenLinksAction)
+        m_brokenLinksAction->setEnabled(hasVault);
+    if (m_galleryAction)
+        m_galleryAction->setEnabled(hasVault);
+    if (m_mobileNewButton)
+        m_mobileNewButton->setEnabled(writableVault);
+    if (m_mobileSearchButton)
+        m_mobileSearchButton->setEnabled(hasVault);
     if (m_noteTree) {
-        m_noteTree->setDragEnabled(writable);
-        m_noteTree->setAcceptDrops(writable);
-        m_noteTree->setDropIndicatorShown(writable);
+        m_noteTree->setDragEnabled(writableVault);
+        m_noteTree->setAcceptDrops(writableVault);
+        m_noteTree->setDropIndicatorShown(writableVault);
     }
     updateMascotActions();
 }
@@ -3612,6 +3696,184 @@ void MainWindow::chooseVault() {
         openVault(dir);
 }
 
+void MainWindow::chooseStandaloneFile() {
+    const QString start = m_currentPath.isEmpty()
+                              ? vaultStartDir()
+                              : QFileInfo(m_currentPath).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Open Markdown File"), start,
+        tr("Markdown Files (*.md *.markdown)"), nullptr,
+        QFileDialog::DontUseNativeDialog);
+    if (path.isEmpty())
+        return;
+
+    // A standalone document is its own window. Opening one must not replace an
+    // active vault or alter which vault is restored on the next normal launch.
+    auto *window = new MainWindow(path);
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    window->resize(size());
+    window->show();
+}
+
+bool MainWindow::openStandaloneFile(const QString &path) {
+    StandaloneFile::Document document;
+    QString error;
+    if (!StandaloneFile::load(path, &document, &error)) {
+        QTimer::singleShot(0, this, [this, error] {
+            notify(tr("Could not open Markdown file: %1").arg(error), 6000);
+        });
+        return false;
+    }
+
+    saveCurrent();
+    if (m_vault && m_graphPage)
+        VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),
+                                m_graphPage->savedState());
+    delete m_vault;
+    m_vault = nullptr;
+    if (m_watcher) {
+        const QStringList directories = m_watcher->directories();
+        if (!directories.isEmpty())
+            m_watcher->removePaths(directories);
+    }
+
+    m_standaloneMode = true;
+    m_standaloneDocument = std::move(document);
+    m_fileReadOnly = !QFileInfo(m_standaloneDocument.path).isWritable();
+    m_currentPath = m_standaloneDocument.path;
+    m_currentTitle = Vault::titleFromPath(m_currentPath);
+    m_pendingNoteDir.clear();
+    m_noteMeta.clear();
+    m_searchIndex.clear();
+    m_linkGraphIndex.clear();
+    m_history.clear();
+    m_histIndex = -1;
+    m_activePage = PageLocation::Kind::Note;
+    showNotePage();
+
+    m_editor->clearFolds();
+    m_loading = true;
+    const QString parentDir = QFileInfo(m_currentPath).absolutePath();
+    // The document's own folder is a resource boundary, not a vault: Emerald
+    // may resolve an image explicitly referenced by this file, but never scans
+    // or watches the folder itself.
+    m_editor->setImagePaths(parentDir, parentDir);
+    m_editor->setPlainText(m_standaloneDocument.content);
+    m_editor->sourceDocument()->setModified(false);
+    m_loading = false;
+    m_lastSavedFingerprint =
+        contentFingerprint(m_standaloneDocument.content);
+
+    m_titleEdit->blockSignals(true);
+    m_titleEdit->setText(m_currentTitle);
+    m_titleEdit->blockSignals(false);
+    m_readMode = false;
+    refreshTree(false);
+    updateVaultTitle();
+    watchCurrent();
+    pushHistory({PageLocation::Kind::Note, m_currentPath});
+    updateNavActions();
+    updateReadModeUi();
+    setWindowTitle(
+        QStringLiteral("Emerald — %1").arg(QFileInfo(m_currentPath).fileName()));
+
+    QTextCursor cursor = m_editor->sourceTextCursor();
+    const int minPos = m_editor->firstContentPosition();
+    const int last = qMax(minPos, m_cursorPositions.value(m_currentPath, minPos));
+    cursor.setPosition(qBound(
+        minPos, last,
+        qMax(minPos, m_editor->sourceDocument()->characterCount() - 1)));
+    m_editor->setSourceTextCursor(cursor);
+    m_editor->setFocus();
+    MarkdownEditor *editor = m_editor;
+    QTimer::singleShot(0, editor, [editor] { editor->centerCursor(); });
+    refreshMascot();
+    if (m_fileReadOnly)
+        QTimer::singleShot(0, this, [this] {
+            notify(tr("Opened read-only — this file cannot be saved"), 5000);
+        });
+    if (m_mobileLayout)
+        showMobileEditor();
+    return true;
+}
+
+#ifdef Q_OS_LINUX
+void MainWindow::integrateLinuxDesktop() {
+    const QString appImage =
+        QString::fromLocal8Bit(qgetenv("APPIMAGE")).trimmed();
+    if (appImage.isEmpty()) {
+        notify(tr("Desktop integration is provided by the installed package"),
+               3500);
+        return;
+    }
+    if (QMessageBox::question(
+            this, tr("Integrate Emerald"),
+            tr("Add this AppImage to your application menu and make Emerald "
+               "available in Open With for Markdown files?\n\nIf the AppImage "
+               "is moved, run this action again.")) != QMessageBox::Yes)
+        return;
+
+    QString dataRoot =
+        QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (dataRoot.isEmpty())
+        dataRoot = QDir::home().filePath(QStringLiteral(".local/share"));
+    const QString applicationsDir =
+        QDir(dataRoot).filePath(QStringLiteral("applications"));
+    const QString iconDir = QDir(dataRoot).filePath(
+        QStringLiteral("icons/hicolor/256x256/apps"));
+    if (!QDir().mkpath(applicationsDir) || !QDir().mkpath(iconDir)) {
+        notify(tr("Could not create the desktop integration folders"), 4500);
+        return;
+    }
+
+    QSaveFile iconFile(QDir(iconDir).filePath(QStringLiteral("emerald.png")));
+    const QImage icon(QStringLiteral(":/EmeraldClean.png"));
+    if (icon.isNull() || !iconFile.open(QIODevice::WriteOnly) ||
+        !icon.save(&iconFile, "PNG") || !iconFile.commit()) {
+        notify(tr("Could not install the Emerald desktop icon"), 4500);
+        return;
+    }
+
+    QString escapedExecutable = QDir::toNativeSeparators(appImage);
+    escapedExecutable.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    escapedExecutable.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    escapedExecutable.replace(QLatin1Char('`'), QStringLiteral("\\`"));
+    escapedExecutable.replace(QLatin1Char('$'), QStringLiteral("\\$"));
+    const QString desktop =
+        QStringLiteral(
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Version=1.0\n"
+            "Name=Emerald\n"
+            "GenericName=Markdown Notes\n"
+            "Comment=Fast, local Markdown note editor\n"
+            "Exec=\"%1\" %f\n"
+            "Icon=emerald\n"
+            "Terminal=false\n"
+            "Categories=Utility;TextEditor;\n"
+            "MimeType=text/markdown;\n"
+            "Keywords=notes;markdown;wiki;editor;\n"
+            "StartupWMClass=emerald\n"
+            "X-AppImage-Name=Emerald\n")
+            .arg(escapedExecutable);
+    const QString desktopPath =
+        QDir(applicationsDir).filePath(QStringLiteral("emerald.desktop"));
+    QSaveFile desktopFile(desktopPath);
+    if (!desktopFile.open(QIODevice::WriteOnly) ||
+        desktopFile.write(desktop.toUtf8()) != desktop.toUtf8().size() ||
+        !desktopFile.commit()) {
+        notify(tr("Could not install the Emerald desktop entry"), 4500);
+        return;
+    }
+    QFile::setPermissions(desktopPath,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                              QFileDevice::ReadGroup | QFileDevice::ReadOther);
+    QProcess::startDetached(QStringLiteral("update-desktop-database"),
+                            {applicationsDir});
+    notify(tr("Emerald is now available for Markdown files"), 4500);
+}
+#endif
+
 void MainWindow::openVaultSwitcher() {
     // Candidate vaults are the sub-folders beside the current vault (i.e. in its
     // parent folder), or the home folder's sub-folders when none is open.
@@ -3645,6 +3907,9 @@ void MainWindow::openVault(const QString &path) {
                                 m_graphPage->savedState());
     delete m_vault;
     m_vault = new Vault(path);
+    m_standaloneMode = false;
+    m_standaloneDocument = {};
+    m_fileReadOnly = false;
     loadVaultSpellLanguages();
     updateVaultTitle();
     // Fold any legacy seed store into note headers. The migration rejects every
@@ -3679,6 +3944,7 @@ void MainWindow::openVault(const QString &path) {
     m_titleEdit->blockSignals(true);
     m_titleEdit->clear();
     m_titleEdit->blockSignals(false);
+    watchCurrent(); // drop a standalone file watch when this vault opens blank
 
     m_readMode = VaultSettings::value(
                      m_vault->root(), QStringLiteral("readMode"),
@@ -3736,6 +4002,8 @@ void MainWindow::updateVaultTitle() {
     QString title;
     if (m_vault)
         title = QFileInfo(m_vault->root()).fileName();
+    else if (m_standaloneMode)
+        title = QFileInfo(m_currentPath).fileName();
     if (title.isEmpty())
         title = tr("Notes");
     if (auto *label = dynamic_cast<ElidedLabel *>(m_sideTitle))
@@ -3747,8 +4015,10 @@ void MainWindow::updateVaultTitle() {
                           : title;
     m_sideTitle->setMinimumWidth(
         qMax(80, m_sideTitle->fontMetrics().horizontalAdvance(minText)));
-    m_sideTitle->setToolTip(m_vault ? QDir::toNativeSeparators(m_vault->root())
-                                    : QString());
+    const QString tooltip =
+        m_vault ? m_vault->root()
+                : (m_standaloneMode ? m_currentPath : QString());
+    m_sideTitle->setToolTip(QDir::toNativeSeparators(tooltip));
 }
 
 void MainWindow::startIndexRebuild() {
@@ -3853,9 +4123,19 @@ void MainWindow::refreshTree(bool preserveExpansion) {
     const QSet<QString> expanded =
         preserveExpansion && model ? model->expandedDirs() : QSet<QString>();
     if (!m_vault) {
-        if (model)
-            model->rebuild(QString(), QStringList(), QVector<Note>(),
-                           QSet<QString>(), NoteTreeSort::NameAscending);
+        if (model) {
+            if (m_standaloneMode && !m_currentPath.isEmpty()) {
+                model->rebuild(QFileInfo(m_currentPath).absolutePath(),
+                               QStringList(),
+                               QVector<Note>{{m_currentPath, m_currentTitle}},
+                               QSet<QString>(), NoteTreeSort::NameAscending);
+            } else {
+                model->rebuild(QString(), QStringList(), QVector<Note>(),
+                               QSet<QString>(), NoteTreeSort::NameAscending);
+            }
+        }
+        m_editor->setCompletions({});
+        selectInTree(m_currentPath);
         return;
     }
 
@@ -4088,7 +4368,8 @@ void MainWindow::showGraphView(bool local, const QString &rootPath, bool record,
 }
 
 void MainWindow::renameCurrent(const QString &rawTitle) {
-    if (m_readMode || !m_vault || m_currentPath.isEmpty())
+    if (m_readMode || m_fileReadOnly || !hasDocumentSession() ||
+        m_currentPath.isEmpty())
         return;
     const QString newTitle = rawTitle.trimmed();
     if (newTitle == m_currentTitle)
@@ -4102,6 +4383,48 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     if (!Vault::isValidTitle(newTitle)) {
         revertField();
         notify(tr("Invalid note name"), 3000);
+        return;
+    }
+
+    if (m_standaloneMode) {
+        saveCurrent();
+        if (m_editor->sourceDocument()->isModified()) {
+            revertField();
+            return; // the failed save already reported its error
+        }
+        const QFileInfo oldInfo(m_currentPath);
+        const QString newPath = QDir(oldInfo.absolutePath())
+                                    .filePath(newTitle + QLatin1Char('.') +
+                                              oldInfo.suffix());
+        if (QFileInfo::exists(newPath) &&
+            QFileInfo(newPath).canonicalFilePath() !=
+                oldInfo.canonicalFilePath()) {
+            revertField();
+            notify(tr("A file named “%1” already exists").arg(
+                       QFileInfo(newPath).fileName()),
+                   3000);
+            return;
+        }
+        if (!QFile::rename(m_currentPath, newPath)) {
+            revertField();
+            notify(tr("Could not rename this file"), 3000);
+            return;
+        }
+        const QString oldPath = m_currentPath;
+        m_currentPath = newPath;
+        m_currentTitle = newTitle;
+        m_standaloneDocument.path = newPath;
+        for (PageLocation &location : m_history)
+            if (location.path == oldPath)
+                location.path = newPath;
+        if (m_cursorPositions.contains(oldPath))
+            m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
+        watchCurrent();
+        refreshTree(false);
+        updateVaultTitle();
+        setWindowTitle(QStringLiteral("Emerald — %1")
+                           .arg(QFileInfo(newPath).fileName()));
+        notify(tr("Renamed to “%1”").arg(QFileInfo(newPath).fileName()), 3000);
         return;
     }
 
@@ -4148,6 +4471,27 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
 }
 
 void MainWindow::saveCurrent() {
+    if (m_standaloneMode) {
+        if (m_currentPath.isEmpty() || m_fileReadOnly ||
+            !m_editor->sourceDocument()->isModified())
+            return;
+        const QString content = m_editor->toPlainText();
+        const quint64 fingerprint = contentFingerprint(content);
+        if (fingerprint == m_lastSavedFingerprint) {
+            m_editor->sourceDocument()->setModified(false);
+            return;
+        }
+        QString error;
+        if (!StandaloneFile::save(m_standaloneDocument, content, &error)) {
+            notify(tr("Could not save this file: %1").arg(error), 5000);
+            return;
+        }
+        m_standaloneDocument.content = content;
+        m_lastSavedFingerprint = fingerprint;
+        m_editor->sourceDocument()->setModified(false);
+        watchCurrent(); // QSaveFile replaces the inode; follow the new one
+        return;
+    }
     if (!m_vault)
         return;
     if (m_currentPath.isEmpty()) {
@@ -4265,7 +4609,7 @@ void MainWindow::onFileChanged(const QString &path) {
 // Reconcile the open note with disk. Adopt new contents only when we have no
 // unsaved edits; never clobber the user's buffer.
 void MainWindow::syncOpenNoteFromDisk() {
-    if (!m_vault || m_currentPath.isEmpty())
+    if (!hasDocumentSession() || m_currentPath.isEmpty())
         return;
 
     // A replace-and-rename or backup-rename save gives the file a new inode and
@@ -4279,10 +4623,30 @@ void MainWindow::syncOpenNoteFromDisk() {
         return;
     }
 
-    const QString disk = m_vault->read(m_currentPath);
+    QString disk;
+    StandaloneFile::Document standaloneDisk;
+    if (m_standaloneMode) {
+        QString error;
+        if (!StandaloneFile::load(m_currentPath, &standaloneDisk, &error)) {
+            notify(tr("Could not reload this file: %1").arg(error), 5000);
+            return;
+        }
+        disk = standaloneDisk.content;
+    } else {
+        disk = m_vault->read(m_currentPath);
+    }
     const quint64 diskFingerprint = contentFingerprint(disk);
-    if (diskFingerprint == m_lastSavedFingerprint)
+    if (diskFingerprint == m_lastSavedFingerprint) {
+        // A standalone file can change BOM/newline convention without changing
+        // its visible text. Adopt that serialization metadata so a later edit
+        // does not undo the external format-only change.
+        if (m_standaloneMode) {
+            m_standaloneDocument = std::move(standaloneDisk);
+            m_fileReadOnly = !QFileInfo(m_currentPath).isWritable();
+            updateReadModeUi();
+        }
         return; // our own write, or no real change
+    }
 
     if (m_editor->sourceDocument()->isModified()) {
         if (contentFingerprint(m_editor->toPlainText()) == m_lastSavedFingerprint) {
@@ -4301,13 +4665,19 @@ void MainWindow::syncOpenNoteFromDisk() {
     m_editor->sourceDocument()->setModified(false);
     m_loading = false;
     m_lastSavedFingerprint = diskFingerprint;
-    m_searchIndex.updateNote(m_currentPath, m_currentTitle, disk);
-    m_linkGraphIndex.updateNote(m_currentPath, m_currentTitle, disk);
-    refreshGraphPage();
-    markNoteMetaCurrent(m_currentPath, m_currentTitle);
-    if (auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel))
-        model->updateModificationTime(
-            m_currentPath, QFileInfo(m_currentPath).lastModified());
+    if (m_standaloneMode) {
+        m_standaloneDocument = std::move(standaloneDisk);
+        m_fileReadOnly = !QFileInfo(m_currentPath).isWritable();
+        updateReadModeUi();
+    } else {
+        m_searchIndex.updateNote(m_currentPath, m_currentTitle, disk);
+        m_linkGraphIndex.updateNote(m_currentPath, m_currentTitle, disk);
+        refreshGraphPage();
+        markNoteMetaCurrent(m_currentPath, m_currentTitle);
+        if (auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel))
+            model->updateModificationTime(
+                m_currentPath, QFileInfo(m_currentPath).lastModified());
+    }
 
     QTextCursor c = m_editor->sourceTextCursor();
     c.setPosition(qMin(caret, int(disk.size())));
@@ -4344,43 +4714,50 @@ void MainWindow::newNote() {
 }
 
 void MainWindow::onLinkClicked(const QString &destination) {
-    if (!m_vault)
+    if (!hasDocumentSession())
         return;
     const QString target = WikiLink::cleanTarget(destination);
     const QString heading = WikiLink::heading(destination);
-    QString path = target.isEmpty() ? m_currentPath
-                                    : m_vault->pathForTitle(target);
-    if (path.isEmpty()) {
-        if (target.isEmpty())
-            return;
-        if (m_readMode) {
-            notify(tr("“%1” does not exist — Read Mode is on").arg(target),
-                   3000);
+    if (m_standaloneMode) {
+        if (!target.isEmpty() &&
+            target.compare(m_currentTitle, Qt::CaseInsensitive) != 0) {
+            notify(tr("Other notes are unavailable in standalone mode"), 3000);
             return;
         }
-        if (!Vault::isValidTitle(target)) {
-            notify(tr("“%1” is not a valid note name").arg(target), 3000);
-            return;
+    } else {
+        QString path = target.isEmpty() ? m_currentPath
+                                        : m_vault->pathForTitle(target);
+        if (path.isEmpty()) {
+            if (target.isEmpty())
+                return;
+            if (m_readMode) {
+                notify(tr("“%1” does not exist — Read Mode is on").arg(target),
+                       3000);
+                return;
+            }
+            if (!Vault::isValidTitle(target)) {
+                notify(tr("“%1” is not a valid note name").arg(target), 3000);
+                return;
+            }
+            const Note note =
+                m_vault->createNoteIn(defaultNoteDirectory(), target);
+            if (note.path.isEmpty()) {
+                notify(tr("Could not create “%1”").arg(target), 3000);
+                return;
+            }
+            const QString content = m_vault->read(note.path);
+            // createNoteIn() does not mutate the cached vault listing. Rescan
+            // so a link-created note reaches the tree and completion list.
+            m_vault->scan();
+            m_searchIndex.updateNote(note.path, note.title, content);
+            m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
+            m_linkGraphIndex.updateNote(note.path, note.title, content);
+            markNoteMetaCurrent(note.path, note.title);
+            refreshTree();
+            path = note.path;
         }
-        const Note note =
-            m_vault->createNoteIn(defaultNoteDirectory(), target);
-        if (note.path.isEmpty()) {
-            notify(tr("Could not create “%1”").arg(target), 3000);
-            return;
-        }
-        const QString content = m_vault->read(note.path);
-        // createNoteIn() does not mutate the cached vault listing. Rescan so a
-        // link-created note in a nested default folder immediately reaches the
-        // tree and wiki-link completion list.
-        m_vault->scan();
-        m_searchIndex.updateNote(note.path, note.title, content);
-        m_linkGraphIndex.setNotes(m_vault->root(), m_vault->notes());
-        m_linkGraphIndex.updateNote(note.path, note.title, content);
-        markNoteMetaCurrent(note.path, note.title);
-        refreshTree();
-        path = note.path;
+        openNoteByPath(path);
     }
-    openNoteByPath(path);
     if (heading.isEmpty())
         return;
 

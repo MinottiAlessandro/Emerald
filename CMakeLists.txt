@@ -126,6 +126,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/Note.h
   src/core/ContentSecurity.h
   src/core/ContentSecurity.cpp
+  src/core/StandaloneFile.h
+  src/core/StandaloneFile.cpp
   src/core/LegacyMascotMigration.h
   src/core/LegacyMascotMigration.cpp
   src/core/Vault.h
@@ -290,6 +292,44 @@ set(CPACK_PACKAGE_EXECUTABLES "emerald" "Emerald")
 if(WIN32)
   set(CPACK_GENERATOR "ZIP")
   set(CPACK_PACKAGE_FILE_NAME "Emerald-win64")
+  # The release workflow additionally invokes the NSIS generator. The portable
+  # ZIP remains available, while the installer registers Emerald as an
+  # available (never forcibly default) editor for Markdown files.
+  set(CPACK_NSIS_DISPLAY_NAME "Emerald")
+  set(CPACK_NSIS_PACKAGE_NAME "Emerald")
+  set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\emerald.exe")
+  set(CPACK_NSIS_MUI_ICON "${EMERALD_ICON_ICO}")
+  set(CPACK_NSIS_MUI_UNIICON "${EMERALD_ICON_ICO}")
+  set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+  set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [[
+    SetRegView 64
+    WriteRegStr HKLM "Software\Classes\Emerald.Markdown" "" "Markdown Document"
+    WriteRegStr HKLM "Software\Classes\Emerald.Markdown\DefaultIcon" "" '"$INSTDIR\bin\emerald.exe",0'
+    WriteRegStr HKLM "Software\Classes\Emerald.Markdown\shell\open\command" "" '"$INSTDIR\bin\emerald.exe" "%1"'
+    WriteRegStr HKLM "Software\Classes\.md\OpenWithProgids" "Emerald.Markdown" ""
+    WriteRegStr HKLM "Software\Classes\.markdown\OpenWithProgids" "Emerald.Markdown" ""
+    WriteRegStr HKLM "Software\Emerald\Capabilities" "ApplicationName" "Emerald"
+    WriteRegStr HKLM "Software\Emerald\Capabilities" "ApplicationDescription" "Fast, local Markdown note editor"
+    WriteRegStr HKLM "Software\Emerald\Capabilities" "ApplicationIcon" '"$INSTDIR\bin\emerald.exe",0'
+    WriteRegStr HKLM "Software\Emerald\Capabilities\FileAssociations" ".md" "Emerald.Markdown"
+    WriteRegStr HKLM "Software\Emerald\Capabilities\FileAssociations" ".markdown" "Emerald.Markdown"
+    WriteRegStr HKLM "Software\RegisteredApplications" "Emerald" "Software\Emerald\Capabilities"
+    WriteRegStr HKLM "Software\Classes\Applications\emerald.exe\shell\open\command" "" '"$INSTDIR\bin\emerald.exe" "%1"'
+    WriteRegStr HKLM "Software\Classes\Applications\emerald.exe\SupportedTypes" ".md" ""
+    WriteRegStr HKLM "Software\Classes\Applications\emerald.exe\SupportedTypes" ".markdown" ""
+    System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+  ]])
+  set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [[
+    SetRegView 64
+    DeleteRegValue HKLM "Software\Classes\.md\OpenWithProgids" "Emerald.Markdown"
+    DeleteRegValue HKLM "Software\Classes\.markdown\OpenWithProgids" "Emerald.Markdown"
+    DeleteRegKey HKLM "Software\Classes\Emerald.Markdown"
+    DeleteRegKey HKLM "Software\Classes\Applications\emerald.exe"
+    DeleteRegValue HKLM "Software\RegisteredApplications" "Emerald"
+    DeleteRegKey HKLM "Software\Emerald\Capabilities"
+    DeleteRegKey /ifempty HKLM "Software\Emerald"
+    System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+  ]])
 elseif(APPLE)
   set(CPACK_GENERATOR "DragNDrop")
   set(CPACK_PACKAGE_FILE_NAME "Emerald-macOS")
@@ -425,6 +465,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/Note.h
     src/core/ContentSecurity.h
     src/core/ContentSecurity.cpp
+    src/core/StandaloneFile.h
+    src/core/StandaloneFile.cpp
     src/core/LegacyMascotMigration.h
     src/core/LegacyMascotMigration.cpp
     src/core/Vault.h
