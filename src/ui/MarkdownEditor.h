@@ -70,8 +70,11 @@ public:
     int lineSpacing() const { return m_lineSpacing; }
     void applyLineSpacing(); // recompute the per-row padding from font + percent
 
-    // Select and scroll to the first occurrence of `text` (case-insensitive).
+    // Search helpers used by vault search and Find in Note. Successful matches
+    // are selected and vertically centred after the document layout settles.
     void jumpToMatch(const QString &text);
+    bool findAndCenter(const QString &text,
+                       QTextDocument::FindFlags flags = {});
     void centerCursor();
 
     // Reading presentation: swap the Markdown source for a separate,

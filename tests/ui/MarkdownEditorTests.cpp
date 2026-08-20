@@ -294,6 +294,48 @@ int main(int argc, char **argv) {
         checkCanScrollPastLastLine(scrollEditor, QStringLiteral("Read Mode"));
     }
 
+    // Both vault-search jumps and Find in Note use the same centred-match path.
+    // The deferred second pass covers the layout transition after a match is
+    // selected, while keeping the first positioning immediate.
+    {
+        MarkdownEditor searchEditor;
+        searchEditor.resize(420, 180);
+        searchEditor.show();
+        QStringList rows;
+        for (int i = 0; i < 90; ++i) {
+            if (i == 38)
+                rows.append(QStringLiteral("global centering target"));
+            else if (i == 67)
+                rows.append(QStringLiteral("in-note centering target"));
+            else
+                rows.append(QStringLiteral("ordinary search row %1").arg(i));
+        }
+        searchEditor.setPlainText(rows.join(QLatin1Char('\n')));
+        settleLayout(searchEditor, searchEditor.document()->lastBlock());
+        const auto cursorIsCentered = [&searchEditor] {
+            return qAbs(searchEditor.cursorRect().center().y() -
+                        searchEditor.viewport()->rect().center().y()) <=
+                   searchEditor.fontMetrics().height();
+        };
+
+        searchEditor.jumpToMatch(QStringLiteral("global centering target"));
+        QApplication::processEvents();
+        check(searchEditor.textCursor().selectedText() ==
+                  QStringLiteral("global centering target") &&
+                  cursorIsCentered(),
+              QStringLiteral("a vault-search jump should center its match"));
+
+        searchEditor.moveCursor(QTextCursor::Start);
+        check(searchEditor.findAndCenter(
+                  QStringLiteral("in-note centering target")),
+              QStringLiteral("Find in Note should locate its match"));
+        QApplication::processEvents();
+        check(searchEditor.textCursor().selectedText() ==
+                  QStringLiteral("in-note centering target") &&
+                  cursorIsCentered(),
+              QStringLiteral("Find in Note should center its match"));
+    }
+
     // Theme changes refresh both the cached live highlighter formats and the
     // separately rendered Read Mode document without altering Markdown text.
     {

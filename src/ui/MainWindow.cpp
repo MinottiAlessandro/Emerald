@@ -4575,11 +4575,11 @@ void MainWindow::findInFile(bool forward) {
     QTextDocument::FindFlags flags;
     if (!forward)
         flags |= QTextDocument::FindBackward;
-    if (!m_editor->find(text, flags)) { // wrap around
+    if (!m_editor->findAndCenter(text, flags)) { // wrap around
         QTextCursor c = m_editor->textCursor();
         c.movePosition(forward ? QTextCursor::Start : QTextCursor::End);
         m_editor->setTextCursor(c);
-        m_editor->find(text, flags);
+        m_editor->findAndCenter(text, flags);
     }
 }
 

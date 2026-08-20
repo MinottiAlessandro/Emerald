@@ -1473,8 +1473,20 @@ void MarkdownEditor::jumpToMatch(const QString &text) {
     if (text.isEmpty())
         return;
     moveCursor(QTextCursor::Start);
-    if (find(text)) // selects the match, if found
-        centerCursor(); // land it mid-view so there's context around the match
+    findAndCenter(text);
+}
+
+bool MarkdownEditor::findAndCenter(const QString &text,
+                                   QTextDocument::FindFlags flags) {
+    if (text.isEmpty() || !QTextEdit::find(text, flags))
+        return false;
+    centerCursor();
+    // Revealing a selected Markdown construct can change paragraph geometry,
+    // and a newly-opened note may not have completed its first viewport layout.
+    // Re-centre once on the settled layout; the context object cancels this
+    // safely if the editor is destroyed first.
+    QTimer::singleShot(0, this, [this] { centerCursor(); });
+    return true;
 }
 
 void MarkdownEditor::centerCursor() {
