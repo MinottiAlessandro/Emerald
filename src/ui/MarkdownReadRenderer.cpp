@@ -439,7 +439,6 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
                         f.setAnchor(true);
                         f.setAnchorHref(
                             MarkdownReadRenderer::wikiLinkHref(target));
-                        f.setToolTip(target);
                     }
                 });
                 insertInlineAnalyzed(

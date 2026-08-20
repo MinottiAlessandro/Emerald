@@ -2693,6 +2693,7 @@ int main(int argc, char **argv) {
     bool sawCheckboxObject = false;
     bool sawCodeObject = false;
     bool sawWikiAnchor = false;
+    bool sawWikiTooltip = false;
     bool sawExternalAnchor = false;
     bool sawTableWikiAnchor = false;
     int renderedWikiPosition = -1;
@@ -2719,9 +2720,11 @@ int main(int argc, char **argv) {
                         format.anchorHref());
                 if (wikiTarget == QStringLiteral("Target#Title2")) {
                     sawWikiAnchor = true;
+                    sawWikiTooltip = sawWikiTooltip || !format.toolTip().isEmpty();
                     renderedWikiPosition = fragment.position();
                 } else if (wikiTarget == QStringLiteral("Table Note")) {
                     sawTableWikiAnchor = true;
+                    sawWikiTooltip = sawWikiTooltip || !format.toolTip().isEmpty();
                 } else if (format.anchorHref() ==
                            QStringLiteral("https://example.com")) {
                     sawExternalAnchor = true;
@@ -2767,6 +2770,9 @@ int main(int argc, char **argv) {
     check(sawWikiAnchor && sawExternalAnchor && sawTableWikiAnchor,
           QStringLiteral("Read Mode should retain semantic wiki and external "
                          "anchors, including links inside table cells"));
+    check(!sawWikiTooltip,
+          QStringLiteral("hovering a rendered wiki link should not show its "
+                         "raw note target as a tooltip"));
     check(MarkdownReadObjectRenderer::codeText(codeObjectFormat) ==
               QStringLiteral("const int answer = 42;"),
           QStringLiteral("the code-card object should retain exact copyable "
