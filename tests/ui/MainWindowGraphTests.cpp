@@ -22,6 +22,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -741,6 +742,76 @@ void testLastClosedVault() {
           QStringLiteral("a later startup still restores the last closed "
                          "vault"));
     restored.close();
+    QApplication::processEvents();
+  }
+  settings.clear();
+}
+
+void testVaultSwitcherModifiedOrder() {
+  QSettings settings;
+  settings.clear();
+  QTemporaryDir parent;
+  check(parent.isValid(), QStringLiteral("vault-switcher parent exists"));
+  if (!parent.isValid())
+    return;
+
+  const QString alpha = parent.filePath(QStringLiteral("Alpha Vault"));
+  const QString bravo = parent.filePath(QStringLiteral("Bravo Vault"));
+  const QString charlie = parent.filePath(QStringLiteral("Charlie Vault"));
+  const QString nested = QDir(bravo).filePath(QStringLiteral("Projects"));
+  check(QDir().mkpath(alpha) && QDir().mkpath(nested) &&
+            QDir().mkpath(charlie),
+        QStringLiteral("vault-switcher folders are writable"));
+  const QString alphaNote =
+      QDir(alpha).filePath(QStringLiteral("Alpha.md"));
+  const QString bravoNote =
+      QDir(nested).filePath(QStringLiteral("Nested.md"));
+  const QString charlieNote =
+      QDir(charlie).filePath(QStringLiteral("Charlie.md"));
+  check(writeFile(alphaNote, QStringLiteral("oldest\n")) &&
+            writeFile(bravoNote, QStringLiteral("newest nested note\n")) &&
+            writeFile(charlieNote, QStringLiteral("middle\n")),
+        QStringLiteral("vault-switcher notes are writable"));
+
+  const QDateTime base =
+      QDateTime::fromString(QStringLiteral("2026-01-01T12:00:00Z"),
+                            Qt::ISODate);
+  check(setModificationTime(alphaNote, base.addDays(1)) &&
+            setModificationTime(bravoNote, base.addDays(3)) &&
+            setModificationTime(charlieNote, base.addDays(2)),
+        QStringLiteral("vault-switcher modification times are configurable"));
+
+  settings.setValue(QStringLiteral("lastVault"), alpha);
+  settings.setValue(QStringLiteral("lastClosedVault"), alpha);
+  {
+    MainWindow window;
+    window.resize(1000, 700);
+    window.show();
+    auto *switchAction = window.findChild<QAction *>(
+        QStringLiteral("switchVaultAction"));
+    auto *popup = window.findChild<SearchPopup *>();
+    check(switchAction && popup,
+          QStringLiteral("vault switcher controls are discoverable"));
+    if (switchAction)
+      switchAction->trigger();
+
+    auto *results = popup ? popup->findChild<QListWidget *>(
+                                QStringLiteral("searchResults"))
+                          : nullptr;
+    check(waitUntil([popup, results] {
+            return popup && popup->isVisible() && results &&
+                   results->count() == 3;
+          }),
+          QStringLiteral("vault switcher lists sibling vaults"));
+    check(results && results->count() == 3 &&
+              results->item(0)->text() ==
+                         QStringLiteral("Bravo Vault") &&
+              results->item(1)->text() ==
+                  QStringLiteral("Charlie Vault") &&
+              results->item(2)->text() == QStringLiteral("Alpha Vault"),
+          QStringLiteral("vault switcher orders vaults by their newest "
+                         "Markdown note, including nested notes"));
+    window.close();
     QApplication::processEvents();
   }
   settings.clear();
@@ -1489,6 +1560,7 @@ int main(int argc, char **argv) {
   testInPaneGraphNavigation(settingsDir.path());
   testLastNotePerVault();
   testLastClosedVault();
+  testVaultSwitcherModifiedOrder();
   testWikiHeadingNavigation();
   testFullWidthEditorPreference();
   testFileTreeSortPreference();

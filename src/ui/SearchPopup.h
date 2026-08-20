@@ -29,8 +29,8 @@ public:
     // titlesOnly = a quick "go to note" picker that matches note titles only.
     void showCentered(bool titlesOnly = false);
 
-    // A quick vault switcher: show the given vault folders (full paths), filter
-    // by name as you type, and emit openVaultRequested() for the chosen one.
+    // A quick vault switcher: show the given vault folders (full paths) in the
+    // caller's order, filter by name, and emit openVaultRequested() for a pick.
     void showVaults(const QStringList &dirs);
 
     // A template picker: show the given template files (full paths), filter by
