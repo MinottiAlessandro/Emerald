@@ -71,6 +71,7 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QResizeEvent>
+#include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QThread>
@@ -79,6 +80,7 @@
 #include <QTreeView>
 #include <QUrl>
 #include <QVariant>
+#include <QVersionNumber>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <algorithm>
@@ -93,6 +95,18 @@ constexpr int kMobileBreakpoint = 760;
 constexpr int kDesktopSplitterHandleWidth = 11;
 constexpr int kGraphSplitterHandleWidth = 2;
 constexpr int kDefaultSidebarWidth = 260;
+constexpr auto kLastRunVersionSetting = "lastRunVersion";
+
+QString releaseVersion(QString version) {
+    version = version.trimmed();
+    if (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive))
+        version.remove(0, 1);
+    // Development builds may append a channel or commit suffix. Their bundled
+    // release notes still belong to the numeric package version.
+    version = version.section(QLatin1Char('-'), 0, 0);
+    version = version.section(QLatin1Char('+'), 0, 0);
+    return version;
+}
 
 // QComboBox always treats a row click as a completed single selection. A real
 // checkable menu is a better fit for stacked dictionaries: swallowing only an
@@ -563,7 +577,8 @@ QString manualText() {
         "files to it. The same menu has **New "
         "Vault…** to start a fresh vault, **Delete Note** to remove the open one "
         "(it asks first), and **Check for Updates…** to fetch and install the "
-        "latest release. **Switch Vault…** jumps between vaults in the same "
+        "latest release. **What's New…** reopens the bundled notes for the "
+        "running version. **Switch Vault…** jumps between vaults in the same "
         "folder, and **Insert Template…** drops in a template — both live in the "
         "menu. Edits save themselves a moment after you stop typing — Ctrl+S "
         "forces a save.\n"
@@ -1346,6 +1361,10 @@ private:
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+    // Capture this before startup migrations or default initialization can
+    // write anything. It distinguishes a genuinely fresh install from an
+    // existing Emerald installation receiving this feature for the first time.
+    const bool hadPersistentSettings = !QSettings().allKeys().isEmpty();
     VaultSettings::migrateLegacyForLastVault();
     buildActions();
     buildUi();
@@ -1419,6 +1438,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         QTimer::singleShot(0, this, [this] {
             notify(tr("Open a vault to begin  (Ctrl+O)"), 6000);
         });
+
+    maybeShowWhatsNew(hadPersistentSettings);
 }
 
 MainWindow::~MainWindow() {
@@ -2263,6 +2284,8 @@ void MainWindow::buildActions() {
                           &MainWindow::openSettings);
     settings->setObjectName(QStringLiteral("settingsAction"));
     auto *manual = make(tr("Manual"), {}, &MainWindow::openManual);
+    auto *whatsNew = make(tr("What's New…"), {}, &MainWindow::showWhatsNew);
+    whatsNew->setObjectName(QStringLiteral("whatsNewAction"));
     auto *update = make(tr("Check for Updates…"), {}, &MainWindow::checkForUpdates);
     auto *toggleSide = make(tr("Toggle Sidebar"),
                             QKeySequence(Qt::CTRL | Qt::Key_Backslash),
@@ -2375,6 +2398,7 @@ void MainWindow::buildActions() {
     // separators.
     m_gearMenu->addAction(settings);
     m_gearMenu->addAction(manual);
+    m_gearMenu->addAction(whatsNew);
     m_gearMenu->addAction(update);
     m_gearMenu->addAction(toggleSide);
     m_gearMenu->addAction(m_readModeAction);
@@ -3457,6 +3481,120 @@ void MainWindow::openManual() {
         refreshTree();
     }
     openNoteByPath(path);
+}
+
+void MainWindow::showWhatsNew() {
+    if (auto *existing =
+            findChild<QDialog *>(QStringLiteral("whatsNewDialog"),
+                                 Qt::FindDirectChildrenOnly)) {
+        existing->show();
+        existing->raise();
+        existing->activateWindow();
+        return;
+    }
+
+    const QString version =
+        releaseVersion(QCoreApplication::applicationVersion());
+    if (version.isEmpty())
+        return;
+
+    QFile notesFile(QStringLiteral(":/release-notes/v%1.md").arg(version));
+    QString notes;
+    if (notesFile.open(QIODevice::ReadOnly))
+        notes = QString::fromUtf8(notesFile.readAll()).trimmed();
+    if (notes.isEmpty()) {
+        notes = tr("## Emerald %1\n\n"
+                   "The release notes for this build are unavailable.")
+                    .arg(version);
+    }
+
+    auto *dlg = new QDialog(this);
+    dlg->setObjectName(QStringLiteral("whatsNewDialog"));
+    dlg->setProperty("emeraldDialog", true);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(tr("What's New in Emerald %1").arg(version));
+    dlg->setWindowModality(Qt::WindowModal);
+    dlg->setSizeGripEnabled(true);
+
+    const bool compact = m_mobileLayout || width() <= kMobileBreakpoint;
+    dlg->setMinimumSize(compact ? QSize(320, 420) : QSize(560, 500));
+    dlg->resize(compact
+                    ? QSize(qMax(320, width() - 24),
+                            qMax(420, height() - 48))
+                    : QSize(680, qMax(540, qMin(720, height() - 40))));
+
+    auto *root = new QVBoxLayout(dlg);
+    root->setContentsMargins(compact ? 14 : 22, compact ? 16 : 20,
+                             compact ? 14 : 22, compact ? 14 : 18);
+    root->setSpacing(compact ? 9 : 11);
+
+    auto *heading = new QLabel(tr("What's New"), dlg);
+    heading->setObjectName(QStringLiteral("settingsTitle"));
+    auto *subtitle = new QLabel(
+        tr("Highlights and changes in Emerald %1").arg(version), dlg);
+    subtitle->setObjectName(QStringLiteral("settingsSubtitle"));
+    subtitle->setWordWrap(true);
+    root->addWidget(heading);
+    root->addWidget(subtitle);
+
+    auto *content = new QTextBrowser(dlg);
+    content->setObjectName(QStringLiteral("whatsNewContent"));
+    content->setOpenExternalLinks(true);
+    content->setReadOnly(true);
+    content->document()->setDocumentMargin(compact ? 10 : 14);
+    content->document()->setDefaultStyleSheet(
+        QStringLiteral(
+            "h1, h2, h3 { color: %1; } "
+            "a { color: %2; } "
+            "code { color: %3; } "
+            "table { border-collapse: collapse; } "
+            "th, td { border: 1px solid %4; padding: 4px 7px; }")
+            .arg(AppTheme::color(QColor(QStringLiteral("#d7eee2"))).name(),
+                 AppTheme::color(QColor(QStringLiteral("#2bbf74"))).name(),
+                 AppTheme::color(QColor(QStringLiteral("#7ee0b0"))).name(),
+                 AppTheme::color(QColor(QStringLiteral("#315140"))).name()));
+    content->document()->setMarkdown(notes,
+                                     QTextDocument::MarkdownDialectGitHub);
+    root->addWidget(content, 1);
+
+    auto *buttons = new QDialogButtonBox(dlg);
+    auto *close = buttons->addButton(tr("Got it"),
+                                     QDialogButtonBox::AcceptRole);
+    prepareDialogButtons(buttons);
+    close->setDefault(true);
+    connect(buttons, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+    root->addWidget(buttons);
+
+    dlg->show();
+}
+
+void MainWindow::maybeShowWhatsNew(bool hadPersistentSettings) {
+    const QString current =
+        releaseVersion(QCoreApplication::applicationVersion());
+    if (current.isEmpty())
+        return;
+
+    QSettings settings;
+    const QString key = QString::fromLatin1(kLastRunVersionSetting);
+    const bool trackedBefore = settings.contains(key);
+    const QString previous = releaseVersion(settings.value(key).toString());
+
+    bool updated = !trackedBefore && hadPersistentSettings;
+    if (trackedBefore && previous != current) {
+        const QVersionNumber previousNumber =
+            QVersionNumber::fromString(previous);
+        const QVersionNumber currentNumber = QVersionNumber::fromString(current);
+        updated = !previousNumber.isNull() && !currentNumber.isNull() &&
+                  QVersionNumber::compare(currentNumber, previousNumber) > 0;
+    }
+
+    // Record the running release even for a clean install and a downgrade. A
+    // later genuine upgrade is then compared with the version actually run.
+    settings.setValue(key, current);
+    settings.sync();
+
+    if (updated)
+        QTimer::singleShot(0, this, [this] { showWhatsNew(); });
 }
 
 void MainWindow::checkForUpdates() {

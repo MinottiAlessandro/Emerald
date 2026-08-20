@@ -76,6 +76,26 @@ function(emerald_add_spell_resources target)
       "${EMERALD_DICTIONARY_RESOURCE_DIR}/en_US/NOTICE.txt")
 endfunction()
 
+# The same per-version Markdown file used to publish the GitHub release is also
+# shown by the in-app What's New panel. Requiring it at configure time keeps a
+# version bump from silently shipping an empty or stale notification.
+set(EMERALD_RELEASE_NOTES_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/.github/release-notes")
+set(EMERALD_CURRENT_RELEASE_NOTES
+    "${EMERALD_RELEASE_NOTES_DIR}/v${PROJECT_VERSION}.md")
+if(NOT EXISTS "${EMERALD_CURRENT_RELEASE_NOTES}")
+  message(FATAL_ERROR
+    "Missing release notes for Emerald ${PROJECT_VERSION}: "
+    "${EMERALD_CURRENT_RELEASE_NOTES}")
+endif()
+
+function(emerald_add_release_notes target)
+  qt_add_resources(${target} "${target}_release_notes"
+    PREFIX "/release-notes"
+    BASE "${EMERALD_RELEASE_NOTES_DIR}"
+    FILES "${EMERALD_CURRENT_RELEASE_NOTES}")
+endfunction()
+
 # --- Platform icons -------------------------------------------------------
 # Pre-generated and committed (see packaging/macos/make_icns.py and the .ico
 # built with ImageMagick) so ordinary builds need no image tooling.
@@ -167,6 +187,7 @@ target_include_directories(emerald PRIVATE src)
 target_link_libraries(emerald PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg
   Emerald::Hunspell)
 emerald_add_spell_resources(emerald)
+emerald_add_release_notes(emerald)
 emerald_enable_sanitizers(emerald)
 # Surface the build version to the app (shown in the sidebar footer).
 target_compile_definitions(emerald PRIVATE
@@ -463,6 +484,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
   target_link_libraries(emerald_main_window_graph_tests PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Svg Emerald::Hunspell)
   emerald_add_spell_resources(emerald_main_window_graph_tests)
+  emerald_add_release_notes(emerald_main_window_graph_tests)
   target_compile_definitions(emerald_main_window_graph_tests PRIVATE
     EMERALD_VERSION="${EMERALD_BUILD_VERSION}")
   emerald_enable_sanitizers(emerald_main_window_graph_tests)

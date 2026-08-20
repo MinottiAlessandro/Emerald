@@ -482,6 +482,15 @@ QLabel#settingsSubtitle {
     color: #789384;
     font-size: 12px;
 }
+QTextBrowser#whatsNewContent {
+    background: #121512;
+    color: #d7eee2;
+    border: 1px solid #263c31;
+    border-radius: 6px;
+    padding: 10px;
+    selection-background-color: #1f4a33;
+    selection-color: #d7eee2;
+}
 QFrame#settingsSection {
     background: #121512;
     border: 1px solid #263c31;

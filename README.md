@@ -128,7 +128,7 @@ it opens or installs a download.
 - **Responsive layout** — at narrow widths, the folder tree and editor become separate full-width views with compact Notes/Editor navigation and always-available new-note, search, and gear controls.
 - **Adjustable editor font** (family + size, persisted) and **line spacing**; heading sizes scale with the font.
 - **Smooth scrolling** — mouse-wheel steps ease between pixel positions; high-resolution trackpad deltas remain native and direct, and Read Mode's ↑/↓ movement uses the same pixel-based viewport.
-- **Self-updating** — **Check for Updates…** pulls the latest release from GitHub and installs in place on macOS and Linux AppImage builds.
+- **Self-updating** — **Check for Updates…** pulls the latest release from GitHub and installs in place on macOS and Linux AppImage builds. After an upgrade, Emerald opens an offline **What's New** panel once; the same notes remain available from the gear menu.
 - **Dark theme**, embedded in the binary.
 
 ---

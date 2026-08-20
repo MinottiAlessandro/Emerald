@@ -1378,6 +1378,98 @@ void testCustomThemes() {
   settings.clear();
   AppTheme::apply(*qApp, AppTheme::Id::Dark);
 }
+
+void testWhatsNewAfterUpdate() {
+  QSettings settings;
+  settings.clear();
+  const QString originalVersion = QCoreApplication::applicationVersion();
+  const QString currentVersion = QStringLiteral(EMERALD_VERSION);
+  QCoreApplication::setApplicationVersion(currentVersion);
+
+  // A new installation establishes its baseline silently.
+  {
+    MainWindow freshInstall;
+    freshInstall.resize(1000, 700);
+    freshInstall.show();
+    QApplication::processEvents();
+    check(!freshInstall.findChild<QDialog *>(
+              QStringLiteral("whatsNewDialog"), Qt::FindDirectChildrenOnly) &&
+              settings.value(QStringLiteral("lastRunVersion")).toString() ==
+                  currentVersion,
+          QStringLiteral("a fresh install records its version without an "
+                         "update notification"));
+    freshInstall.close();
+    QApplication::processEvents();
+  }
+
+  settings.setValue(QStringLiteral("lastRunVersion"),
+                    QStringLiteral("0.0.0"));
+  settings.sync();
+  {
+    MainWindow updated;
+    updated.resize(1000, 700);
+    updated.show();
+    QDialog *automatic = nullptr;
+    check(waitUntil([&] {
+            automatic = updated.findChild<QDialog *>(
+                QStringLiteral("whatsNewDialog"),
+                Qt::FindDirectChildrenOnly);
+            return automatic && automatic->isVisible();
+          }),
+          QStringLiteral("an upgraded installation opens What's New"));
+
+    auto *content = automatic
+                        ? automatic->findChild<QTextBrowser *>(
+                              QStringLiteral("whatsNewContent"))
+                        : nullptr;
+    auto *action = updated.findChild<QAction *>(
+        QStringLiteral("whatsNewAction"));
+    check(content &&
+              content->toPlainText().contains(
+                  QStringLiteral("offline spell checking"),
+                  Qt::CaseInsensitive) &&
+              settings.value(QStringLiteral("lastRunVersion")).toString() ==
+                  currentVersion &&
+              action,
+          QStringLiteral("What's New uses bundled release notes, records the "
+                         "version, and remains available from the menu"));
+
+    if (automatic) {
+      automatic->close();
+      QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    if (action)
+      action->trigger();
+    QDialog *reopened = nullptr;
+    check(waitUntil([&] {
+            reopened = updated.findChild<QDialog *>(
+                QStringLiteral("whatsNewDialog"),
+                Qt::FindDirectChildrenOnly);
+            return reopened && reopened->isVisible();
+          }),
+          QStringLiteral("the What's New menu action reopens the panel"));
+    if (reopened)
+      reopened->close();
+    updated.close();
+    QApplication::processEvents();
+  }
+
+  // Reopening the same release must not repeat the automatic notification.
+  {
+    MainWindow sameVersion;
+    sameVersion.show();
+    QApplication::processEvents();
+    check(!sameVersion.findChild<QDialog *>(
+              QStringLiteral("whatsNewDialog"), Qt::FindDirectChildrenOnly),
+          QStringLiteral("What's New is shown automatically only once per "
+                         "installed version"));
+    sameVersion.close();
+    QApplication::processEvents();
+  }
+
+  QCoreApplication::setApplicationVersion(originalVersion);
+  settings.clear();
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1402,6 +1494,7 @@ int main(int argc, char **argv) {
   testFileTreeSortPreference();
   testThemePreference();
   testCustomThemes();
+  testWhatsNewAfterUpdate();
   if (failures == 0)
     QTextStream(stdout) << "All MainWindow graph tests passed.\n";
   return failures == 0 ? 0 : 1;

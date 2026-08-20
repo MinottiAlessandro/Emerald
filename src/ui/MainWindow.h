@@ -66,6 +66,8 @@ private:
     void showMobileNotes();
     void showMobileEditor();
     void openManual();
+    void showWhatsNew();          // bundled notes for the running release
+    void maybeShowWhatsNew(bool hadPersistentSettings);
     void checkForUpdates();       // query GitHub for a newer release, then update
     void newVault();              // create a fresh vault folder, then open it
     void deleteCurrentNote();     // delete the open note (with confirmation)
