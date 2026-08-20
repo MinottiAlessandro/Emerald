@@ -86,7 +86,6 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -107,21 +106,6 @@ QString releaseVersion(QString version) {
     version = version.section(QLatin1Char('-'), 0, 0);
     version = version.section(QLatin1Char('+'), 0, 0);
     return version;
-}
-
-QDateTime latestVaultModification(const QString &path) {
-    QDateTime latest;
-    QDirIterator notes(path, {QStringLiteral("*.md")}, QDir::Files,
-                       QDirIterator::Subdirectories);
-    while (notes.hasNext()) {
-        notes.next();
-        const QDateTime modified = notes.fileInfo().lastModified();
-        if (!latest.isValid() || modified > latest)
-            latest = modified;
-    }
-    // An empty vault still has a useful creation/change time and should not be
-    // assigned an arbitrary epoch value.
-    return latest.isValid() ? latest : QFileInfo(path).lastModified();
 }
 
 // QComboBox always treats a row click as a completed single selection. A real
@@ -3638,37 +3622,19 @@ void MainWindow::openVaultSwitcher() {
             base = parent;
     }
     QDir dir(base);
-    struct Candidate {
-        QString path;
-        QString name;
-        QDateTime modified;
-    };
-    QList<Candidate> candidates;
-    const QStringList names =
-        dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-    candidates.reserve(names.size());
-    for (const QString &name : names) {
-        const QString path = dir.absoluteFilePath(name);
-        candidates.append({path, name, latestVaultModification(path)});
-    }
-    std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate &first, const Candidate &second) {
-                  if (first.modified != second.modified)
-                      return first.modified > second.modified;
-                  const int byName = QString::compare(
-                      first.name, second.name, Qt::CaseInsensitive);
-                  return byName != 0 ? byName < 0
-                                     : first.path < second.path;
-              });
-    if (candidates.isEmpty()) {
+    // QDir::Time orders the sibling folders by their own filesystem modified
+    // time, newest first. It does not inspect or traverse any vault contents.
+    const QFileInfoList vaults = dir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot, QDir::Time | QDir::IgnoreCase);
+    if (vaults.isEmpty()) {
         notify(tr("No vaults found in %1").arg(QDir::toNativeSeparators(base)),
                2500);
         return;
     }
     QStringList paths;
-    paths.reserve(candidates.size());
-    for (const Candidate &candidate : std::as_const(candidates))
-        paths.append(candidate.path);
+    paths.reserve(vaults.size());
+    for (const QFileInfo &vault : vaults)
+        paths.append(vault.absoluteFilePath());
     m_searchPopup->showVaults(paths);
 }
 

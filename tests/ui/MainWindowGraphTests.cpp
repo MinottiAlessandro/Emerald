@@ -43,6 +43,9 @@
 #include <QToolButton>
 #include <QTreeView>
 #include <QWheelEvent>
+#include <chrono>
+#include <filesystem>
+#include <system_error>
 
 Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf.tests")
 
@@ -81,6 +84,21 @@ bool setModificationTime(const QString &path, const QDateTime &time) {
   QFile file(path);
   return file.open(QIODevice::ReadWrite) &&
          file.setFileTime(time, QFileDevice::FileModificationTime);
+}
+
+bool setDirectoryModificationTime(const QString &path,
+                                  const QDateTime &time) {
+#ifdef Q_OS_WIN
+  const std::filesystem::path nativePath(path.toStdWString());
+#else
+  const std::filesystem::path nativePath(path.toStdString());
+#endif
+  const auto systemTime = std::chrono::system_clock::time_point(
+      std::chrono::milliseconds(time.toMSecsSinceEpoch()));
+  std::error_code error;
+  std::filesystem::last_write_time(
+      nativePath, std::chrono::file_clock::from_sys(systemTime), error);
+  return !error;
 }
 
 QStringList topLevelTreeLabels(const QTreeView *tree) {
@@ -776,10 +794,15 @@ void testVaultSwitcherModifiedOrder() {
   const QDateTime base =
       QDateTime::fromString(QStringLiteral("2026-01-01T12:00:00Z"),
                             Qt::ISODate);
+  // The nested Bravo note is newer than everything else, but the vault folder
+  // itself is oldest. The switcher must use the three folder timestamps only.
   check(setModificationTime(alphaNote, base.addDays(1)) &&
-            setModificationTime(bravoNote, base.addDays(3)) &&
-            setModificationTime(charlieNote, base.addDays(2)),
-        QStringLiteral("vault-switcher modification times are configurable"));
+            setModificationTime(bravoNote, base.addDays(8)) &&
+            setModificationTime(charlieNote, base.addDays(2)) &&
+            setDirectoryModificationTime(alpha, base.addDays(6)) &&
+            setDirectoryModificationTime(bravo, base.addDays(4)) &&
+            setDirectoryModificationTime(charlie, base.addDays(5)),
+        QStringLiteral("vault folder modification times are configurable"));
 
   settings.setValue(QStringLiteral("lastVault"), alpha);
   settings.setValue(QStringLiteral("lastClosedVault"), alpha);
@@ -805,12 +828,12 @@ void testVaultSwitcherModifiedOrder() {
           QStringLiteral("vault switcher lists sibling vaults"));
     check(results && results->count() == 3 &&
               results->item(0)->text() ==
-                         QStringLiteral("Bravo Vault") &&
+                         QStringLiteral("Alpha Vault") &&
               results->item(1)->text() ==
                   QStringLiteral("Charlie Vault") &&
-              results->item(2)->text() == QStringLiteral("Alpha Vault"),
-          QStringLiteral("vault switcher orders vaults by their newest "
-                         "Markdown note, including nested notes"));
+              results->item(2)->text() == QStringLiteral("Bravo Vault"),
+          QStringLiteral("vault switcher orders by the vault folders' own "
+                         "timestamps without scanning nested files"));
     window.close();
     QApplication::processEvents();
   }
