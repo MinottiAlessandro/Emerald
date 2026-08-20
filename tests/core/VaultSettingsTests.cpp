@@ -40,6 +40,11 @@ void testVaultIsolation() {
                             QStringLiteral("true"));
     VaultSettings::setValue(vaultB, QStringLiteral("readMode"),
                             QStringLiteral("false"));
+    VaultSettings::setStringList(
+        vaultA, QStringLiteral("spellLanguages"),
+        {QStringLiteral("en_US"), QStringLiteral("it_IT")});
+    VaultSettings::setStringList(vaultB, QStringLiteral("spellLanguages"),
+                                 {QStringLiteral("de_DE")});
 
     check(VaultSettings::value(vaultA, QStringLiteral("homeNote")) ==
               QStringLiteral("Home A.md"),
@@ -56,6 +61,14 @@ void testVaultIsolation() {
               VaultSettings::value(vaultB, QStringLiteral("readMode")) ==
                   QStringLiteral("false"),
           QStringLiteral("Read Mode is isolated per vault"));
+    check(VaultSettings::stringListValue(
+              vaultA, QStringLiteral("spellLanguages")) ==
+                  QStringList{QStringLiteral("en_US"),
+                              QStringLiteral("it_IT")} &&
+              VaultSettings::stringListValue(
+                  vaultB, QStringLiteral("spellLanguages")) ==
+                  QStringList{QStringLiteral("de_DE")},
+          QStringLiteral("spelling language stacks are isolated per vault"));
 
     VaultSettings::remove(vaultA, QStringLiteral("homeNote"));
     check(VaultSettings::value(vaultA, QStringLiteral("homeNote")).isEmpty(),
@@ -90,6 +103,11 @@ void testLegacyMigration() {
     settings.setValue(QStringLiteral("newNoteFolder"), QStringLiteral("Inbox"));
     settings.setValue(QStringLiteral("templatesFolder"),
                       QStringLiteral("Legacy Templates"));
+    settings.setValue(
+        QStringLiteral("spellLanguages"),
+        QStringList{QStringLiteral("en_US"), QStringLiteral("it_IT")});
+    settings.setValue(QStringLiteral("spellLanguage"),
+                      QStringLiteral("de_DE"));
     // A value already written by a newer build wins over its legacy global.
     VaultSettings::setValue(vault, QStringLiteral("templatesFolder"),
                             QStringLiteral("Current Templates"));
@@ -105,13 +123,19 @@ void testLegacyMigration() {
     check(VaultSettings::value(vault, QStringLiteral("templatesFolder")) ==
               QStringLiteral("Current Templates"),
           QStringLiteral("migration preserves an existing per-vault value"));
+    check(VaultSettings::stringListValue(
+              vault, QStringLiteral("spellLanguages")) ==
+              QStringList{QStringLiteral("en_US"), QStringLiteral("it_IT")},
+          QStringLiteral("legacy spelling languages migrate to the last vault"));
     check(VaultSettings::value(otherVault, QStringLiteral("homeNote")).isEmpty(),
           QStringLiteral("legacy settings do not leak into another vault"));
 
     QSettings migrated;
     check(!migrated.contains(QStringLiteral("homeNote")) &&
               !migrated.contains(QStringLiteral("newNoteFolder")) &&
-              !migrated.contains(QStringLiteral("templatesFolder")),
+              !migrated.contains(QStringLiteral("templatesFolder")) &&
+              !migrated.contains(QStringLiteral("spellLanguages")) &&
+              !migrated.contains(QStringLiteral("spellLanguage")),
           QStringLiteral("legacy global keys are removed after migration"));
 }
 } // namespace

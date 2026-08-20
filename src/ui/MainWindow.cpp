@@ -2439,8 +2439,6 @@ void MainWindow::loadSettings() {
         languages = {QStringLiteral("en_US")};
         m_editor->setSpellCheckingLanguages(languages, &spellError);
     }
-    s.setValue(QStringLiteral("spellLanguages"), languages);
-    s.remove(QStringLiteral("spellLanguage"));
     const bool spellEnabled =
         s.value(QStringLiteral("spellCheckEnabled"), true).toBool() &&
         !m_editor->spellCheckingLanguages().isEmpty();
@@ -3215,8 +3213,16 @@ void MainWindow::openSettings() {
                                           languageReady);
         s.setValue(QStringLiteral("spellCheckEnabled"),
                    spellEnabledBox->isChecked() && languageReady);
-        s.setValue(QStringLiteral("spellLanguages"), spellLanguages);
-        s.remove(QStringLiteral("spellLanguage"));
+        if (m_vault) {
+            VaultSettings::setStringList(m_vault->root(),
+                                         QStringLiteral("spellLanguages"),
+                                         spellLanguages);
+        } else {
+            // With no vault open this becomes the default adopted by the next
+            // vault that has never chosen its own language stack.
+            s.setValue(QStringLiteral("spellLanguages"), spellLanguages);
+            s.remove(QStringLiteral("spellLanguage"));
+        }
         s.setValue(QStringLiteral("spellIgnoreNumbers"),
                    ignoreNumbersBox->isChecked());
         s.setValue(QStringLiteral("spellIgnoreAllCaps"),
@@ -3457,6 +3463,7 @@ void MainWindow::openVault(const QString &path) {
                                 m_graphPage->savedState());
     delete m_vault;
     m_vault = new Vault(path);
+    loadVaultSpellLanguages();
     updateVaultTitle();
     // Fold any legacy seed store into note headers. The migration rejects every
     // metadata or note path that does not resolve canonically inside the vault.
@@ -3507,6 +3514,38 @@ void MainWindow::openVault(const QString &path) {
         else
             showMobileEditor();
     }
+}
+
+void MainWindow::loadVaultSpellLanguages() {
+    if (!m_vault)
+        return;
+
+    QSettings global;
+    QStringList languages = VaultSettings::stringListValue(
+        m_vault->root(), QStringLiteral("spellLanguages"));
+    if (languages.isEmpty()) {
+        languages = configuredSpellLanguages(global);
+        VaultSettings::setStringList(m_vault->root(),
+                                     QStringLiteral("spellLanguages"),
+                                     languages);
+    }
+
+    QString spellError;
+    if (!m_editor->setSpellCheckingLanguages(languages, &spellError) &&
+        languages != QStringList{QStringLiteral("en_US")}) {
+        const QString selectedError = spellError;
+        languages = {QStringLiteral("en_US")};
+        m_editor->setSpellCheckingLanguages(languages, &spellError);
+        VaultSettings::setStringList(m_vault->root(),
+                                     QStringLiteral("spellLanguages"),
+                                     languages);
+        spellError = selectedError;
+    }
+    if (!spellError.isEmpty())
+        QTimer::singleShot(0, this, [this, spellError] {
+            notify(tr("Could not load spelling languages: %1").arg(spellError),
+                   4000);
+        });
 }
 
 void MainWindow::updateVaultTitle() {

@@ -33,7 +33,8 @@ QString groupForRoot(const QString &root) {
 const QStringList &legacyKeys() {
     static const QStringList keys{
         QStringLiteral("homeNote"), QStringLiteral("newNoteFolder"),
-        QStringLiteral("templatesFolder")};
+        QStringLiteral("templatesFolder"), QStringLiteral("spellLanguages"),
+        QStringLiteral("spellLanguage")};
     return keys;
 }
 
@@ -58,6 +59,36 @@ void setValue(const QString &vaultRoot, const QString &key,
     settings.beginGroup(groupForRoot(root));
     // Keep the source path beside the opaque collision-resistant group id so
     // the native/INI settings remain understandable when inspected by hand.
+    settings.setValue(QStringLiteral("rootPath"), root);
+    settings.setValue(key, value);
+}
+
+QStringList stringListValue(const QString &vaultRoot, const QString &key,
+                            const QStringList &fallback) {
+    const QString root = normalizedRoot(vaultRoot);
+    if (root.isEmpty() || key.isEmpty())
+        return fallback;
+    QSettings settings;
+    settings.beginGroup(groupForRoot(root));
+    const QVariant stored = settings.value(key);
+    if (!stored.isValid())
+        return fallback;
+    QStringList result = stored.toStringList();
+    if (result.isEmpty()) {
+        const QString singular = stored.toString().trimmed();
+        if (!singular.isEmpty())
+            result.append(singular);
+    }
+    return result.isEmpty() ? fallback : result;
+}
+
+void setStringList(const QString &vaultRoot, const QString &key,
+                   const QStringList &value) {
+    const QString root = normalizedRoot(vaultRoot);
+    if (root.isEmpty() || key.isEmpty())
+        return;
+    QSettings settings;
+    settings.beginGroup(groupForRoot(root));
     settings.setValue(QStringLiteral("rootPath"), root);
     settings.setValue(key, value);
 }
@@ -88,9 +119,25 @@ void migrateLegacyForLastVault() {
 
     settings.beginGroup(groupForRoot(root));
     settings.setValue(QStringLiteral("rootPath"), root);
-    for (auto it = legacy.constBegin(); it != legacy.constEnd(); ++it)
+    for (auto it = legacy.constBegin(); it != legacy.constEnd(); ++it) {
+        if (it.key() == QLatin1String("spellLanguage") ||
+            it.key() == QLatin1String("spellLanguages"))
+            continue;
         if (!settings.contains(it.key()))
             settings.setValue(it.key(), it.value());
+    }
+    if (!settings.contains(QStringLiteral("spellLanguages"))) {
+        QStringList languages =
+            legacy.value(QStringLiteral("spellLanguages")).toStringList();
+        if (languages.isEmpty()) {
+            const QString singular =
+                legacy.value(QStringLiteral("spellLanguage")).toString();
+            if (!singular.isEmpty())
+                languages.append(singular);
+        }
+        if (!languages.isEmpty())
+            settings.setValue(QStringLiteral("spellLanguages"), languages);
+    }
     settings.endGroup();
     settings.sync();
     if (settings.status() != QSettings::NoError)
