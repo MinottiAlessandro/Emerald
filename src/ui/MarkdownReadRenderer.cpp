@@ -1104,9 +1104,14 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
             sourceEndBlock = closingBlock < lines.size()
                                  ? closingBlock
                                  : lines.size() - 1;
+            const QString code = codeLines.join(QLatin1Char('\n'));
+            const int codeSourceStart =
+                sourceBlock + 1 < lineStarts.size()
+                    ? lineStarts.at(sourceBlock + 1)
+                    : lineStart + line.size();
             object = MarkdownReadObjectRenderer::codeBlockFormat(
-                options.baseFont, fence.captured(2),
-                codeLines.join(QLatin1Char('\n')), options.fallbackWidth);
+                options.baseFont, fence.captured(2), code,
+                options.fallbackWidth, codeSourceStart, code.size());
             block.setTopMargin(baseSize * 0.35);
             block.setBottomMargin(baseSize * 0.55);
             block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);

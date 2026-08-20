@@ -334,6 +334,41 @@ int main(int argc, char **argv) {
                   QStringLiteral("in-note centering target") &&
                   cursorIsCentered(),
               QStringLiteral("Find in Note should center its match"));
+
+        QStringList readRows;
+        for (int i = 0; i < 90; ++i) {
+            if (i == 43)
+                readRows.append(QStringLiteral("```cpp"));
+            else if (i == 44)
+                readRows.append(
+                    QStringLiteral("const int read_search_target = 42;"));
+            else if (i == 45)
+                readRows.append(QStringLiteral("```"));
+            else
+                readRows.append(QStringLiteral("read search row %1").arg(i));
+        }
+        searchEditor.setReadMode(false);
+        searchEditor.setPlainText(readRows.join(QLatin1Char('\n')));
+        searchEditor.setReadMode(true);
+        searchEditor.moveCursor(QTextCursor::Start);
+        check(searchEditor.findAndCenter(
+                  QStringLiteral("read_search_target")),
+              QStringLiteral("Find in Note should inspect Read Mode code "
+                             "blocks"));
+        QApplication::processEvents();
+        QTextCursor renderedCodeMatch(searchEditor.document());
+        renderedCodeMatch.setPosition(
+            searchEditor.textCursor().selectionStart());
+        renderedCodeMatch.movePosition(QTextCursor::NextCharacter,
+                                       QTextCursor::KeepAnchor);
+        check(searchEditor.sourceTextCursor().selectedText() ==
+                  QStringLiteral("read_search_target") &&
+                  MarkdownReadObjectRenderer::kind(
+                      renderedCodeMatch.charFormat()) ==
+                      MarkdownReadObjectRenderer::Kind::CodeBlock &&
+                  cursorIsCentered(),
+              QStringLiteral("a Read Mode code match should retain its exact "
+                             "source selection and center the code card"));
     }
 
     // Theme changes refresh both the cached live highlighter formats and the

@@ -60,10 +60,14 @@ public:
     static QTextCharFormat codeBlockFormat(const QFont &baseFont,
                                            const QString &language,
                                            const QString &code,
-                                           qreal fallbackWidth);
+                                           qreal fallbackWidth,
+                                           int sourceStart,
+                                           int sourceLength);
 
     static Kind kind(const QTextCharFormat &format);
     static QString codeText(const QTextCharFormat &format);
+    static int codeSourceStart(const QTextCharFormat &format);
+    static int codeSourceLength(const QTextCharFormat &format);
     // Plain-text alternative used by selection copy and assistive UI for a
     // custom object that would otherwise appear as U+FFFC.
     static QString accessibleText(const QTextCharFormat &format);
@@ -87,5 +91,7 @@ private:
         InlinePlacementProperty,
         CheckedProperty,
         LanguageProperty,
+        CodeSourceStartProperty,
+        CodeSourceLengthProperty,
     };
 };

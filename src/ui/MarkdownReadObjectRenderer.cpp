@@ -428,7 +428,7 @@ QTextCharFormat MarkdownReadObjectRenderer::checkboxFormat(const QFont &baseFont
 
 QTextCharFormat MarkdownReadObjectRenderer::codeBlockFormat(
     const QFont &baseFont, const QString &language, const QString &code,
-    qreal fallbackWidth) {
+    qreal fallbackWidth, int sourceStart, int sourceLength) {
     QTextCharFormat format;
     format.setFont(baseFont);
     format.setObjectType(ObjectType);
@@ -438,6 +438,8 @@ QTextCharFormat MarkdownReadObjectRenderer::codeBlockFormat(
                                                     : language.trimmed());
     format.setProperty(PayloadProperty, code);
     format.setProperty(FallbackWidthProperty, fallbackWidth);
+    format.setProperty(CodeSourceStartProperty, sourceStart);
+    format.setProperty(CodeSourceLengthProperty, sourceLength);
     format.setToolTip(QObject::tr("%1 code block").arg(
         format.stringProperty(LanguageProperty)));
     return format;
@@ -454,6 +456,20 @@ QString MarkdownReadObjectRenderer::codeText(const QTextCharFormat &format) {
     return kind(format) == Kind::CodeBlock
                ? format.stringProperty(PayloadProperty)
                : QString();
+}
+
+int MarkdownReadObjectRenderer::codeSourceStart(
+    const QTextCharFormat &format) {
+    return kind(format) == Kind::CodeBlock
+               ? format.intProperty(CodeSourceStartProperty)
+               : -1;
+}
+
+int MarkdownReadObjectRenderer::codeSourceLength(
+    const QTextCharFormat &format) {
+    return kind(format) == Kind::CodeBlock
+               ? format.intProperty(CodeSourceLengthProperty)
+               : 0;
 }
 
 QString MarkdownReadObjectRenderer::accessibleText(

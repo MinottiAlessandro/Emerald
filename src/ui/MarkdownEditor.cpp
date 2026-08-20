@@ -1478,8 +1478,99 @@ void MarkdownEditor::jumpToMatch(const QString &text) {
 
 bool MarkdownEditor::findAndCenter(const QString &text,
                                    QTextDocument::FindFlags flags) {
-    if (text.isEmpty() || !QTextEdit::find(text, flags))
+    if (text.isEmpty())
         return false;
+
+    if (!m_readMode) {
+        if (!QTextEdit::find(text, flags))
+            return false;
+    } else {
+        struct CodeObject {
+            int sourceStart = -1;
+            int sourceEnd = -1;
+            QTextCursor readCursor;
+        };
+
+        QVector<CodeObject> codeObjects;
+        for (QTextBlock block = m_readDocument->firstBlock(); block.isValid();
+             block = block.next()) {
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const QTextFragment fragment = it.fragment();
+                if (!fragment.isValid())
+                    continue;
+                const QTextCharFormat format = fragment.charFormat();
+                if (MarkdownReadObjectRenderer::kind(format) !=
+                    MarkdownReadObjectRenderer::Kind::CodeBlock) {
+                    continue;
+                }
+                const int sourceStart =
+                    MarkdownReadObjectRenderer::codeSourceStart(format);
+                const int sourceLength =
+                    MarkdownReadObjectRenderer::codeSourceLength(format);
+                if (sourceStart < 0 || sourceLength <= 0)
+                    continue;
+                QTextCursor objectCursor(m_readDocument);
+                objectCursor.setPosition(fragment.position());
+                objectCursor.setPosition(fragment.position() +
+                                               fragment.length(),
+                                           QTextCursor::KeepAnchor);
+                codeObjects.append(
+                    {sourceStart, sourceStart + sourceLength, objectCursor});
+            }
+        }
+
+        const QTextCursor readMatch =
+            m_readDocument->find(text, textCursor(), flags);
+        QTextCursor readSourceMatch;
+        if (!readMatch.isNull()) {
+            readSourceMatch = MarkdownReadRenderer::mapToSourceCursor(
+                m_sourceDocument, readMatch);
+        }
+
+        QTextCursor codeSourceMatch;
+        QTextCursor codeReadMatch;
+        QTextCursor sourceSearchCursor = m_sourceCursor;
+        while (!codeObjects.isEmpty()) {
+            const QTextCursor candidate =
+                m_sourceDocument->find(text, sourceSearchCursor, flags);
+            if (candidate.isNull())
+                break;
+            for (const CodeObject &object : std::as_const(codeObjects)) {
+                if (candidate.selectionStart() >= object.sourceStart &&
+                    candidate.selectionEnd() <= object.sourceEnd) {
+                    codeSourceMatch = candidate;
+                    codeReadMatch = object.readCursor;
+                    break;
+                }
+            }
+            if (!codeSourceMatch.isNull())
+                break;
+            sourceSearchCursor = candidate;
+        }
+
+        if (readMatch.isNull() && codeSourceMatch.isNull())
+            return false;
+
+        const bool backward = flags.testFlag(QTextDocument::FindBackward);
+        const bool chooseCode =
+            readMatch.isNull() ||
+            (!codeSourceMatch.isNull() &&
+             (backward ? codeSourceMatch.selectionStart() >
+                             readSourceMatch.selectionStart()
+                       : codeSourceMatch.selectionStart() <
+                             readSourceMatch.selectionStart()));
+        const QTextCursor chosenRead = chooseCode ? codeReadMatch : readMatch;
+        const QTextCursor chosenSource =
+            chooseCode ? codeSourceMatch : readSourceMatch;
+
+        const bool wasSwitching = m_switchingDocuments;
+        m_switchingDocuments = true;
+        setTextCursor(chosenRead);
+        m_switchingDocuments = wasSwitching;
+        m_sourceCursor = chosenSource;
+        m_readCursorChanged = false;
+    }
+
     centerCursor();
     // Revealing a selected Markdown construct can change paragraph geometry,
     // and a newly-opened note may not have completed its first viewport layout.
