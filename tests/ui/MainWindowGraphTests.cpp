@@ -108,6 +108,21 @@ void sendWheel(QWidget *receiver, int angleY) {
   QApplication::sendEvent(receiver, &event);
 }
 
+void clickWidget(QWidget *receiver, const QPoint &position,
+                 Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+  if (!receiver)
+    return;
+  const QPoint global = receiver->mapToGlobal(position);
+  QMouseEvent press(QEvent::MouseButtonPress, QPointF(position),
+                    QPointF(global), Qt::LeftButton, Qt::LeftButton,
+                    modifiers);
+  QApplication::sendEvent(receiver, &press);
+  QMouseEvent release(QEvent::MouseButtonRelease, QPointF(position),
+                      QPointF(global), Qt::LeftButton, Qt::NoButton,
+                      modifiers);
+  QApplication::sendEvent(receiver, &release);
+}
+
 template <typename Predicate>
 bool waitUntil(Predicate predicate, int timeoutMs = 3000) {
   QElapsedTimer timer;
@@ -806,10 +821,12 @@ void testWikiHeadingNavigation() {
     return;
   }
 
-  check(QMetaObject::invokeMethod(
-            editor, "linkClicked", Qt::DirectConnection,
-            Q_ARG(QString, QStringLiteral("Test#Title2"))),
-        QStringLiteral("heading-qualified wiki signal is invokable"));
+  QApplication::processEvents();
+  const QTextBlock sourceLinkBlock = editor->document()->firstBlock();
+  QTextCursor sourceLink(sourceLinkBlock);
+  sourceLink.setPosition(sourceLinkBlock.position() + 2);
+  clickWidget(editor->viewport(), editor->cursorRect(sourceLink).center(),
+              Qt::ControlModifier);
   check(waitUntil([title, editor] {
           return title && title->text() == QStringLiteral("Test") &&
                  editor->sourceTextCursor().block().text() ==
