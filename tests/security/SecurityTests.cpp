@@ -193,6 +193,24 @@ void testWikiLinkCreationValidation() {
 
     const QString validTarget =
         WikiLink::cleanTarget(QStringLiteral("A safe note#Heading|Alias"));
+    check(WikiLink::cleanDestination(
+              QStringLiteral("A safe note#Heading|Alias")) ==
+                  QStringLiteral("A safe note#Heading") &&
+              WikiLink::heading(
+                  QStringLiteral("A safe note#Heading|Alias")) ==
+                  QStringLiteral("Heading"),
+          QStringLiteral("wiki navigation retains a heading while removing its "
+                         "display alias"));
+    const QString headingSource = QStringLiteral(
+        "```md\n# Title2\n```\n"
+        "<!-- # Title2 -->\n"
+        "# Other\n"
+        "## Title2\n");
+    check(WikiLink::headingPosition(headingSource,
+                                    QStringLiteral("title2")) ==
+              headingSource.lastIndexOf(QStringLiteral("Title2")),
+          QStringLiteral("heading navigation ignores fenced/commented decoys "
+                         "and matches case-insensitively"));
     const Note valid = vault.createNote(validTarget);
     check(!valid.path.isEmpty(), QStringLiteral("valid wiki-link creates a note"));
     check(QFileInfo::exists(valid.path),

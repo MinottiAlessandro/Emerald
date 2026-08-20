@@ -2566,7 +2566,7 @@ QString MarkdownEditor::linkAt(const QPoint &pos) const {
         if (column >= m.capturedStart(0) && column <= m.capturedEnd(0) &&
             pointInTextRange(pos, block, int(m.capturedStart(0)),
                              int(m.capturedEnd(0))))
-            return WikiLink::cleanTarget(m.captured(1));
+            return WikiLink::cleanDestination(m.captured(1));
     }
     return {};
 }
@@ -2759,7 +2759,7 @@ void MarkdownEditor::refreshQuickJumpTargets() {
                                          (pipe >= 0 ? pipe + 1 : 0);
                 candidates.append({int(match.capturedStart()), displayStart,
                                    int(match.capturedEnd(1)),
-                                   WikiLink::cleanTarget(inner),
+                                   WikiLink::cleanDestination(inner),
                                    QuickJumpKind::Wiki});
             }
 

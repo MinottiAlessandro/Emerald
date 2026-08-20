@@ -424,7 +424,7 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
                     --trailingSpace;
                 const QString label = rawLabel.mid(
                     leadingSpace, trailingSpace - leadingSpace);
-                const QString target = WikiLink::cleanTarget(inside);
+                const QString target = WikiLink::cleanDestination(inside);
                 const QTextCharFormat link = merged(base, [&](QTextCharFormat &f) {
                     f.setForeground(accent);
                     f.setFontUnderline(true);

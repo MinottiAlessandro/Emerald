@@ -663,6 +663,81 @@ void testLastNotePerVault() {
   settings.clear();
 }
 
+void testWikiHeadingNavigation() {
+  QSettings settings;
+  settings.clear();
+  QTemporaryDir vault;
+  check(vault.isValid(), QStringLiteral("wiki-heading vault exists"));
+  if (!vault.isValid())
+    return;
+
+  const QString source = vault.filePath(QStringLiteral("Source.md"));
+  const QString target = vault.filePath(QStringLiteral("Test.md"));
+  QStringList targetRows{QStringLiteral("# Start"), QStringLiteral("```md"),
+                         QStringLiteral("# Title2"), QStringLiteral("```")};
+  for (int i = 0; i < 36; ++i)
+    targetRows.append(QStringLiteral("context before target %1").arg(i));
+  targetRows.append(QStringLiteral("# Title2"));
+  for (int i = 0; i < 28; ++i)
+    targetRows.append(QStringLiteral("context after target %1").arg(i));
+  targetRows.append(QStringLiteral("## Local Section"));
+  for (int i = 0; i < 16; ++i)
+    targetRows.append(QStringLiteral("tail context %1").arg(i));
+  check(writeFile(source, QStringLiteral("[[Test#Title2]]\n")) &&
+            writeFile(target, targetRows.join(QLatin1Char('\n'))),
+        QStringLiteral("wiki-heading fixtures are writable"));
+
+  settings.setValue(QStringLiteral("lastVault"), vault.path());
+  VaultSettings::setValue(vault.path(), QStringLiteral("lastNote"),
+                          QStringLiteral("Source.md"));
+  MainWindow window;
+  window.resize(1000, 520);
+  window.show();
+  auto *editor =
+      window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+  auto *title = window.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+  check(waitUntil([title] {
+          return title && title->text() == QStringLiteral("Source");
+        }) &&
+            editor,
+        QStringLiteral("wiki-heading window opens its source note"));
+  if (!editor) {
+    window.close();
+    settings.clear();
+    return;
+  }
+
+  check(QMetaObject::invokeMethod(
+            editor, "linkClicked", Qt::DirectConnection,
+            Q_ARG(QString, QStringLiteral("Test#Title2"))),
+        QStringLiteral("heading-qualified wiki signal is invokable"));
+  check(waitUntil([title, editor] {
+          return title && title->text() == QStringLiteral("Test") &&
+                 editor->sourceTextCursor().block().text() ==
+                     QStringLiteral("# Title2");
+        }),
+        QStringLiteral("[[Test#Title2]] opens Test at the real heading instead "
+                       "of its fenced-code decoy"));
+  QApplication::processEvents();
+  check(qAbs(editor->cursorRect().center().y() -
+             editor->viewport()->rect().center().y()) <=
+            editor->fontMetrics().height(),
+        QStringLiteral("wiki heading navigation centers the destination"));
+
+  check(QMetaObject::invokeMethod(
+            editor, "linkClicked", Qt::DirectConnection,
+            Q_ARG(QString, QStringLiteral("#Local Section"))) &&
+            waitUntil([title, editor] {
+              return title && title->text() == QStringLiteral("Test") &&
+                     editor->sourceTextCursor().block().text() ==
+                         QStringLiteral("## Local Section");
+            }),
+        QStringLiteral("local [[#heading]] navigation stays in the current note"));
+  window.close();
+  QApplication::processEvents();
+  settings.clear();
+}
+
 void testFullWidthEditorPreference() {
   QSettings settings;
   settings.clear();
@@ -1236,6 +1311,7 @@ int main(int argc, char **argv) {
 
   testInPaneGraphNavigation(settingsDir.path());
   testLastNotePerVault();
+  testWikiHeadingNavigation();
   testFullWidthEditorPreference();
   testFileTreeSortPreference();
   testThemePreference();

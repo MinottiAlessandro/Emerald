@@ -1514,7 +1514,7 @@ int main(int argc, char **argv) {
     // Clicking blank space after the token must not inherit the nearest cursor.
     editor.resize(230, 220);
     const QString geometryLinkSource = QStringLiteral(
-        "enough leading words to wrap [[Geometry Target]]\nother line");
+        "enough leading words to wrap [[Geometry Target#Section]]\nother line");
     editor.setPlainText(geometryLinkSource);
     editor.moveCursor(QTextCursor::End);
     QApplication::processEvents();
@@ -1531,8 +1531,9 @@ int main(int argc, char **argv) {
                          geometryMatch.capturedStart(1));
     const QRect linkCell = editor.cursorRect(linkText);
     clickEditor(editor, linkCell.center(), Qt::ControlModifier);
-    check(geometryJump == QStringLiteral("Geometry Target"),
-          QStringLiteral("wrapped link geometry should remain clickable"));
+    check(geometryJump == QStringLiteral("Geometry Target#Section"),
+          QStringLiteral("wrapped link geometry should remain clickable and "
+                         "retain its heading destination"));
     geometryJump.clear();
     clickEditor(editor,
                 QPoint(editor.viewport()->width() - 3, linkCell.center().y()),
@@ -2343,7 +2344,7 @@ int main(int argc, char **argv) {
     // navigation into viewport scrolling without relocating the text cursor.
     QStringList readingLines{
         QStringLiteral("# Rendered heading"),
-        QStringLiteral("A **bold** paragraph with [[Target|wiki label]] and "
+        QStringLiteral("A **bold** paragraph with [[Target#Title2|wiki label]] and "
                        "[site](https://example.com), plus ==marked== and "
                        "$x^2$."),
         QStringLiteral("==word1 **word2== word3** and "
@@ -2554,7 +2555,7 @@ int main(int argc, char **argv) {
                 const QString wikiTarget =
                     MarkdownReadRenderer::wikiTargetFromHref(
                         format.anchorHref());
-                if (wikiTarget == QStringLiteral("Target")) {
+                if (wikiTarget == QStringLiteral("Target#Title2")) {
                     sawWikiAnchor = true;
                     renderedWikiPosition = fragment.position();
                 } else if (wikiTarget == QStringLiteral("Table Note")) {
@@ -2713,9 +2714,9 @@ int main(int argc, char **argv) {
                     QPoint((leftRect.left() + rightRect.left()) / 2,
                            leftRect.center().y()));
     }
-    check(readLinkTarget == QStringLiteral("Target"),
+    check(readLinkTarget == QStringLiteral("Target#Title2"),
           QStringLiteral("a plain click should open a semantic Read Mode "
-                         "wiki anchor"));
+                         "wiki anchor with its heading destination"));
 
     // Quick Jump reads the same anchors and therefore also reaches links in a
     // QTextTable cell. The first visible link keeps the QWERTY-first Q hint.
@@ -2750,9 +2751,9 @@ int main(int argc, char **argv) {
                          "badge beside each semantic link"));
     sendKey(editor, QEvent::KeyPress, Qt::Key_Q, Qt::AltModifier,
             QStringLiteral("q"));
-    check(readLinkTarget == QStringLiteral("Target"),
+    check(readLinkTarget == QStringLiteral("Target#Title2"),
           QStringLiteral("Read Mode Quick Jump Q should open the first "
-                         "semantic link"));
+                         "semantic link with its heading destination"));
     endQuickJump(editor);
 
     QTextCursor currentTableLink =
@@ -3072,7 +3073,7 @@ int main(int argc, char **argv) {
     const QMetaObject::Connection replaceConnection = QObject::connect(
         &editor, &MarkdownEditor::linkClicked, &editor,
         [&](const QString &target) {
-            if (target != QStringLiteral("Target"))
+            if (target != QStringLiteral("Target#Title2"))
                 return;
             replacedFromWikiClick = true;
             editor.setPlainText(replacedWhileReading);

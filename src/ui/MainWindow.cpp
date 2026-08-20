@@ -14,6 +14,7 @@
 #include "core/SpellChecker.h"
 #include "core/Vault.h"
 #include "core/VaultSettings.h"
+#include "core/WikiLink.h"
 
 #include <QAbstractItemView>
 #include <QAbstractItemModel>
@@ -4161,11 +4162,16 @@ void MainWindow::newNote() {
     newNoteIn(defaultNoteDirectory());
 }
 
-void MainWindow::onLinkClicked(const QString &target) {
+void MainWindow::onLinkClicked(const QString &destination) {
     if (!m_vault)
         return;
-    QString path = m_vault->pathForTitle(target);
+    const QString target = WikiLink::cleanTarget(destination);
+    const QString heading = WikiLink::heading(destination);
+    QString path = target.isEmpty() ? m_currentPath
+                                    : m_vault->pathForTitle(target);
     if (path.isEmpty()) {
+        if (target.isEmpty())
+            return;
         if (m_readMode) {
             notify(tr("“%1” does not exist — Read Mode is on").arg(target),
                    3000);
@@ -4194,6 +4200,19 @@ void MainWindow::onLinkClicked(const QString &target) {
         path = note.path;
     }
     openNoteByPath(path);
+    if (heading.isEmpty())
+        return;
+
+    const int position =
+        WikiLink::headingPosition(m_editor->toPlainText(), heading);
+    if (position < 0) {
+        notify(tr("Heading “%1” was not found").arg(heading), 3000);
+        return;
+    }
+    QTextCursor cursor(m_editor->sourceDocument());
+    cursor.setPosition(position);
+    m_editor->setSourceTextCursor(cursor);
+    m_editor->centerCursor();
 }
 
 void MainWindow::navigateBack() {

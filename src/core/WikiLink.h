@@ -18,4 +18,15 @@ const QRegularExpression &pattern();
 // "Foo|bar" -> "Foo", "Foo#section" -> "Foo", trimmed.
 QString cleanTarget(const QString &inner);
 
+// Navigation destination with only the optional display alias removed:
+// "Foo#section|bar" -> "Foo#section". Local "#section" links are retained.
+QString cleanDestination(const QString &inner);
+
+// The trimmed heading qualifier after the first '#', or empty when absent.
+QString heading(const QString &inner);
+
+// Source position of the first matching ATX heading outside fenced code and
+// author-only comments. Matching is case-insensitive; -1 means not found.
+int headingPosition(const QString &markdown, const QString &headingTarget);
+
 } // namespace WikiLink
