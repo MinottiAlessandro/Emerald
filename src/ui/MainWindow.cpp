@@ -94,108 +94,109 @@ constexpr int kDesktopSplitterHandleWidth = 11;
 constexpr int kGraphSplitterHandleWidth = 2;
 constexpr int kDefaultSidebarWidth = 260;
 
-// A compact checkable combo used by spelling settings. Unlike a normal combo,
-// selecting a row toggles it without closing the popup, and the line edit shows
-// a comma-separated summary of every active dictionary.
-class SpellingLanguageCombo final : public QComboBox {
+// QComboBox always treats a row click as a completed single selection. A real
+// checkable menu is a better fit for stacked dictionaries: swallowing only an
+// action's release keeps the menu open, while QMenu still handles Escape,
+// outside clicks, focus loss, and keyboard navigation normally.
+class PersistentCheckMenu final : public QMenu {
 public:
-    explicit SpellingLanguageCombo(QWidget *parent = nullptr)
-        : QComboBox(parent) {
-        setEditable(true);
-        lineEdit()->setReadOnly(true);
-        lineEdit()->installEventFilter(this);
-        view()->viewport()->installEventFilter(this);
+    explicit PersistentCheckMenu(QWidget *parent = nullptr) : QMenu(parent) {}
+
+    std::function<void(QAction *)> toggleRequested;
+
+protected:
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        QAction *action = actionAt(event->position().toPoint());
+        if (action && action->isEnabled() && action->isCheckable() &&
+            toggleRequested) {
+            toggleRequested(action);
+            event->accept();
+            return;
+        }
+        QMenu::mouseReleaseEvent(event);
+    }
+
+    void keyPressEvent(QKeyEvent *event) override {
+        if ((event->key() == Qt::Key_Space ||
+             event->key() == Qt::Key_Return ||
+             event->key() == Qt::Key_Enter) &&
+            activeAction() && activeAction()->isEnabled() &&
+            activeAction()->isCheckable() && toggleRequested) {
+            toggleRequested(activeAction());
+            event->accept();
+            return;
+        }
+        QMenu::keyPressEvent(event);
+    }
+};
+
+class SpellingLanguageSelector final : public QToolButton {
+public:
+    explicit SpellingLanguageSelector(QWidget *parent = nullptr)
+        : QToolButton(parent), m_menu(new PersistentCheckMenu(this)) {
+        setPopupMode(QToolButton::InstantPopup);
+        setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setMenu(m_menu);
+        m_menu->toggleRequested =
+            [this](QAction *action) { toggleAction(action); };
     }
 
     void addLanguage(const QString &name, const QString &locale,
                      bool checked) {
-        addItem(name, locale);
-        setItemData(count() - 1, checked ? Qt::Checked : Qt::Unchecked,
-                    Qt::CheckStateRole);
+        QAction *action = m_menu->addAction(name);
+        action->setData(locale);
+        action->setCheckable(true);
+        action->setChecked(checked);
+    }
+
+    void clear() {
+        m_menu->clear();
+        refreshSummary();
     }
 
     QStringList selectedLanguages() const {
         QStringList selected;
-        for (int index = 0; index < count(); ++index)
-            if (itemData(index, Qt::CheckStateRole).toInt() == Qt::Checked)
-                selected.append(itemData(index).toString());
+        for (const QAction *action : m_menu->actions())
+            if (action->isChecked())
+                selected.append(action->data().toString());
         return selected;
     }
 
     void setSelectedLanguages(const QStringList &locales) {
-        int firstSelected = -1;
-        for (int index = 0; index < count(); ++index) {
-            const bool selected = locales.contains(itemData(index).toString());
-            setItemData(index, selected ? Qt::Checked : Qt::Unchecked,
-                        Qt::CheckStateRole);
-            if (selected && firstSelected < 0)
-                firstSelected = index;
+        bool anySelected = false;
+        for (QAction *action : m_menu->actions()) {
+            const bool selected = locales.contains(action->data().toString());
+            action->setChecked(selected);
+            anySelected |= selected;
         }
-        if (firstSelected < 0 && count() > 0) {
-            firstSelected = 0;
-            setItemData(0, Qt::Checked, Qt::CheckStateRole);
-        }
-        if (firstSelected >= 0)
-            setCurrentIndex(firstSelected);
+        if (!anySelected && !m_menu->actions().isEmpty())
+            m_menu->actions().first()->setChecked(true);
         refreshSummary();
     }
 
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override {
-        if (watched == lineEdit() &&
-            event->type() == QEvent::MouseButtonPress) {
-            showPopup();
-            return true;
-        }
-        if (watched == view()->viewport() &&
-            event->type() == QEvent::MouseButtonRelease) {
-            const auto *mouse = static_cast<QMouseEvent *>(event);
-            const QModelIndex item = view()->indexAt(mouse->position().toPoint());
-            if (item.isValid()) {
-                m_keepPopupOpen = true;
-                toggleItem(item.row());
-                // QComboBox may ask its private popup container to close while
-                // dispatching this same release. Keep only that item-click
-                // close suppressed; Escape and clicks outside the popup retain
-                // the native behavior on the next event-loop turn.
-                QTimer::singleShot(0, this,
-                                   [this] { m_keepPopupOpen = false; });
-            }
-            return true;
-        }
-        return QComboBox::eventFilter(watched, event);
-    }
-
-    void hidePopup() override {
-        if (!m_keepPopupOpen)
-            QComboBox::hidePopup();
-    }
-
 private:
-    void toggleItem(int index) {
-        if (index < 0 || index >= count())
+    void toggleAction(QAction *action) {
+        if (!action)
             return;
-        const bool checked =
-            itemData(index, Qt::CheckStateRole).toInt() == Qt::Checked;
-        if (checked && selectedLanguages().size() == 1)
+        if (action->isChecked() && selectedLanguages().size() == 1)
             return; // an enabled spell checker always has a dictionary
-        setItemData(index, checked ? Qt::Unchecked : Qt::Checked,
-                    Qt::CheckStateRole);
+        action->setChecked(!action->isChecked());
         refreshSummary();
     }
 
     void refreshSummary() {
         QStringList names;
-        for (int index = 0; index < count(); ++index)
-            if (itemData(index, Qt::CheckStateRole).toInt() == Qt::Checked)
-                names.append(itemText(index));
+        for (const QAction *action : m_menu->actions())
+            if (action->isChecked())
+                names.append(action->text());
         const QString summary = names.join(QStringLiteral(", "));
-        lineEdit()->setText(summary);
-        lineEdit()->setToolTip(summary);
-        lineEdit()->setCursorPosition(0);
+        setText(summary);
+        setToolTip(summary);
+        setProperty("selectedLanguages", selectedLanguages());
     }
 
-    bool m_keepPopupOpen = false;
+    PersistentCheckMenu *m_menu = nullptr;
 };
 
 QStringList configuredSpellLanguages(QSettings &settings) {
@@ -2875,7 +2876,7 @@ void MainWindow::openSettings() {
     spellLanguageLayout->setContentsMargins(0, 0, 0, 0);
     spellLanguageLayout->setSpacing(8);
     auto *spellLanguageBox =
-        new SpellingLanguageCombo(spellLanguageWidget);
+        new SpellingLanguageSelector(spellLanguageWidget);
     spellLanguageBox->setObjectName(QStringLiteral("spellLanguage"));
     auto *manageSpellLanguages =
         new QPushButton(tr("Manage…"), spellLanguageWidget);

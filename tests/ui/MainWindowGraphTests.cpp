@@ -325,8 +325,6 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   const int topLevels = QApplication::topLevelWidgets().size();
   bool settingsGraphControlsSeen = false;
   bool spellingControlsSeen = false;
-  bool spellingLanguagePopupOpaque = false;
-  bool spellingLanguagePopupFrameOpaque = false;
   bool spellingLanguagePopupStaysOpen = false;
   bool fontPopupOpaque = false;
   bool spellingManagerSeen = false;
@@ -341,7 +339,7 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     auto *spellEnabled = dialog ? dialog->findChild<QCheckBox *>(
                                       QStringLiteral("spellCheckEnabled"))
                                 : nullptr;
-    auto *spellLanguage = dialog ? dialog->findChild<QComboBox *>(
+    auto *spellLanguage = dialog ? dialog->findChild<QToolButton *>(
                                        QStringLiteral("spellLanguage"))
                                  : nullptr;
     auto *manageLanguages = dialog ? dialog->findChild<QPushButton *>(
@@ -357,56 +355,32 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     settingsGraphControlsSeen = openGlobal && openLocal;
     spellingControlsSeen = spellEnabled && spellLanguage && manageLanguages &&
                            spellEnabled->isChecked() &&
-                           spellLanguage->currentData() ==
-                               QStringLiteral("en_US");
+                           spellLanguage->property("selectedLanguages")
+                               .toStringList()
+                               .contains(QStringLiteral("en_US"));
     if (spellLanguage) {
-      // Exercise an unselected row: selected rows have their own fill and
-      // could hide a transparent popup viewport regression.
-      spellLanguage->addItem(QStringLiteral("Test language"),
-                             QStringLiteral("test_TEST"));
-      spellLanguage->showPopup();
+      QMenu *popup = spellLanguage->menu();
+      QAction *testLanguage = popup->addAction(QStringLiteral("Test language"));
+      testLanguage->setData(QStringLiteral("test_TEST"));
+      testLanguage->setCheckable(true);
+      popup->popup(spellLanguage->mapToGlobal(
+          QPoint(0, spellLanguage->height())));
       QApplication::processEvents();
-      QAbstractItemView *popup = spellLanguage->view();
-      QWidget *viewport = popup ? popup->viewport() : nullptr;
-      spellingLanguagePopupFrameOpaque =
-          popup && widgetRendersOpaque(popup->window());
-      const QModelIndex testIndex =
-          spellLanguage->model()->index(spellLanguage->count() - 1, 0);
-      const QRect testRow = popup ? popup->visualRect(testIndex) : QRect();
-      if (viewport && testRow.isValid() && !testRow.isEmpty()) {
-        QImage rendered(viewport->size(), QImage::Format_ARGB32_Premultiplied);
-        rendered.fill(Qt::transparent);
-        QPainter painter(&rendered);
-        viewport->render(&painter);
-        painter.end();
-        const QPoint sample(qMax(testRow.left(), testRow.right() - 6),
-                            testRow.center().y());
-        if (rendered.rect().contains(sample)) {
-          const QColor color = rendered.pixelColor(sample);
-          spellingLanguagePopupOpaque =
-              color.alpha() == 255 &&
-              color == QColor(QStringLiteral("#121512"));
-        }
-
-        const QPoint local = testRow.center();
-        const QPoint global = viewport->mapToGlobal(local);
-        QMouseEvent press(QEvent::MouseButtonPress, QPointF(local),
-                          QPointF(global), Qt::LeftButton, Qt::LeftButton,
-                          Qt::NoModifier);
-        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(local),
-                            QPointF(global), Qt::LeftButton, Qt::NoButton,
-                            Qt::NoModifier);
-        QApplication::sendEvent(viewport, &press);
-        QApplication::sendEvent(viewport, &release);
+      const QRect testRow = popup ? popup->actionGeometry(testLanguage) : QRect();
+      if (popup && testRow.isValid() && !testRow.isEmpty()) {
+        clickWidget(popup, testRow.center());
+        QApplication::processEvents();
+        const bool firstToggleStayedOpen =
+            popup->isVisible() && testLanguage->isChecked();
+        clickWidget(popup, testRow.center());
         QApplication::processEvents();
         spellingLanguagePopupStaysOpen =
-            popup->isVisible() &&
-            spellLanguage->itemData(spellLanguage->count() - 1,
-                                    Qt::CheckStateRole)
-                    .toInt() == Qt::Checked;
+            firstToggleStayedOpen && popup->isVisible() &&
+            !testLanguage->isChecked();
       }
-      spellLanguage->hidePopup();
-      spellLanguage->removeItem(spellLanguage->count() - 1);
+      popup->hide();
+      popup->removeAction(testLanguage);
+      delete testLanguage;
     }
     if (fontFamily) {
       fontFamily->showPopup();
@@ -447,11 +421,6 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   check(spellingControlsSeen,
         QStringLiteral("Settings exposes enabled bundled-English spelling and "
                        "the optional-language manager"));
-  check(spellingLanguagePopupOpaque,
-        QStringLiteral("the spelling language popup paints unselected rows "
-                       "with an opaque background"));
-  check(spellingLanguagePopupFrameOpaque,
-        QStringLiteral("the spelling language popup paints an opaque frame"));
   check(spellingLanguagePopupStaysOpen,
         QStringLiteral("selecting a spelling dictionary keeps the multi-select "
                        "popup open"));

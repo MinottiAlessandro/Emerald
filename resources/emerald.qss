@@ -509,7 +509,8 @@ QLabel#themeNameError {
 }
 QDialog QComboBox,
 QDialog QAbstractSpinBox,
-QDialog QLineEdit {
+QDialog QLineEdit,
+QDialog QToolButton#spellLanguage {
     background: #1b1f1c;
     color: #d7eee2;
     border: 1px solid #294035;
@@ -520,17 +521,23 @@ QDialog QLineEdit {
 }
 QDialog QComboBox:hover,
 QDialog QAbstractSpinBox:hover,
-QDialog QLineEdit:hover {
+QDialog QLineEdit:hover,
+QDialog QToolButton#spellLanguage:hover {
     border-color: #3a5e4b;
 }
 QDialog QComboBox:focus,
 QDialog QAbstractSpinBox:focus,
-QDialog QLineEdit:focus {
+QDialog QLineEdit:focus,
+QDialog QToolButton#spellLanguage:focus {
     border-color: #39bd79;
 }
 QDialog QComboBox::drop-down {
     border: none;
     width: 24px;
+}
+QDialog QToolButton#spellLanguage::menu-indicator {
+    subcontrol-position: right center;
+    right: 8px;
 }
 QDialog QCheckBox,
 QDialog QRadioButton {
