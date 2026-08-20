@@ -6,6 +6,7 @@
 
 #include "MathRender.h"
 #include "core/MarkdownComment.h"
+#include "core/MarkdownImage.h"
 #include "core/MascotSeed.h"
 #include "core/SpellChecker.h"
 #include "core/WikiLink.h"
@@ -14,12 +15,6 @@
 #include <QTextDocument>
 
 namespace {
-const QRegularExpression &imageLineRe() {
-    static const QRegularExpression re(QStringLiteral(
-        "^\\s*!\\[[^\\]\\n]*\\]\\((?:<([^>]+)>|([^\\)\\n]+))\\)\\s*$"));
-    return re;
-}
-
 const QRegularExpression &inlineCodeRe() {
     static const QRegularExpression re(QStringLiteral("`([^`]+)`"));
     return re;
@@ -109,6 +104,7 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
 
     // Inline math: a soft teal italic so a formula reads as a distinct mode.
     m_math.setFontItalic(true);
+    m_image.setFontItalic(true);
 
     m_reHeading    = QRegularExpression(QStringLiteral("^(#{1,6})\\s+(.+)$"));
     m_reFence      = QRegularExpression(QStringLiteral("^\\s*(```|~~~)\\s*(\\S*).*$"));
@@ -144,6 +140,7 @@ void MarkdownHighlighter::applyTheme() {
     m_mascot.setForeground(AppTheme::color(QColor("#2bbf74")));
     m_comment.setForeground(AppTheme::color(QColor("#5e7d6d")));
     m_math.setForeground(AppTheme::color(QColor("#6fcfc0")));
+    m_image.setForeground(AppTheme::color(QColor("#7ee0b0")));
     rehighlight();
 }
 
@@ -236,6 +233,14 @@ void MarkdownHighlighter::setSpellChecker(SpellChecker *checker) {
     if (m_spellChecker == checker)
         return;
     m_spellChecker = checker;
+    rehighlight();
+}
+
+void MarkdownHighlighter::setImageReferences(
+    const MarkdownImage::References &references) {
+    if (m_imageReferences == references)
+        return;
+    m_imageReferences = references;
     rehighlight();
 }
 
@@ -428,9 +433,14 @@ int MarkdownHighlighter::inlinePreviewColumnCount(const QString &text) {
         for (int i = qMax(0, start); i < end && i < text.size(); ++i)
             hidden[i] = true;
     };
+    auto show = [&](int start, int end) {
+        for (int i = qMax(0, start); i < end && i < text.size(); ++i)
+            hidden[i] = false;
+    };
 
     // Keep this order in lock-step with highlightBlock's exclusive inline
-    // passes: comments, code, math, internet links, wiki links, then emphasis.
+    // passes: comments, code, math, images, internet links, wiki links, then
+    // emphasis.
     const MarkdownComment::LineAnalysis comments =
         MarkdownComment::analyzeLine(text);
     for (const MarkdownComment::Range &range : comments.ranges) {
@@ -457,6 +467,18 @@ int MarkdownHighlighter::inlinePreviewColumnCount(const QString &text) {
             continue;
         hide(start, match.capturedStart(1));
         hide(match.capturedEnd(1), end);
+        consume(start, end);
+    }
+
+    for (const MarkdownImage::Image &image :
+         MarkdownImage::imagesInLine(text, {})) {
+        const int start = image.start;
+        const int end = start + image.length;
+        if (!available(start, end))
+            continue;
+        hide(start, end);
+        show(image.descriptionStart,
+             image.descriptionStart + image.descriptionLength);
         consume(start, end);
     }
 
@@ -810,6 +832,39 @@ void MarkdownHighlighter::applyInternetLinks(const QString &text,
     }
 }
 
+void MarkdownHighlighter::applyImages(const QString &text,
+                                      QList<bool> &consumed, bool reveal) {
+    const QVector<MarkdownImage::Image> images =
+        MarkdownImage::imagesInLine(text, m_imageReferences);
+    for (const MarkdownImage::Image &image : images) {
+        const int start = image.start;
+        const int end = start + image.length;
+        bool overlaps = false;
+        for (int i = start; i < end && i < consumed.size(); ++i) {
+            if (consumed.at(i)) {
+                overlaps = true;
+                break;
+            }
+        }
+        if (overlaps)
+            continue;
+
+        const QTextCharFormat wrapper =
+            reveal ? inlineFormat(m_marker) : conceal();
+        setFormat(start, image.length, wrapper);
+        if (image.descriptionLength > 0) {
+            const int descriptionStart = image.descriptionStart;
+            const int descriptionEnd = qMin(end, descriptionStart +
+                                                     image.descriptionLength);
+            if (descriptionStart >= start && descriptionEnd > descriptionStart)
+                setFormat(descriptionStart, descriptionEnd - descriptionStart,
+                          inlineFormat(m_image));
+        }
+        for (int i = start; i < end && i < consumed.size(); ++i)
+            consumed[i] = true;
+    }
+}
+
 void MarkdownHighlighter::applyMath(const QString &text, QList<bool> &consumed,
                                     bool reveal) {
     auto it = MathRender::pattern().globalMatch(text);
@@ -1052,7 +1107,7 @@ void MarkdownHighlighter::highlightBlock(const QString &sourceText) {
 
     // Standalone image lines render as local image previews when inactive. On
     // the active line, keep the Markdown source visible and editable.
-    if (imageLineRe().match(text).hasMatch()) {
+    if (MarkdownImage::standaloneImage(text, m_imageReferences).valid) {
         if (!reveal)
             reserveImageHeight(text.size());
         finish(ordinaryState);
@@ -1228,6 +1283,7 @@ void MarkdownHighlighter::highlightBlock(const QString &sourceText) {
     // can all land on the same character).
     applyInline(m_reCode, text, consumed, m_code, reveal);
     applyMath(text, consumed, reveal);
+    applyImages(text, consumed, reveal);
     applyInternetLinks(text, consumed, reveal);
     applyWikiLinks(text, consumed, reveal);
     applyEmphasis(text, consumed, reveal,

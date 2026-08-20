@@ -136,12 +136,26 @@ QSizeF MarkdownReadObjectRenderer::fittedImageSize(const QTextFormat &format,
     const QSize source = format.property(SourceSizeProperty).toSize();
     const qreal maxHeight =
         qMax(qreal(72.0), format.property(MaxHeightProperty).toDouble());
-    if (!source.isValid())
-        return QSizeF(width, qMin(maxHeight, qreal(96.0)));
-    const QSizeF fitted = QSizeF(source).scaled(QSizeF(width, maxHeight),
-                                                Qt::KeepAspectRatio);
-    return {qMax(qreal(48.0), fitted.width()),
-            qMax(qreal(48.0), fitted.height())};
+    const int requestedWidth =
+        format.intProperty(RequestedWidthProperty);
+    const int requestedHeight =
+        format.intProperty(RequestedHeightProperty);
+    QSizeF preferred;
+    if (requestedWidth > 0) {
+        qreal height = requestedHeight;
+        if (height <= 0 && source.isValid())
+            height = qreal(requestedWidth) * source.height() / source.width();
+        if (height <= 0)
+            height = 96.0;
+        preferred = QSizeF(requestedWidth, height);
+        if (preferred.width() <= width && preferred.height() <= maxHeight)
+            return preferred;
+    } else if (source.isValid()) {
+        preferred = source;
+    } else {
+        preferred = QSizeF(width, qMin(maxHeight, qreal(96.0)));
+    }
+    return preferred.scaled(QSizeF(width, maxHeight), Qt::KeepAspectRatio);
 }
 
 QSizeF MarkdownReadObjectRenderer::intrinsicSize(QTextDocument *document, int,
@@ -155,6 +169,9 @@ QSizeF MarkdownReadObjectRenderer::intrinsicSize(QTextDocument *document, int,
     switch (objectKind) {
     case Kind::Image: {
         const QSizeF image = fittedImageSize(format, width);
+        if (format.boolProperty(InlinePlacementProperty))
+            return {image.width() + 2.0,
+                    qMax(metrics.height(), image.height() + 2.0)};
         return {width, image.height() + 20.0};
     }
     case Kind::InlineMath: {
@@ -205,9 +222,16 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
     switch (objectKind) {
     case Kind::Image: {
         const QSizeF imageSize = fittedImageSize(format, rect.width());
+        const bool inlinePlacement =
+            format.boolProperty(InlinePlacementProperty);
         const QRectF imageRect(
-            rect.left() + (rect.width() - imageSize.width()) / 2.0,
-            rect.top() + 10.0, imageSize.width(), imageSize.height());
+            inlinePlacement ? rect.left() + 1.0
+                            : rect.left() +
+                                  (rect.width() - imageSize.width()) / 2.0,
+            inlinePlacement
+                ? rect.top() + (rect.height() - imageSize.height()) / 2.0
+                : rect.top() + 10.0,
+            imageSize.width(), imageSize.height());
         const QString path = format.stringProperty(PathProperty);
         const QPixmap pixmap = imagePixmap(
             path, imageSize.toSize(), painter->device()->devicePixelRatioF());
@@ -333,8 +357,9 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
 
 QTextCharFormat MarkdownReadObjectRenderer::imageFormat(
     const QFont &baseFont, const QString &resolvedPath, const QString &target,
-    const QString &altText, const QSize &sourceSize, qreal fallbackWidth,
-    qreal maxHeight) {
+    const QString &altText, const QString &title, const QSize &sourceSize,
+    qreal fallbackWidth, qreal maxHeight, int requestedWidth,
+    int requestedHeight, bool inlinePlacement) {
     QTextCharFormat format;
     format.setFont(baseFont);
     format.setObjectType(ObjectType);
@@ -345,9 +370,16 @@ QTextCharFormat MarkdownReadObjectRenderer::imageFormat(
     format.setProperty(SourceSizeProperty, sourceSize);
     format.setProperty(FallbackWidthProperty, fallbackWidth);
     format.setProperty(MaxHeightProperty, maxHeight);
+    format.setProperty(RequestedWidthProperty, requestedWidth);
+    format.setProperty(RequestedHeightProperty, requestedHeight);
+    format.setProperty(InlinePlacementProperty, inlinePlacement);
+    if (inlinePlacement)
+        format.setVerticalAlignment(QTextCharFormat::AlignMiddle);
     const QString accessibleLabel =
         altText.trimmed().isEmpty() ? target : altText.trimmed();
-    format.setToolTip(QObject::tr("Image: %1").arg(accessibleLabel));
+    format.setToolTip(title.trimmed().isEmpty()
+                          ? QObject::tr("Image: %1").arg(accessibleLabel)
+                          : title.trimmed());
     return format;
 }
 

@@ -7,6 +7,7 @@
 #include "MarkdownStyle.h"
 #include "core/ContentSecurity.h"
 #include "core/MarkdownComment.h"
+#include "core/MarkdownImage.h"
 #include "core/MascotSeed.h"
 #include "core/WikiLink.h"
 
@@ -342,10 +343,10 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
                           const QTextCharFormat &base,
                           const MarkdownReadRenderer::Options &options,
                           int sourceOffset, ReadSourceRanges *ranges,
+                          const MarkdownImage::References &imageReferences,
                           const InlineStyleAnalysis &analysis,
                           int analysisSourceOffset) {
     const QColor accent(0x58, 0xd6, 0x91);
-    const QColor muted(0x79, 0x9a, 0x88);
     const auto analysisPosition = [&](int localPosition) {
         return sourceOffset + localPosition - analysisSourceOffset;
     };
@@ -376,6 +377,33 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
                              withInlineStyles(base, styleAt(pos + 1)),
                              sourceOffset + pos, 2, ranges);
             pos += 2;
+            continue;
+        }
+
+        const MarkdownImage::Image parsedImage =
+            MarkdownImage::imageAt(text, pos, imageReferences);
+        if (parsedImage.valid && parsedImage.resolved) {
+            const QString path = ContentSecurity::resolveLocalImage(
+                parsedImage.target, options.imageBasePath,
+                options.vaultRootPath);
+            QSize sourceSize;
+            if (!path.isEmpty()) {
+                QImageReader reader(path);
+                reader.setAutoTransform(true);
+                sourceSize = reader.size();
+            }
+            QTextCharFormat image = MarkdownReadObjectRenderer::imageFormat(
+                options.baseFont, path, parsedImage.target,
+                parsedImage.description, parsedImage.title, sourceSize,
+                options.fallbackWidth, options.maxImageHeight,
+                parsedImage.dimensions.width,
+                parsedImage.dimensions.height, true);
+            applyInlineStyles(image, styleAt(pos));
+            insertMappedText(
+                cursor,
+                QString(1, QChar(QChar::ObjectReplacementCharacter)), image,
+                sourceOffset + pos, parsedImage.length, ranges);
+            pos += parsedImage.length;
             continue;
         }
 
@@ -410,7 +438,7 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
                 insertInlineAnalyzed(
                     cursor, label, link, options,
                     sourceOffset + pos + 2 + labelStart + leadingSpace,
-                    ranges, analysis, analysisSourceOffset);
+                    ranges, imageReferences, analysis, analysisSourceOffset);
                 pos = end + 2;
                 continue;
             }
@@ -436,29 +464,8 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
                         });
                     insertInlineAnalyzed(
                         cursor, text.mid(pos + 1, labelEnd - pos - 1), link,
-                        options, sourceOffset + pos + 1, ranges, analysis,
-                        analysisSourceOffset);
-                    pos = targetEnd + 1;
-                    continue;
-                }
-            }
-        }
-
-        if (text.mid(pos, 2) == QStringLiteral("![")) {
-            const int labelEnd = text.indexOf(QStringLiteral("]("), pos + 2);
-            if (labelEnd >= 0) {
-                const int targetEnd = text.indexOf(QLatin1Char(')'), labelEnd + 2);
-                if (targetEnd >= 0) {
-                    QString label = text.mid(pos + 2, labelEnd - pos - 2).trimmed();
-                    if (label.isEmpty())
-                        label = QStringLiteral("Image");
-                    QTextCharFormat image =
-                        withInlineStyles(base, styleAt(pos));
-                    image.setForeground(muted);
-                    image.setFontItalic(true);
-                    insertMappedText(cursor, QStringLiteral("[%1]").arg(label),
-                                     image, sourceOffset + pos,
-                                     targetEnd + 1 - pos, ranges);
+                        options, sourceOffset + pos + 1, ranges,
+                        imageReferences, analysis, analysisSourceOffset);
                     pos = targetEnd + 1;
                     continue;
                 }
@@ -522,10 +529,11 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
 void insertInline(QTextCursor &cursor, const QString &text,
                   const QTextCharFormat &base,
                   const MarkdownReadRenderer::Options &options,
-                  int sourceOffset, ReadSourceRanges *ranges) {
+                  int sourceOffset, ReadSourceRanges *ranges,
+                  const MarkdownImage::References &imageReferences) {
     const InlineStyleAnalysis analysis = analyzeInlineStyles(text);
     insertInlineAnalyzed(cursor, text, base, options, sourceOffset, ranges,
-                         analysis, sourceOffset);
+                         imageReferences, analysis, sourceOffset);
 }
 
 QTextBlockFormat baseBlockFormat(int lineSpacing) {
@@ -661,7 +669,8 @@ void insertReadTable(QTextCursor &cursor, const QList<ReadTableRow> &rows,
                      const QList<Qt::Alignment> &alignments,
                      const QStringList &sourceLines,
                      const QVector<int> &lineStarts,
-                     const MarkdownReadRenderer::Options &options) {
+                     const MarkdownReadRenderer::Options &options,
+                     const MarkdownImage::References &imageReferences) {
     if (rows.isEmpty())
         return;
     int columns = alignments.size();
@@ -744,7 +753,7 @@ void insertReadTable(QTextCursor &cursor, const QList<ReadTableRow> &rows,
                 const ReadTableCell &sourceCell = rows.at(row).at(column);
                 insertInline(cellCursor, sourceCell.text, text, options,
                              lineStarts.at(sourceRow) + sourceCell.sourceStart,
-                             &ranges);
+                             &ranges, imageReferences);
             }
 
             attachSourceData(cell.firstCursorPosition().block(), sourceRow,
@@ -941,6 +950,9 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     QTextCursor cursor(target);
     const QStringList sourceLines =
         source.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    QSet<int> imageDefinitionLines;
+    const MarkdownImage::References imageReferences =
+        MarkdownImage::collectReferences(source, &imageDefinitionLines);
     // Keep source length and line boundaries stable while comments disappear.
     // Spaces feed structural recognisers; a private noncharacter feeds the
     // inline renderer, which skips it without creating a selectable gap.
@@ -977,8 +989,6 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
     const QRegularExpression ruleRe(
         QStringLiteral("^\\s*([-*_])\\s*(?:\\1\\s*){2,}$"));
     const QRegularExpression tableRe(QStringLiteral("^\\s*\\|.*\\|\\s*$"));
-    const QRegularExpression imageRe(QStringLiteral(
-        "^\\s*!\\[([^]\\n]*)\\]\\((?:<([^>]+)>|([^\\)\\n]+))\\)\\s*$"));
 
     bool firstOutput = true;
     bool reuseCurrentBlock = false;
@@ -996,6 +1006,11 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
         int sourceEndBlock = sourceBlock;
 
         if (sourceBlock == 0 && MascotSeed::fromLine(sourceLine) != 0)
+            continue;
+        // Reference definitions are source metadata. They resolve image
+        // occurrences throughout the note but do not become visible Read Mode
+        // paragraphs themselves.
+        if (imageDefinitionLines.contains(sourceBlock))
             continue;
         // A source row made entirely from comment text has no Read Mode block,
         // so consecutive comments do not leave vertical seams or blank gaps.
@@ -1048,7 +1063,8 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                     sourceEndBlock = blockNumber;
                 }
                 insertReadTable(cursor, tableRows, sourceRows, alignments,
-                                sourceLines, lineStarts, options);
+                                sourceLines, lineStarts, options,
+                                imageReferences);
                 firstOutput = false;
                 reuseCurrentBlock = true;
                 listAncestors.clear();
@@ -1125,14 +1141,11 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
             block.setBottomMargin(baseSize * 0.3);
             block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
             parseInline = false;
-        } else if (const auto image = imageRe.match(line); image.hasMatch()) {
-            const QString rawTarget = !image.captured(2).isEmpty()
-                                          ? image.captured(2)
-                                          : image.captured(3);
-            const QString decodedTarget =
-                QUrl::fromPercentEncoding(rawTarget.toUtf8());
+        } else if (const MarkdownImage::Image image =
+                       MarkdownImage::standaloneImage(line, imageReferences);
+                   image.valid) {
             const QString path = ContentSecurity::resolveLocalImage(
-                decodedTarget, options.imageBasePath, options.vaultRootPath);
+                image.target, options.imageBasePath, options.vaultRootPath);
             QSize sourceSize;
             if (!path.isEmpty()) {
                 QImageReader reader(path);
@@ -1140,8 +1153,10 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                 sourceSize = reader.size();
             }
             object = MarkdownReadObjectRenderer::imageFormat(
-                options.baseFont, path, decodedTarget, image.captured(1),
-                sourceSize, options.fallbackWidth, options.maxImageHeight);
+                options.baseFont, path, image.target, image.description,
+                image.title, sourceSize, options.fallbackWidth,
+                options.maxImageHeight, image.dimensions.width,
+                image.dimensions.height);
             block.setTopMargin(baseSize * 0.25);
             block.setBottomMargin(baseSize * 0.35);
             block.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
@@ -1329,7 +1344,7 @@ void MarkdownReadRenderer::render(QTextDocument *target, const QString &source,
                                  &ranges);
             }
             insertInline(cursor, content, text, options, contentSourceOffset,
-                         &ranges);
+                         &ranges, imageReferences);
         } else {
             insertMappedLiteral(cursor, content, text, lineStart, &ranges);
         }

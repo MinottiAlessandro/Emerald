@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/MarkdownImage.h"
+
 #include <QList>
 #include <QHash>
 #include <QImage>
@@ -143,6 +145,7 @@ signals:
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
@@ -187,14 +190,17 @@ private:
     QRectF blockViewportRect(const QTextBlock &block) const;
     QList<QRectF> textRangeViewportRects(const QTextBlock &block, int start,
                                          int length) const;
+    MarkdownImage::Image imageForBlock(const QTextBlock &block) const;
     QString resolvedImagePath(const QTextBlock &block) const;
     QSize imageSourceSize(const QString &path) const;
+    QSizeF imagePreviewSize(const QTextBlock &block) const;
     qreal imagePreviewContentHeight(const QTextBlock &block) const;
     QRectF imagePreviewArea(const QTextBlock &block) const;
     void applyImagePreviewFormats();
     void applyVisualBlockFormats(int position = 0, int charsChanged = -1);
     void scheduleVisualBlockFormats(int position, int charsChanged,
                                     bool preserveModification = false);
+    bool updateImageReferences();
     void smoothScrollBy(qreal pixels, int durationMs = 140);
     void stopSmoothScroll();
     void watchScrollPastEnd(QTextDocument *watchedDocument);
@@ -386,6 +392,7 @@ private:
     int m_pendingVisualFormatStart = -1;
     int m_pendingVisualFormatEnd = -1;
     bool m_readMode = false;        // rendered document; task toggles allowed
+    bool m_mouseSelectionDrag = false; // retain image geometry until release
     int m_editCursorWidth = 1;      // restored when leaving Read Mode
     quint64 m_scrollRestoreGeneration = 0; // cancels stale deferred anchors
     int m_lineSpacing = 100;     // row spacing, percent of natural line height
@@ -393,6 +400,7 @@ private:
     QString m_mascotKind;        // last seen kind, so a kind-only change emits too
     QString m_imageBasePath;     // current note folder for relative image links
     QString m_imageRootPath;     // vault boundary for local image previews
+    MarkdownImage::References m_imageReferences;
     mutable QHash<QString, QSize> m_imageSizeCache;
     mutable QStringList m_imageSizeCacheOrder;
     QTimer *m_quickJumpTimer = nullptr;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/MarkdownImage.h"
+
 #include <QList>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
@@ -44,6 +46,11 @@ public:
     // so settings changes can update the whole note once, while ordinary edits
     // retain QSyntaxHighlighter's incremental one-block behavior.
     void setSpellChecker(class SpellChecker *checker);
+
+    // Reference-style images depend on definitions elsewhere in the note.
+    // MarkdownEditor refreshes this compact lookup once per source edit so
+    // individual block highlights stay incremental.
+    void setImageReferences(const MarkdownImage::References &references);
 
     // The base point size headings scale from; call when the editor font size
     // changes so heading sizes track it.
@@ -124,6 +131,10 @@ private:
     // the raw text editable, like the wiki-link handling above.
     void applyInternetLinks(const QString &text, QList<bool> &consumed,
                             bool reveal);
+    // All image dialects share MarkdownImage's parser. Standalone images are
+    // handled earlier as block previews; this pass keeps inline image source
+    // compact without pretending it is an ordinary clickable link.
+    void applyImages(const QString &text, QList<bool> &consumed, bool reveal);
     // Inline math $…$: on the active line dim the $ and tint the raw body so it
     // stays editable; off it, hide the source but reserve the formula's rendered
     // width (the editor paints the formula over the gap in paintEvent).
@@ -171,6 +182,7 @@ private:
     double m_baseSize = 12.0;
     bool m_suspended = false;
     class SpellChecker *m_spellChecker = nullptr;
+    MarkdownImage::References m_imageReferences;
 
     QTextCharFormat m_heading;
     QTextCharFormat m_bold;
@@ -189,6 +201,7 @@ private:
     QTextCharFormat m_mascot; // a recognised mascot seed line (first line only)
     QTextCharFormat m_comment; // visible author-only HTML comment source
     QTextCharFormat m_math;   // inline $…$ formula body
+    QTextCharFormat m_image;  // compact inline-image description/path
 
     QRegularExpression m_reHeading;
     QRegularExpression m_reFence;

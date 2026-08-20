@@ -216,6 +216,14 @@ void sendMousePress(MarkdownEditor &editor, const QPoint &position,
     QApplication::sendEvent(editor.viewport(), &event);
 }
 
+void sendMouseRelease(MarkdownEditor &editor, const QPoint &position,
+                      Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QMouseEvent event(QEvent::MouseButtonRelease, QPointF(position),
+                      QPointF(editor.viewport()->mapToGlobal(position)),
+                      Qt::LeftButton, Qt::NoButton, modifiers);
+    QApplication::sendEvent(editor.viewport(), &event);
+}
+
 void waitForQuickJump() {
     waitForMs(350);
 }
@@ -333,6 +341,7 @@ int main(int argc, char **argv) {
         SpellChecker::wordsInMarkdown(QStringLiteral(
             "Prose `codde` [[Targget]] [[Note|aliass]] "
             "[labell](https://bad.example/misstake) $formulla$ <tag> "
+            "![altt](image.png) ![reff][asset] ![[photoo.png|120]] "
             "<!-- commmentword -->"));
     QStringList spellWords;
     for (const auto &range : spellRanges)
@@ -345,9 +354,17 @@ int main(int argc, char **argv) {
               !spellWords.contains(QStringLiteral("misstake")) &&
               !spellWords.contains(QStringLiteral("formulla")) &&
               !spellWords.contains(QStringLiteral("tag")) &&
+              !spellWords.contains(QStringLiteral("altt")) &&
+              !spellWords.contains(QStringLiteral("reff")) &&
+              !spellWords.contains(QStringLiteral("photoo")) &&
               !spellWords.contains(QStringLiteral("commmentword")),
           QStringLiteral("spell ranges should include prose and visible labels "
                          "but exclude Markdown targets, code, math, URLs, and HTML"));
+    check(SpellChecker::wordsInMarkdown(
+              QStringLiteral("[asset]: image-name.png \"asset title\""))
+              .isEmpty(),
+          QStringLiteral("spell ranges should exclude image reference "
+                         "definitions"));
 
     const QString spellingSource = QStringLiteral(
         "A correct word and **wrod** plus `codde`, [[Targget]], "
@@ -603,6 +620,10 @@ int main(int argc, char **argv) {
     check(MarkdownHighlighter::inlinePreviewColumnCount(QStringLiteral(
               "[Web](https://example.com/a/very/long/path)")) == 3,
           QStringLiteral("table width should ignore an internet-link URL"));
+    check(MarkdownHighlighter::inlinePreviewColumnCount(
+              QStringLiteral("A ![Alt|120](image.png)")) == 5,
+          QStringLiteral("table width should measure an image description "
+                         "without its source or dimensions"));
 
     editor.resize(900, 220);
     QApplication::processEvents();
@@ -1467,7 +1488,7 @@ int main(int argc, char **argv) {
     check(mediaDir.isValid(), QStringLiteral("media test directory should exist"));
     const QString wideImagePath = mediaDir.filePath(QStringLiteral("wide.png"));
     QImage wideImage(1200, 600, QImage::Format_ARGB32_Premultiplied);
-    wideImage.fill(QColor(0x2b, 0xbf, 0x74));
+    wideImage.fill(QColor(0xe3, 0x47, 0xa8));
     check(wideImage.save(wideImagePath),
           QStringLiteral("media test image should be writable"));
     editor.resize(320, 240);
@@ -1495,7 +1516,7 @@ int main(int argc, char **argv) {
     editModeImageRender.fill(Qt::transparent);
     editor.viewport()->render(&editModeImageRender);
     bool paintedEditModeImage = false;
-    const QRgb expectedEditImagePixel = QColor(0x2b, 0xbf, 0x74).rgba();
+    const QRgb expectedEditImagePixel = QColor(0xe3, 0x47, 0xa8).rgba();
     for (int y = 0; y < editModeImageRender.height() && !paintedEditModeImage;
          ++y) {
         const QRgb *line = reinterpret_cast<const QRgb *>(
@@ -1533,11 +1554,127 @@ int main(int argc, char **argv) {
           QStringLiteral("image layout transitions must preserve source and "
                          "stay invisible to user undo"));
 
+    // A reverse selection must not collapse the tall image block while the
+    // mouse endpoint is moving upward through it. Keeping that geometry stable
+    // prevents the pointer from alternately entering/leaving the block and
+    // flickering between rendered content and Markdown source. It should
+    // collapse immediately on release so revealed source leaves no image-sized
+    // gap between the surrounding lines.
+    const QPoint dragStart = editor.cursorRect(editor.textCursor()).center();
+    sendMousePress(editor, dragStart);
+    QTextCursor reverseImageSelection(editor.document());
+    reverseImageSelection.setPosition(imageSource.size());
+    reverseImageSelection.setPosition(0, QTextCursor::KeepAnchor);
+    editor.setTextCursor(reverseImageSelection);
+    QApplication::processEvents();
+    check(editor.textCursor().anchor() > editor.textCursor().position() &&
+              imageBlock.blockFormat().lineHeightType() ==
+                  QTextBlockFormat::FixedHeight,
+          QStringLiteral("a bottom-up selection should reveal image syntax "
+                         "without changing preview-block geometry"));
+    sendMouseRelease(editor, dragStart);
+    QApplication::processEvents();
+    check(editor.textCursor().anchor() > editor.textCursor().position() &&
+              imageBlock.blockFormat().lineHeightType() ==
+                  QTextBlockFormat::SingleHeight,
+          QStringLiteral("a selected image source should return to normal "
+                         "text height when the mouse is released"));
+    QImage selectedImageRender(editor.viewport()->size(),
+                               QImage::Format_ARGB32_Premultiplied);
+    selectedImageRender.fill(Qt::transparent);
+    editor.viewport()->render(&selectedImageRender);
+    check(!containsPixel(selectedImageRender, expectedEditImagePixel),
+          QStringLiteral("a selected image block should not paint the image "
+                         "over revealed source"));
+
     editor.setPlainText(QStringLiteral("![Missing](missing.png)\nafter"));
     editor.moveCursor(QTextCursor::End);
     QApplication::processEvents();
     check(editor.document()->firstBlock().blockFormat().lineHeight() >= 100.0,
           QStringLiteral("missing images should reserve a readable fallback card"));
+
+    const QString expandedImageSource = QStringLiteral(
+        "![Sized|160x80](wide.png \"inline title\")\n"
+        "![Reference][hero]\n"
+        "![[wide.png|120]]\n"
+        "[hero]: <wide.png> \"reference title\"\n"
+        "after expanded images");
+    editor.setPlainText(expandedImageSource);
+    editor.moveCursor(QTextCursor::End);
+    QApplication::processEvents();
+    const QTextBlock sizedImageBlock =
+        editor.document()->findBlockByNumber(0);
+    const QTextBlock referenceImageBlock =
+        editor.document()->findBlockByNumber(1);
+    const QTextBlock obsidianImageBlock =
+        editor.document()->findBlockByNumber(2);
+    check(sizedImageBlock.blockFormat().lineHeightType() ==
+                  QTextBlockFormat::FixedHeight &&
+              qAbs(sizedImageBlock.blockFormat().lineHeight() - 104.0) < 2.0,
+          QStringLiteral("explicit image dimensions should control Edit Mode "
+                         "preview height (type=%1, height=%2)")
+              .arg(sizedImageBlock.blockFormat().lineHeightType())
+              .arg(sizedImageBlock.blockFormat().lineHeight()));
+    check(referenceImageBlock.blockFormat().lineHeightType() ==
+                  QTextBlockFormat::FixedHeight &&
+              obsidianImageBlock.blockFormat().lineHeightType() ==
+                  QTextBlockFormat::FixedHeight,
+          QStringLiteral("reference and Obsidian image forms should become "
+                         "Edit Mode block previews"));
+
+    QTextDocument expandedReadDocument;
+    MarkdownReadRenderer::Options expandedReadOptions;
+    expandedReadOptions.baseFont = editor.font();
+    expandedReadOptions.imageBasePath = mediaDir.path();
+    expandedReadOptions.vaultRootPath = mediaDir.path();
+    expandedReadOptions.fallbackWidth = 500.0;
+    expandedReadOptions.maxImageHeight = 520.0;
+    const QString expandedReadSource = QStringLiteral(
+        "Before ![Inline|64x32](wide.png \"inline title\") after\n"
+        "![Reference][hero]\n"
+        "![[wide.png|80]]\n"
+        "[hero]: <wide.png> \"reference title\"");
+    MarkdownReadRenderer::render(&expandedReadDocument, expandedReadSource,
+                                 expandedReadOptions);
+    int expandedImageObjects = 0;
+    bool sawInlineImageObject = false;
+    bool sawReferenceTitle = false;
+    QTextCharFormat inlineImageFormat;
+    for (QTextBlock block = expandedReadDocument.firstBlock(); block.isValid();
+         block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() ||
+                MarkdownReadObjectRenderer::kind(fragment.charFormat()) !=
+                    MarkdownReadObjectRenderer::Kind::Image)
+                continue;
+            ++expandedImageObjects;
+            sawInlineImageObject =
+                sawInlineImageObject ||
+                fragment.charFormat().verticalAlignment() ==
+                    QTextCharFormat::AlignMiddle;
+            if (fragment.charFormat().verticalAlignment() ==
+                QTextCharFormat::AlignMiddle)
+                inlineImageFormat = fragment.charFormat();
+            sawReferenceTitle =
+                sawReferenceTitle ||
+                fragment.charFormat().toolTip() ==
+                    QStringLiteral("reference title");
+        }
+    }
+    check(expandedImageObjects == 3 && sawInlineImageObject &&
+              sawReferenceTitle &&
+              !expandedReadDocument.toPlainText().contains(
+                  QStringLiteral("[hero]:")),
+          QStringLiteral("Read Mode should render inline, reference, and "
+                         "Obsidian images and hide reference definitions"));
+    MarkdownReadObjectRenderer expandedObjectRenderer;
+    const QSizeF inlineImageSize = expandedObjectRenderer.intrinsicSize(
+        &expandedReadDocument, 0, inlineImageFormat);
+    check(qAbs(inlineImageSize.width() - 66.0) < 2.0 &&
+              inlineImageSize.height() >= 32.0,
+          QStringLiteral("Read Mode inline images should honor requested "
+                         "dimensions"));
 
     // The explicit inline baseline moves the rendered box with the surrounding
     // shaped text baseline and participates in the pixmap cache key.
@@ -3250,7 +3387,7 @@ int main(int argc, char **argv) {
     QObject::connect(&editor, &MarkdownEditor::noticeRequested,
                      [&notice](const QString &text) { notice = text; });
     editor.setPlainText(QStringLiteral(
-        "`[[Code]]` ![image](missing.png) [[Real]] "
+        "`[[Code]]` ![image](missing.png) ![[photo.png|120]] [[Real]] "
         "[unsafe](javascript:bad)"));
     QApplication::processEvents();
 

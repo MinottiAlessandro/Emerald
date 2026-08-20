@@ -42,9 +42,13 @@ public:
                                        const QString &resolvedPath,
                                        const QString &target,
                                        const QString &altText,
+                                       const QString &title,
                                        const QSize &sourceSize,
                                        qreal fallbackWidth,
-                                       qreal maxHeight);
+                                       qreal maxHeight,
+                                       int requestedWidth = 0,
+                                       int requestedHeight = 0,
+                                       bool inlinePlacement = false);
     static QTextCharFormat inlineMathFormat(const QFont &baseFont,
                                             const QString &formula);
     static QTextCharFormat displayMathFormat(const QFont &baseFont,
@@ -78,6 +82,9 @@ private:
         SourceSizeProperty,
         FallbackWidthProperty,
         MaxHeightProperty,
+        RequestedWidthProperty,
+        RequestedHeightProperty,
+        InlinePlacementProperty,
         CheckedProperty,
         LanguageProperty,
     };

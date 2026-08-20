@@ -125,6 +125,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/Perf.h
   src/core/MascotSeed.h
   src/core/MarkdownComment.h
+  src/core/MarkdownImage.h
+  src/core/MarkdownImage.cpp
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
   src/ui/AppTheme.h
@@ -300,6 +302,8 @@ if(EMERALD_BUILD_PERF_TESTS)
     src/core/LinkGraphIndex.cpp
     src/core/MascotSeed.h
     src/core/MarkdownComment.h
+    src/core/MarkdownImage.h
+    src/core/MarkdownImage.cpp
     src/core/Perf.h
     src/core/SpellChecker.h
     src/core/SpellChecker.cpp
@@ -348,6 +352,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/ContentSecurity.cpp
     src/core/MascotSeed.h
     src/core/MarkdownComment.h
+    src/core/MarkdownImage.h
+    src/core/MarkdownImage.cpp
     src/core/Perf.h
     src/core/WikiLink.h
     src/core/WikiLink.cpp
@@ -417,6 +423,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/Perf.h
     src/core/MascotSeed.h
     src/core/MarkdownComment.h
+    src/core/MarkdownImage.h
+    src/core/MarkdownImage.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
     src/ui/AppTheme.h
@@ -479,6 +487,17 @@ if(EMERALD_BUILD_CORE_TESTS)
   target_link_libraries(emerald_core_tests PRIVATE Qt6::Core)
   emerald_enable_sanitizers(emerald_core_tests)
   add_test(NAME emerald_core_tests COMMAND emerald_core_tests)
+
+  add_executable(emerald_markdown_image_tests
+    tests/core/MarkdownImageTests.cpp
+    src/core/MarkdownComment.h
+    src/core/MarkdownImage.h
+    src/core/MarkdownImage.cpp
+  )
+  target_include_directories(emerald_markdown_image_tests PRIVATE src)
+  target_link_libraries(emerald_markdown_image_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_markdown_image_tests)
+  add_test(NAME emerald_markdown_image_tests COMMAND emerald_markdown_image_tests)
 
   add_executable(emerald_broken_links_tests
     tests/core/BrokenLinksTests.cpp

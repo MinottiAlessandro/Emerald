@@ -9,6 +9,7 @@
 #include "MathRender.h"
 #include "core/ContentSecurity.h"
 #include "core/MarkdownComment.h"
+#include "core/MarkdownImage.h"
 #include "core/MascotSeed.h"
 #include "core/Perf.h"
 #include "core/SpellChecker.h"
@@ -134,22 +135,8 @@ QFont quickJumpFont(const QFont &base) {
     return result;
 }
 
-const QRegularExpression &imageLineRe() {
-    static const QRegularExpression re(QStringLiteral(
-        "^\\s*!\\[[^\\]\\n]*\\]\\((?:<([^>]+)>|([^\\)\\n]+))\\)\\s*$"));
-    return re;
-}
-
-QString imageTargetFromLine(const QString &text) {
-    const auto m = imageLineRe().match(text);
-    if (!m.hasMatch())
-        return QString();
-    const QString raw =
-        !m.captured(1).isEmpty() ? m.captured(1) : m.captured(2);
-    return QUrl::fromPercentEncoding(raw.toUtf8());
-}
-
-QPixmap imagePreviewPixmap(const QString &path, QSize logicalMax, qreal dpr) {
+QPixmap imagePreviewPixmap(const QString &path, QSize logicalMax, qreal dpr,
+                           bool exactSize = false) {
     const QFileInfo info(path);
     if (!info.isFile() || logicalMax.isEmpty())
         return {};
@@ -161,13 +148,14 @@ QPixmap imagePreviewPixmap(const QString &path, QSize logicalMax, qreal dpr) {
 
     const QSize deviceMax = (QSizeF(logicalMax) * dpr).toSize();
     const QString key =
-        QStringLiteral("note-image:%1:%2:%3:%4:%5x%6")
+        QStringLiteral("note-image:%1:%2:%3:%4:%5x%6:%7")
             .arg(info.absoluteFilePath())
             .arg(info.size())
             .arg(info.lastModified().toMSecsSinceEpoch())
             .arg(dpr)
             .arg(deviceMax.width())
-            .arg(deviceMax.height());
+            .arg(deviceMax.height())
+            .arg(exactSize);
 
     QPixmap cached;
     if (QPixmapCache::find(key, &cached))
@@ -177,7 +165,10 @@ QPixmap imagePreviewPixmap(const QString &path, QSize logicalMax, qreal dpr) {
     reader.setAutoTransform(true);
     const QSize sourceSize = reader.size();
     if (sourceSize.isValid()) {
-        reader.setScaledSize(sourceSize.scaled(deviceMax, Qt::KeepAspectRatio));
+        reader.setScaledSize(exactSize
+                                 ? deviceMax
+                                 : sourceSize.scaled(deviceMax,
+                                                     Qt::KeepAspectRatio));
     } else {
         reader.setScaledSize(deviceMax);
     }
@@ -187,7 +178,8 @@ QPixmap imagePreviewPixmap(const QString &path, QSize logicalMax, qreal dpr) {
         return {};
     if (image.size().width() > deviceMax.width() ||
         image.size().height() > deviceMax.height()) {
-        image = image.scaled(deviceMax, Qt::KeepAspectRatio,
+        image = image.scaled(deviceMax, exactSize ? Qt::IgnoreAspectRatio
+                                                   : Qt::KeepAspectRatio,
                              Qt::SmoothTransformation);
     }
 
@@ -319,13 +311,21 @@ struct InlineHighlightSpan {
 // code and formula source are skipped, while link labels and nested emphasis
 // remain eligible for highlighting.
 void collectInlineHighlightSpans(const QString &text, int sourceOffset,
-                                 QList<InlineHighlightSpan> *spans) {
+                                 QList<InlineHighlightSpan> *spans,
+                                 const MarkdownImage::References &images) {
     if (!spans)
         return;
     int pos = 0;
     while (pos < text.size()) {
         if (text.at(pos) == QLatin1Char('\\') && pos + 1 < text.size()) {
             pos += 2;
+            continue;
+        }
+
+        const MarkdownImage::Image image =
+            MarkdownImage::imageAt(text, pos, images);
+        if (image.valid) {
+            pos += image.length;
             continue;
         }
 
@@ -337,7 +337,7 @@ void collectInlineHighlightSpans(const QString &text, int sourceOffset,
                 const int labelStart = separator >= 0 ? separator + 1 : 0;
                 collectInlineHighlightSpans(
                     inside.mid(labelStart),
-                    sourceOffset + pos + 2 + labelStart, spans);
+                    sourceOffset + pos + 2 + labelStart, spans, images);
                 pos = end + 2;
                 continue;
             }
@@ -352,19 +352,7 @@ void collectInlineHighlightSpans(const QString &text, int sourceOffset,
                 if (targetEnd >= 0) {
                     collectInlineHighlightSpans(
                         text.mid(pos + 1, labelEnd - pos - 1),
-                        sourceOffset + pos + 1, spans);
-                    pos = targetEnd + 1;
-                    continue;
-                }
-            }
-        }
-
-        if (text.mid(pos, 2) == QStringLiteral("![")) {
-            const int labelEnd = text.indexOf(QStringLiteral("]("), pos + 2);
-            if (labelEnd >= 0) {
-                const int targetEnd =
-                    text.indexOf(QLatin1Char(')'), labelEnd + 2);
-                if (targetEnd >= 0) {
+                        sourceOffset + pos + 1, spans, images);
                     pos = targetEnd + 1;
                     continue;
                 }
@@ -390,7 +378,7 @@ void collectInlineHighlightSpans(const QString &text, int sourceOffset,
                 } else {
                     collectInlineHighlightSpans(
                         text.mid(pos + 2, end - pos - 2),
-                        sourceOffset + pos + 2, spans);
+                        sourceOffset + pos + 2, spans, images);
                 }
                 pos = end + 2;
                 continue;
@@ -420,7 +408,7 @@ void collectInlineHighlightSpans(const QString &text, int sourceOffset,
             if (end > pos) {
                 collectInlineHighlightSpans(
                     text.mid(pos + 1, end - pos - 1),
-                    sourceOffset + pos + 1, spans);
+                    sourceOffset + pos + 1, spans, images);
                 pos = end + 1;
                 continue;
             }
@@ -661,6 +649,7 @@ void MarkdownEditor::setPlainText(const QString &text) {
 
     if (m_readMode) {
         m_sourceDocument->setPlainText(text);
+        updateImageReferences();
         m_sourceCursor = QTextCursor(m_sourceDocument);
         m_readCursorChanged = false;
         m_sourceDocument->clearUndoRedoStacks();
@@ -675,6 +664,7 @@ void MarkdownEditor::setPlainText(const QString &text) {
     }
 
     QTextEdit::setPlainText(text);
+    updateImageReferences();
     // A document replacement intentionally starts a fresh undo history. Finish
     // the derived block layout synchronously, then remove any paragraph-format
     // command Qt recorded after its own reset.
@@ -839,12 +829,29 @@ void MarkdownEditor::scheduleVisualBlockFormats(int position, int charsChanged,
         if (pendingStart >= 0) {
             QTextDocument *const formattedDocument = document();
             const bool wasModified = formattedDocument->isModified();
-            applyVisualBlockFormats(pendingStart,
-                                    qMax(1, pendingEnd - pendingStart));
+            const bool referencesChanged = updateImageReferences();
+            if (referencesChanged)
+                applyVisualBlockFormats();
+            else
+                applyVisualBlockFormats(pendingStart,
+                                        qMax(1, pendingEnd - pendingStart));
             if (preserveModification && document() == formattedDocument)
                 formattedDocument->setModified(wasModified);
         }
     });
+}
+
+bool MarkdownEditor::updateImageReferences() {
+    if (!m_sourceDocument)
+        return false;
+    const MarkdownImage::References references =
+        MarkdownImage::collectReferences(m_sourceDocument->toPlainText());
+    if (references == m_imageReferences)
+        return false;
+    m_imageReferences = references;
+    if (m_highlighter)
+        m_highlighter->setImageReferences(m_imageReferences);
+    return true;
 }
 
 void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
@@ -1080,15 +1087,26 @@ void MarkdownEditor::applyVisualBlockFormats(int position, int charsChanged) {
                                      : 0.0;
         const qreal codeTop = openingFence ? bodyLineHeight * 0.30 : 0.0;
         const qreal codeBottom = closingFence ? bodyLineHeight * 0.30 : 0.0;
-        const bool imageLine = !codeRegion &&
-                               imageLineRe().match(structureText).hasMatch();
+        const bool imageLine =
+            !codeRegion &&
+            MarkdownImage::standaloneImage(structureText, m_imageReferences)
+                .valid;
         const bool imageActive = !m_readMode &&
                                  block.blockNumber() >= m_visualSelectionFirst &&
                                  block.blockNumber() <= m_visualSelectionLast;
-        const bool showImagePreview = imageLine && !imageActive;
+        // Keep a selected image block's geometry stable only while the mouse
+        // endpoint is moving. Collapsing a tall preview during a bottom-up drag
+        // moves the text beneath the pointer and can repeatedly flip between
+        // source and preview. Once the button is released, the selected source
+        // returns to ordinary text height so it does not leave a large gap.
+        const bool reserveImageHeight =
+            imageLine &&
+            (!imageActive ||
+             (m_mouseSelectionDrag && textCursor().hasSelection()));
         const qreal imageLineHeight =
-            showImagePreview ? imagePreviewContentHeight(block) + 24.0 : 0.0;
-        const int lineHeightType = showImagePreview
+            reserveImageHeight ? imagePreviewContentHeight(block) + 24.0
+                               : 0.0;
+        const int lineHeightType = reserveImageHeight
                                        ? QTextBlockFormat::FixedHeight
                                        : QTextBlockFormat::SingleHeight;
         const qreal topMargin =
@@ -1313,14 +1331,22 @@ QList<QRectF> MarkdownEditor::textRangeViewportRects(const QTextBlock &block,
     return rects;
 }
 
+MarkdownImage::Image
+MarkdownEditor::imageForBlock(const QTextBlock &block) const {
+    if (!block.isValid() || insideCodeBlock(block))
+        return {};
+    return MarkdownImage::standaloneImage(commentMaskedBlockText(block),
+                                           m_imageReferences);
+}
+
 QString MarkdownEditor::resolvedImagePath(const QTextBlock &block) const {
     if (!block.isValid() || m_imageBasePath.isEmpty() ||
         m_imageRootPath.isEmpty())
         return {};
-    const QString target = imageTargetFromLine(commentMaskedBlockText(block));
-    if (target.isEmpty())
+    const MarkdownImage::Image image = imageForBlock(block);
+    if (!image.valid || image.target.isEmpty())
         return {};
-    return ContentSecurity::resolveLocalImage(target, m_imageBasePath,
+    return ContentSecurity::resolveLocalImage(image.target, m_imageBasePath,
                                               m_imageRootPath);
 }
 
@@ -1347,18 +1373,36 @@ QSize MarkdownEditor::imageSourceSize(const QString &path) const {
     return size;
 }
 
-qreal MarkdownEditor::imagePreviewContentHeight(const QTextBlock &block) const {
+QSizeF MarkdownEditor::imagePreviewSize(const QTextBlock &block) const {
     const qreal margin = document()->documentMargin();
     const qreal maxWidth =
         qMax(qreal(48), viewport()->width() - margin * 2.0 - 24.0);
     const qreal maxHeight =
         qBound(qreal(120), viewport()->height() * 0.62, qreal(520));
+    const MarkdownImage::Image image = imageForBlock(block);
     const QSize source = imageSourceSize(resolvedImagePath(block));
-    if (!source.isValid())
-        return qMin(maxHeight, qreal(96));
-    const QSizeF fitted = QSizeF(source).scaled(QSizeF(maxWidth, maxHeight),
-                                                Qt::KeepAspectRatio);
-    return qBound(qreal(48), fitted.height(), maxHeight);
+    QSizeF preferred;
+    if (image.dimensions.width > 0) {
+        const qreal width = image.dimensions.width;
+        qreal height = image.dimensions.height;
+        if (height <= 0 && source.isValid())
+            height = width * source.height() / source.width();
+        if (height <= 0)
+            height = 96.0;
+        preferred = QSizeF(width, height);
+        if (preferred.width() <= maxWidth && preferred.height() <= maxHeight)
+            return preferred;
+    } else if (source.isValid()) {
+        preferred = source;
+    } else {
+        preferred = QSizeF(qMin(qreal(360), maxWidth), 96.0);
+    }
+    return preferred.scaled(QSizeF(maxWidth, maxHeight),
+                            Qt::KeepAspectRatio);
+}
+
+qreal MarkdownEditor::imagePreviewContentHeight(const QTextBlock &block) const {
+    return imagePreviewSize(block).height();
 }
 
 QRectF MarkdownEditor::imagePreviewArea(const QTextBlock &block) const {
@@ -1384,16 +1428,18 @@ void MarkdownEditor::applyImagePreviewFormats() {
     bool formatEditOpen = false;
     for (QTextBlock block = document()->firstBlock(); block.isValid();
          block = block.next()) {
-        if (!imageLineRe().match(commentMaskedBlockText(block)).hasMatch() ||
-            insideCodeBlock(block))
+        if (!imageForBlock(block).valid)
             continue;
         const bool active = !m_readMode &&
                             block.blockNumber() >= m_visualSelectionFirst &&
                             block.blockNumber() <= m_visualSelectionLast;
-        const qreal height = active ? 0.0
-                                    : imagePreviewContentHeight(block) + 24.0;
-        const int type = active ? QTextBlockFormat::SingleHeight
-                                : QTextBlockFormat::FixedHeight;
+        const bool reserveHeight =
+            !active || (m_mouseSelectionDrag && textCursor().hasSelection());
+        const qreal height = reserveHeight
+                                 ? imagePreviewContentHeight(block) + 24.0
+                                 : 0.0;
+        const int type = reserveHeight ? QTextBlockFormat::FixedHeight
+                                       : QTextBlockFormat::SingleHeight;
         QTextBlockFormat format = block.blockFormat();
         if (qFuzzyCompare(format.lineHeight() + 1.0, height + 1.0) &&
             format.lineHeightType() == type)
@@ -1442,6 +1488,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
         return;
 
     stopSmoothScroll();
+    m_mouseSelectionDrag = false;
     const ScrollAnchor scrollAnchor = captureScrollAnchor();
     if (enabled) {
         m_sourceCursor = textCursor();
@@ -1483,6 +1530,10 @@ void MarkdownEditor::setReadMode(bool enabled) {
         m_readMode = false;
         if (m_highlighter)
             m_highlighter->setSuspended(false);
+        // A source edit can be followed immediately by the mode switch before
+        // the queued incremental layout pass runs. Refresh cross-note image
+        // definitions now so returning to Edit Mode cannot use a stale target.
+        updateImageReferences();
         m_switchingDocuments = true;
         setDocument(m_sourceDocument);
         scheduleScrollPastEndRangeUpdate();
@@ -1836,7 +1887,7 @@ bool MarkdownEditor::toggleReadHighlight() {
         QList<InlineHighlightSpan> sourceSpans;
         collectInlineHighlightSpans(selected.sourceBlock.text(),
                                     selected.sourceBlock.position(),
-                                    &sourceSpans);
+                                    &sourceSpans, m_imageReferences);
         QList<ReadHighlightSpan> currentHighlights;
         for (const InlineHighlightSpan &span : std::as_const(sourceSpans)) {
             QTextCursor sourceSpan(m_sourceDocument);
@@ -2661,11 +2712,22 @@ void MarkdownEditor::refreshQuickJumpTargets() {
                                               end > span.first;
                                    });
             };
+            const QVector<MarkdownImage::Image> images =
+                MarkdownImage::imagesInLine(text, m_imageReferences, true);
+            const auto overlapsImage = [&images](int start, int end) {
+                return std::any_of(
+                    images.cbegin(), images.cend(),
+                    [start, end](const MarkdownImage::Image &image) {
+                        return start < image.start + image.length &&
+                               end > image.start;
+                    });
+            };
 
             auto wikiIt = WikiLink::pattern().globalMatch(text);
             while (wikiIt.hasNext()) {
                 const auto match = wikiIt.next();
                 if (overlapsCode(match.capturedStart(), match.capturedEnd()) ||
+                    overlapsImage(match.capturedStart(), match.capturedEnd()) ||
                     MarkdownComment::overlaps(
                         comments.ranges, match.capturedStart(),
                         match.capturedEnd()))
@@ -2687,6 +2749,7 @@ void MarkdownEditor::refreshQuickJumpTargets() {
                 if ((start > 0 &&
                      text.at(start - 1) == QLatin1Char('!')) ||
                     overlapsCode(start, match.capturedEnd()) ||
+                    overlapsImage(start, match.capturedEnd()) ||
                     MarkdownComment::overlaps(comments.ranges, start,
                                               match.capturedEnd()))
                     continue;
@@ -2913,6 +2976,8 @@ QRectF MarkdownEditor::listMarkerRect(const QTextBlock &block) const {
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
     stopSmoothScroll();
+    if (event->button() == Qt::LeftButton)
+        m_mouseSelectionDrag = false;
     if (m_quickJumpArmed || m_quickJumpActive)
         cancelQuickJump();
     if (event->button() == Qt::BackButton) {
@@ -2953,7 +3018,28 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *event) {
         }
         return;
     }
+    if (!m_readMode && event->button() == Qt::LeftButton)
+        m_mouseSelectionDrag = true;
     QTextEdit::mousePressEvent(event);
+}
+
+void MarkdownEditor::mouseReleaseEvent(QMouseEvent *event) {
+    const bool selectionDragEnded =
+        event->button() == Qt::LeftButton && m_mouseSelectionDrag;
+    QTextEdit::mouseReleaseEvent(event);
+    if (!selectionDragEnded)
+        return;
+
+    m_mouseSelectionDrag = false;
+    if (m_readMode)
+        return;
+
+    // Selection changes during the drag intentionally retained preview
+    // geometry. Reapply the image format synchronously now so the released
+    // selection shows compact Markdown source without a one-frame stale gap.
+    updateActiveHighlight();
+    applyImagePreviewFormats();
+    viewport()->update();
 }
 
 void MarkdownEditor::mouseMoveEvent(QMouseEvent *event) {
@@ -3495,7 +3581,14 @@ void MarkdownEditor::keyReleaseEvent(QKeyEvent *event) {
 void MarkdownEditor::focusOutEvent(QFocusEvent *event) {
     m_quickJumpAltHeld = false;
     cancelQuickJump();
+    const bool selectionDragEnded =
+        std::exchange(m_mouseSelectionDrag, false);
     QTextEdit::focusOutEvent(event);
+    if (selectionDragEnded && !m_readMode) {
+        updateActiveHighlight();
+        applyImagePreviewFormats();
+        viewport()->update();
+    }
 }
 
 bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const {
@@ -4801,10 +4894,10 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 block.blockNumber() <= selLast)
                 continue;
 
-            const QString target =
-                imageTargetFromLine(commentMaskedBlockText(block));
-            if (target.isEmpty())
+            const MarkdownImage::Image image = imageForBlock(block);
+            if (!image.valid)
                 continue;
+            const QString &target = image.target;
             const QRectF area = imagePreviewArea(block);
             // The concealed Markdown glyph has a tiny block bounding rect;
             // visibility must be tested against the full fixed-height preview
@@ -4817,8 +4910,11 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
                 continue;
 
             const QString path = resolvedImagePath(block);
+            const QSizeF previewSize = imagePreviewSize(block);
             const QPixmap pm =
-                imagePreviewPixmap(path, area.size().toSize(), dpr);
+                imagePreviewPixmap(path, previewSize.toSize(), dpr,
+                                   image.dimensions.width > 0 &&
+                                       image.dimensions.height > 0);
             if (pm.isNull()) {
                 const qreal placeholderWidth = qMin(qreal(360), area.width());
                 const QRectF placeholder(

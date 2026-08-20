@@ -1,6 +1,7 @@
 #include "SpellChecker.h"
 
 #include "MarkdownComment.h"
+#include "MarkdownImage.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -392,6 +393,29 @@ SpellChecker::wordsInMarkdown(const QString &text) {
         maskRange(allowed, match.capturedStart(), match.capturedEnd());
         if (!text.mid(match.capturedStart(), 1).startsWith(QLatin1Char('!')))
             maskRange(allowed, labelStart, labelEnd, true);
+    }
+
+    // Re-mask every image form after the link passes above. This also covers
+    // reference images and Obsidian embeds, whose descriptions/paths are not
+    // prose and should never produce spelling diagnostics.
+    for (const MarkdownImage::Image &image :
+         MarkdownImage::imagesInLine(text, {}, true))
+        maskRange(allowed, image.start, image.start + image.length);
+
+    QSet<int> definitionLines;
+    MarkdownImage::collectReferences(text, &definitionLines);
+    int lineNumber = 0;
+    int lineStart = 0;
+    while (lineStart <= text.size()) {
+        int lineEnd = text.indexOf(QLatin1Char('\n'), lineStart);
+        if (lineEnd < 0)
+            lineEnd = text.size();
+        if (definitionLines.contains(lineNumber))
+            maskRange(allowed, lineStart, lineEnd);
+        if (lineEnd == text.size())
+            break;
+        lineStart = lineEnd + 1;
+        ++lineNumber;
     }
 
     static const QRegularExpression code(QStringLiteral("`+[^`\\n]*`+"));
