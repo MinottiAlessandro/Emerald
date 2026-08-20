@@ -11,9 +11,11 @@
 #include "core/MascotSeed.h"
 #include "core/SpellChecker.h"
 
+#include <QAbstractItemView>
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QClipboard>
+#include <QCompleter>
 #include <QEventLoop>
 #include <QFile>
 #include <QKeyEvent>
@@ -1268,6 +1270,89 @@ int main(int argc, char **argv) {
     // owned by the old popup. A new empty note has no completion context, so
     // Enter always belongs to the editor.
     editor.setCompletions({QStringLiteral("Destination")});
+    QString headingCompletionTarget;
+    editor.setHeadingCompletionProvider(
+        [&headingCompletionTarget](const QString &target) {
+            headingCompletionTarget = target;
+            return QStringList({QStringLiteral("Overview"),
+                                QStringLiteral("Details")});
+        });
+    editor.activateWindow();
+    editor.setFocus();
+    editor.setPlainText(QStringLiteral("[[Destination"));
+    editor.moveCursor(QTextCursor::End);
+    sendKey(editor, QEvent::KeyPress, Qt::Key_NumberSign, Qt::NoModifier,
+            QStringLiteral("#"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+            QStringLiteral("d"));
+    QApplication::processEvents();
+    QCompleter *headingCompleter = editor.findChild<QCompleter *>();
+    QAbstractItemView *headingPopup =
+        headingCompleter ? headingCompleter->popup() : nullptr;
+    const int headingRows =
+        headingPopup && headingPopup->model()
+            ? headingPopup->model()->rowCount()
+            : -1;
+    const QString firstHeadingCompletion =
+        headingRows > 0
+            ? headingPopup->model()->index(0, 0).data().toString()
+            : QString();
+    check(headingCompletionTarget == QStringLiteral("Destination") &&
+              headingPopup && headingPopup->isVisible() &&
+              headingRows == 1 && firstHeadingCompletion ==
+                  QStringLiteral("Details"),
+          QStringLiteral("typing # in a wiki link should offer headings from "
+                         "that note (target='%1', visible=%2, rows=%3, first='%4', source='%5')")
+              .arg(headingCompletionTarget)
+              .arg(headingPopup && headingPopup->isVisible())
+              .arg(headingRows)
+              .arg(firstHeadingCompletion, editor.toPlainText()));
+    check(headingCompleter &&
+              QMetaObject::invokeMethod(
+                  headingCompleter, "activated", Qt::DirectConnection,
+                  Q_ARG(QString, firstHeadingCompletion)),
+          QStringLiteral("the heading completion can be activated"));
+    QApplication::processEvents();
+    check(editor.toPlainText() ==
+              QStringLiteral("[[Destination#Details]]"),
+          QStringLiteral("accepting a heading completion should insert the "
+                         "qualified wiki destination (actual '%1')")
+              .arg(editor.toPlainText()));
+
+    editor.setPlainText(
+        QStringLiteral("[[Destination#Details]]\nplain trailing line"));
+    QTextCursor afterHeadingLink(editor.document()->findBlockByNumber(1));
+    editor.setTextCursor(afterHeadingLink);
+    const QTextBlock renderedHeadingLink = editor.document()->firstBlock();
+    settleLayout(editor, renderedHeadingLink);
+    const int headingHash = renderedHeadingLink.text().indexOf(QLatin1Char('#'));
+    check(headingHash > 0 &&
+              highlighterFormatAt(renderedHeadingLink, headingHash)
+                      .foreground()
+                      .color()
+                      .alpha() == 0 &&
+              highlighterFormatAt(renderedHeadingLink, 2)
+                      .foreground()
+                      .color()
+                      .alpha() > 0,
+          QStringLiteral("an inactive heading-qualified wiki link should hide "
+                         "its #heading suffix but retain the note label"));
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    const QTextCursor readHeadingLink =
+        editor.document()->find(QStringLiteral("Destination"));
+    check(editor.document()->firstBlock().text() ==
+              QStringLiteral("Destination") &&
+              !editor.document()->toPlainText().contains(
+                  QStringLiteral("Details")) &&
+              readHeadingLink.charFormat().isAnchor() &&
+              MarkdownReadRenderer::wikiTargetFromHref(
+                  readHeadingLink.charFormat().anchorHref()) ==
+                  QStringLiteral("Destination#Details"),
+          QStringLiteral("Read Mode should display the note label without its "
+                         "wiki heading qualifier while retaining its target"));
+    editor.setReadMode(false);
+
     editor.setPlainText(QStringLiteral("[[\n"));
     QTextCursor completionLine(editor.document()->firstBlock());
     completionLine.movePosition(QTextCursor::EndOfBlock);

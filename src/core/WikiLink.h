@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 class QRegularExpression;
 
@@ -24,6 +25,15 @@ QString cleanDestination(const QString &inner);
 
 // The trimmed heading qualifier after the first '#', or empty when absent.
 QString heading(const QString &inner);
+
+// Presentation label for a wiki link. An explicit alias wins; otherwise a
+// heading-qualified link shows only its note title (or the heading name for a
+// local [[#heading]] link).
+QString displayText(const QString &inner);
+
+// ATX headings available for [[Note#...]] completion, in source order and
+// excluding fenced code/comments. Duplicate names are returned once.
+QStringList headings(const QString &markdown);
 
 // Source position of the first matching ATX heading outside fenced code and
 // author-only comments. Matching is case-insensitive; -1 means not found.

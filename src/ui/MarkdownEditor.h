@@ -51,6 +51,10 @@ public:
 
     // The note titles offered by [[ autocomplete. Call when the vault changes.
     void setCompletions(const QStringList &titles);
+    // Resolve one exact note title to its heading names only when the user types
+    // [[Note#. Keeping this lazy avoids indexing every heading in the vault.
+    void setHeadingCompletionProvider(
+        std::function<QStringList(const QString &noteTitle)> provider);
 
     // Set the editor body font (family + size) and keep heading scaling in sync.
     void applyFont(const QFont &font);
@@ -374,6 +378,11 @@ private:
     bool m_readCursorChanged = false;
     QCompleter *m_completer = nullptr;
     QStringListModel *m_completionModel = nullptr;
+    QStringList m_noteCompletions;
+    std::function<QStringList(const QString &)> m_headingCompletionProvider;
+    QString m_headingCompletionTarget;
+    QStringList m_headingCompletions;
+    bool m_headingCompletionsCached = false;
 
     // A collapsed source section: its heading/list item plus the last source
     // block it hides. Source handles remain stable while Read Mode swaps in a

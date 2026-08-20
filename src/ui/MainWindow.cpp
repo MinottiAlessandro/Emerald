@@ -1434,6 +1434,21 @@ MainWindow::~MainWindow() {
 
 void MainWindow::buildUi() {
     m_editor = new MarkdownEditor(this);
+    m_editor->setHeadingCompletionProvider(
+        [this](const QString &noteTitle) {
+            if (!m_vault)
+                return QStringList{};
+            const QString path = noteTitle.trimmed().isEmpty()
+                                     ? m_currentPath
+                                     : m_vault->pathForTitle(
+                                           noteTitle.trimmed());
+            if (path.isEmpty())
+                return QStringList{};
+            const QString markdown =
+                path == m_currentPath ? m_editor->toPlainText()
+                                      : m_vault->read(path);
+            return WikiLink::headings(markdown);
+        });
     connect(m_editor, &MarkdownEditor::linkClicked, this,
             &MainWindow::onLinkClicked);
     connect(m_editor, &MarkdownEditor::navigateBack, this,

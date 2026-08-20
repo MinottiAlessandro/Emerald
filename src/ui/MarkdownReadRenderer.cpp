@@ -412,8 +412,15 @@ void insertInlineAnalyzed(QTextCursor &cursor, const QString &text,
             if (end >= 0) {
                 const QString inside = text.mid(pos + 2, end - pos - 2);
                 const int separator = inside.indexOf(QLatin1Char('|'));
-                const int labelStart = separator >= 0 ? separator + 1 : 0;
-                const QString rawLabel = inside.mid(labelStart);
+                const int hash = inside.indexOf(QLatin1Char('#'));
+                int labelStart = separator >= 0 ? separator + 1 : 0;
+                int labelEnd = inside.size();
+                if (separator < 0 && hash > 0)
+                    labelEnd = hash;
+                else if (separator < 0 && hash == 0)
+                    labelStart = 1;
+                const QString rawLabel =
+                    inside.mid(labelStart, labelEnd - labelStart);
                 int leadingSpace = 0;
                 while (leadingSpace < rawLabel.size() &&
                        rawLabel.at(leadingSpace).isSpace())

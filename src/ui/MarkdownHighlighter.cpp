@@ -787,14 +787,24 @@ void MarkdownHighlighter::applyWikiLinks(const QString &text,
             setFormat(innerStart, inner.size(), inlineFormat(m_link));
             setFormat(innerEnd, end - innerEnd, inlineFormat(m_marker)); // ]]
         } else {
-            // Show only the alias (text after '|'); hide the target + brackets.
+            // An alias is the explicit label. Without one, keep a heading
+            // qualifier navigable but presentation-only: [[Note#Heading]]
+            // renders as Note, and local [[#Heading]] renders as Heading.
             const int pipe = inner.indexOf(QLatin1Char('|'));
-            const int displayStart =
-                pipe >= 0 ? innerStart + pipe + 1 : innerStart;
+            const int hash = inner.indexOf(QLatin1Char('#'));
+            int displayStart = innerStart;
+            int displayEnd = innerEnd;
+            if (pipe >= 0) {
+                displayStart = innerStart + pipe + 1;
+            } else if (hash > 0) {
+                displayEnd = innerStart + hash;
+            } else if (hash == 0) {
+                displayStart = innerStart + 1;
+            }
             setFormat(start, displayStart - start, conceal());
-            setFormat(displayStart, innerEnd - displayStart,
+            setFormat(displayStart, displayEnd - displayStart,
                       inlineFormat(m_link));
-            setFormat(innerEnd, end - innerEnd, conceal());
+            setFormat(displayEnd, end - displayEnd, conceal());
         }
 
         for (int i = start; i < end; ++i)

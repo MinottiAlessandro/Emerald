@@ -648,6 +648,9 @@ void MarkdownEditor::setPlainText(const QString &text) {
         m_completer->popup()->hide();
         m_completer->setCompletionPrefix(QString());
     }
+    m_headingCompletionsCached = false;
+    m_headingCompletionTarget.clear();
+    m_headingCompletions.clear();
 
     if (m_readMode) {
         m_sourceDocument->setPlainText(text);
@@ -746,7 +749,19 @@ void MarkdownEditor::copy() {
 }
 
 void MarkdownEditor::setCompletions(const QStringList &titles) {
-    m_completionModel->setStringList(titles);
+    m_noteCompletions = titles;
+    m_completionModel->setStringList(m_noteCompletions);
+    m_headingCompletionsCached = false;
+    m_headingCompletionTarget.clear();
+    m_headingCompletions.clear();
+}
+
+void MarkdownEditor::setHeadingCompletionProvider(
+    std::function<QStringList(const QString &noteTitle)> provider) {
+    m_headingCompletionProvider = std::move(provider);
+    m_headingCompletionsCached = false;
+    m_headingCompletionTarget.clear();
+    m_headingCompletions.clear();
 }
 
 void MarkdownEditor::setImagePaths(const QString &basePath,
@@ -2628,10 +2643,40 @@ void MarkdownEditor::updateCompletionPopup() {
     const QString prefix = wikiContextPrefix(&inContext);
     if (!inContext) {
         m_completer->popup()->hide();
+        if (m_completionModel->stringList() != m_noteCompletions)
+            m_completionModel->setStringList(m_noteCompletions);
+        m_headingCompletionsCached = false;
         return;
     }
-    if (prefix != m_completer->completionPrefix())
-        m_completer->setCompletionPrefix(prefix);
+
+    QStringList choices = m_noteCompletions;
+    QString completionPrefix = prefix;
+    const int hash = prefix.indexOf(QLatin1Char('#'));
+    const int pipe = prefix.indexOf(QLatin1Char('|'));
+    if (hash >= 0 && (pipe < 0 || hash < pipe) &&
+        m_headingCompletionProvider) {
+        const QString target = prefix.left(hash).trimmed();
+        if (!m_headingCompletionsCached ||
+            target.compare(m_headingCompletionTarget,
+                           Qt::CaseInsensitive) != 0) {
+            m_headingCompletionTarget = target;
+            m_headingCompletions = m_headingCompletionProvider(target);
+            m_headingCompletionsCached = true;
+        }
+        choices.clear();
+        completionPrefix = prefix.mid(hash + 1);
+        for (const QString &heading : std::as_const(m_headingCompletions))
+            if (!heading.isEmpty() &&
+                !heading.contains(QStringLiteral("]]")) &&
+                !heading.contains(QLatin1Char('|')))
+                choices.append(heading);
+    } else {
+        m_headingCompletionsCached = false;
+    }
+    if (m_completionModel->stringList() != choices)
+        m_completionModel->setStringList(choices);
+    if (completionPrefix != m_completer->completionPrefix())
+        m_completer->setCompletionPrefix(completionPrefix);
     if (m_completer->completionCount() == 0) {
         m_completer->popup()->hide();
         return;
@@ -2667,6 +2712,7 @@ void MarkdownEditor::insertCompletion(const QString &completion) {
         QStringLiteral("]]"))
         cursor.insertText(QStringLiteral("]]"));
     setTextCursor(cursor);
+    m_headingCompletionsCached = false;
 }
 
 bool MarkdownEditor::pointInTextRange(const QPoint &pos,
@@ -2894,10 +2940,16 @@ void MarkdownEditor::refreshQuickJumpTargets() {
                     continue;
                 const QString inner = match.captured(1);
                 const int pipe = inner.indexOf(QLatin1Char('|'));
-                const int displayStart = match.capturedStart(1) +
-                                         (pipe >= 0 ? pipe + 1 : 0);
+                const int hash = inner.indexOf(QLatin1Char('#'));
+                int displayStart = match.capturedStart(1) +
+                                   (pipe >= 0 ? pipe + 1 : 0);
+                int displayEnd = match.capturedEnd(1);
+                if (pipe < 0 && hash > 0)
+                    displayEnd = match.capturedStart(1) + hash;
+                else if (pipe < 0 && hash == 0)
+                    ++displayStart;
                 candidates.append({int(match.capturedStart()), displayStart,
-                                   int(match.capturedEnd(1)),
+                                   displayEnd,
                                    WikiLink::cleanDestination(inner),
                                    QuickJumpKind::Wiki});
             }
