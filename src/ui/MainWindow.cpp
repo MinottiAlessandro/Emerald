@@ -1386,7 +1386,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             m_saveTimer->start();
     });
 
-    const QString last = QSettings().value(QStringLiteral("lastVault")).toString();
+    const QSettings settings;
+    // lastVault changes as soon as a vault is opened, which also happens while
+    // switching vaults. Prefer the vault from the last clean window close so a
+    // relaunch restores the session the user actually finished. Fall back only
+    // when upgrading settings that predate lastClosedVault.
+    const QString startupKey =
+        settings.contains(QStringLiteral("lastClosedVault"))
+            ? QStringLiteral("lastClosedVault")
+            : QStringLiteral("lastVault");
+    const QString last = settings.value(startupKey).toString();
     if (!last.isEmpty() && QDir(last).exists())
         openVault(last);
     else
@@ -5129,6 +5138,9 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     if (m_vault && m_graphPage)
         VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),
                                 m_graphPage->savedState());
+    if (m_vault)
+        QSettings().setValue(QStringLiteral("lastClosedVault"),
+                             m_vault->root());
     saveCursorPositions(); // remember caret positions for the next launch
     if (m_mobileLayout && !m_desktopSplitterSizes.isEmpty()) {
         const QList<int> mobileSizes = m_splitter->sizes();

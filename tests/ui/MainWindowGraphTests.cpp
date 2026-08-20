@@ -5,6 +5,7 @@
 #include "ui/GraphView.h"
 #include "ui/MainWindow.h"
 #include "ui/MarkdownEditor.h"
+#include "ui/SearchPopup.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -648,6 +649,7 @@ void testLastNotePerVault() {
   }
 
   settings.setValue(QStringLiteral("lastVault"), vaultB);
+  settings.setValue(QStringLiteral("lastClosedVault"), vaultB);
   {
     MainWindow window;
     window.show();
@@ -658,6 +660,81 @@ void testLastNotePerVault() {
           }),
           QStringLiteral("vault B restores its own last-open note"));
     window.close();
+    QApplication::processEvents();
+  }
+  settings.clear();
+}
+
+void testLastClosedVault() {
+  QSettings settings;
+  settings.clear();
+  QTemporaryDir parent;
+  check(parent.isValid(), QStringLiteral("last-closed vault parent exists"));
+  if (!parent.isValid())
+    return;
+
+  const QString vaultA = parent.filePath(QStringLiteral("Closed Vault"));
+  const QString vaultB = parent.filePath(QStringLiteral("Opened Vault"));
+  check(QDir().mkpath(vaultA) && QDir().mkpath(vaultB) &&
+            writeFile(QDir(vaultA).filePath(QStringLiteral("Closed Note.md")),
+                      QStringLiteral("closed session\n")) &&
+            writeFile(QDir(vaultB).filePath(QStringLiteral("Opened Note.md")),
+                      QStringLiteral("opened session\n")),
+        QStringLiteral("last-closed vault fixtures are writable"));
+  VaultSettings::setValue(vaultA, QStringLiteral("lastNote"),
+                          QStringLiteral("Closed Note.md"));
+  VaultSettings::setValue(vaultB, QStringLiteral("lastNote"),
+                          QStringLiteral("Opened Note.md"));
+
+  settings.setValue(QStringLiteral("lastClosedVault"), vaultA);
+  settings.setValue(QStringLiteral("lastVault"), vaultB);
+  {
+    MainWindow window;
+    window.show();
+    auto *title =
+        window.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    auto *searchPopup = window.findChild<SearchPopup *>();
+    check(waitUntil([title] {
+            return title && title->text() == QStringLiteral("Closed Note");
+          }),
+          QStringLiteral("startup prefers the last closed vault over the "
+                         "last opened vault"));
+
+    check(searchPopup &&
+              QMetaObject::invokeMethod(
+                  searchPopup, "openVaultRequested", Qt::DirectConnection,
+                  Q_ARG(QString, vaultB)) &&
+              waitUntil([title] {
+                return title &&
+                       title->text() == QStringLiteral("Opened Note");
+              }),
+          QStringLiteral("the test can switch to a second vault"));
+    check(settings.value(QStringLiteral("lastClosedVault")).toString() ==
+              vaultA,
+          QStringLiteral("switching vaults does not replace the last cleanly "
+                         "closed vault"));
+
+    window.close();
+    QApplication::processEvents();
+  }
+  check(settings.value(QStringLiteral("lastClosedVault")).toString() ==
+            vaultB,
+        QStringLiteral("closing Emerald records the vault active at close"));
+
+  // Simulate another vault having been opened without a subsequent clean
+  // close. The next process should still restore the completed session above.
+  settings.setValue(QStringLiteral("lastVault"), vaultA);
+  {
+    MainWindow restored;
+    restored.show();
+    auto *title =
+        restored.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    check(waitUntil([title] {
+            return title && title->text() == QStringLiteral("Opened Note");
+          }),
+          QStringLiteral("a later startup still restores the last closed "
+                         "vault"));
+    restored.close();
     QApplication::processEvents();
   }
   settings.clear();
@@ -1311,6 +1388,7 @@ int main(int argc, char **argv) {
 
   testInPaneGraphNavigation(settingsDir.path());
   testLastNotePerVault();
+  testLastClosedVault();
   testWikiHeadingNavigation();
   testFullWidthEditorPreference();
   testFileTreeSortPreference();
