@@ -151,11 +151,24 @@ protected:
             event->type() == QEvent::MouseButtonRelease) {
             const auto *mouse = static_cast<QMouseEvent *>(event);
             const QModelIndex item = view()->indexAt(mouse->position().toPoint());
-            if (item.isValid())
+            if (item.isValid()) {
+                m_keepPopupOpen = true;
                 toggleItem(item.row());
+                // QComboBox may ask its private popup container to close while
+                // dispatching this same release. Keep only that item-click
+                // close suppressed; Escape and clicks outside the popup retain
+                // the native behavior on the next event-loop turn.
+                QTimer::singleShot(0, this,
+                                   [this] { m_keepPopupOpen = false; });
+            }
             return true;
         }
         return QComboBox::eventFilter(watched, event);
+    }
+
+    void hidePopup() override {
+        if (!m_keepPopupOpen)
+            QComboBox::hidePopup();
     }
 
 private:
@@ -168,7 +181,6 @@ private:
             return; // an enabled spell checker always has a dictionary
         setItemData(index, checked ? Qt::Unchecked : Qt::Checked,
                     Qt::CheckStateRole);
-        setCurrentIndex(index);
         refreshSummary();
     }
 
@@ -182,6 +194,8 @@ private:
         lineEdit()->setToolTip(summary);
         lineEdit()->setCursorPosition(0);
     }
+
+    bool m_keepPopupOpen = false;
 };
 
 QStringList configuredSpellLanguages(QSettings &settings) {

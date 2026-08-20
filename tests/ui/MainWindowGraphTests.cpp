@@ -23,6 +23,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -311,6 +312,7 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   bool spellingControlsSeen = false;
   bool spellingLanguagePopupOpaque = false;
   bool spellingLanguagePopupFrameOpaque = false;
+  bool spellingLanguagePopupStaysOpen = false;
   bool fontPopupOpaque = false;
   bool spellingManagerSeen = false;
   QTimer::singleShot(0, [&] {
@@ -370,6 +372,23 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
               color.alpha() == 255 &&
               color == QColor(QStringLiteral("#121512"));
         }
+
+        const QPoint local = testRow.center();
+        const QPoint global = viewport->mapToGlobal(local);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(local),
+                          QPointF(global), Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(local),
+                            QPointF(global), Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QApplication::sendEvent(viewport, &press);
+        QApplication::sendEvent(viewport, &release);
+        QApplication::processEvents();
+        spellingLanguagePopupStaysOpen =
+            popup->isVisible() &&
+            spellLanguage->itemData(spellLanguage->count() - 1,
+                                    Qt::CheckStateRole)
+                    .toInt() == Qt::Checked;
       }
       spellLanguage->hidePopup();
       spellLanguage->removeItem(spellLanguage->count() - 1);
@@ -418,6 +437,9 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
                        "with an opaque background"));
   check(spellingLanguagePopupFrameOpaque,
         QStringLiteral("the spelling language popup paints an opaque frame"));
+  check(spellingLanguagePopupStaysOpen,
+        QStringLiteral("selecting a spelling dictionary keeps the multi-select "
+                       "popup open"));
   check(fontPopupOpaque,
         QStringLiteral("the font-family popup is fully opaque"));
   check(spellingManagerSeen,
