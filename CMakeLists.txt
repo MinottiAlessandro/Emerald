@@ -297,37 +297,39 @@ if(WIN32)
   # available (never forcibly default) editor for Markdown files.
   set(CPACK_NSIS_DISPLAY_NAME "Emerald")
   set(CPACK_NSIS_PACKAGE_NAME "Emerald")
-  set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\emerald.exe")
+  # These values are emitted into a second CMake file (CPackConfig.cmake), so
+  # backslashes and embedded quotes need one extra level of escaping here.
+  set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\emerald.exe")
   set(CPACK_NSIS_MUI_ICON "${EMERALD_ICON_ICO}")
   set(CPACK_NSIS_MUI_UNIICON "${EMERALD_ICON_ICO}")
   set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
   set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [[
     SetRegView 64
-    WriteRegStr HKLM "Software\Classes\Emerald.Markdown" "" "Markdown Document"
-    WriteRegStr HKLM "Software\Classes\Emerald.Markdown\DefaultIcon" "" '"$INSTDIR\bin\emerald.exe",0'
-    WriteRegStr HKLM "Software\Classes\Emerald.Markdown\shell\open\command" "" '"$INSTDIR\bin\emerald.exe" "%1"'
-    WriteRegStr HKLM "Software\Classes\.md\OpenWithProgids" "Emerald.Markdown" ""
-    WriteRegStr HKLM "Software\Classes\.markdown\OpenWithProgids" "Emerald.Markdown" ""
-    WriteRegStr HKLM "Software\Emerald\Capabilities" "ApplicationName" "Emerald"
-    WriteRegStr HKLM "Software\Emerald\Capabilities" "ApplicationDescription" "Fast, local Markdown note editor"
-    WriteRegStr HKLM "Software\Emerald\Capabilities" "ApplicationIcon" '"$INSTDIR\bin\emerald.exe",0'
-    WriteRegStr HKLM "Software\Emerald\Capabilities\FileAssociations" ".md" "Emerald.Markdown"
-    WriteRegStr HKLM "Software\Emerald\Capabilities\FileAssociations" ".markdown" "Emerald.Markdown"
-    WriteRegStr HKLM "Software\RegisteredApplications" "Emerald" "Software\Emerald\Capabilities"
-    WriteRegStr HKLM "Software\Classes\Applications\emerald.exe\shell\open\command" "" '"$INSTDIR\bin\emerald.exe" "%1"'
-    WriteRegStr HKLM "Software\Classes\Applications\emerald.exe\SupportedTypes" ".md" ""
-    WriteRegStr HKLM "Software\Classes\Applications\emerald.exe\SupportedTypes" ".markdown" ""
+    WriteRegStr HKLM \"Software\\Classes\\Emerald.Markdown\" \"\" \"Markdown Document\"
+    WriteRegStr HKLM \"Software\\Classes\\Emerald.Markdown\\DefaultIcon\" \"\" '\"$INSTDIR\\bin\\emerald.exe\",0'
+    WriteRegStr HKLM \"Software\\Classes\\Emerald.Markdown\\shell\\open\\command\" \"\" '\"$INSTDIR\\bin\\emerald.exe\" \"%1\"'
+    WriteRegStr HKLM \"Software\\Classes\\.md\\OpenWithProgids\" \"Emerald.Markdown\" \"\"
+    WriteRegStr HKLM \"Software\\Classes\\.markdown\\OpenWithProgids\" \"Emerald.Markdown\" \"\"
+    WriteRegStr HKLM \"Software\\Emerald\\Capabilities\" \"ApplicationName\" \"Emerald\"
+    WriteRegStr HKLM \"Software\\Emerald\\Capabilities\" \"ApplicationDescription\" \"Fast, local Markdown note editor\"
+    WriteRegStr HKLM \"Software\\Emerald\\Capabilities\" \"ApplicationIcon\" '\"$INSTDIR\\bin\\emerald.exe\",0'
+    WriteRegStr HKLM \"Software\\Emerald\\Capabilities\\FileAssociations\" \".md\" \"Emerald.Markdown\"
+    WriteRegStr HKLM \"Software\\Emerald\\Capabilities\\FileAssociations\" \".markdown\" \"Emerald.Markdown\"
+    WriteRegStr HKLM \"Software\\RegisteredApplications\" \"Emerald\" \"Software\\Emerald\\Capabilities\"
+    WriteRegStr HKLM \"Software\\Classes\\Applications\\emerald.exe\\shell\\open\\command\" \"\" '\"$INSTDIR\\bin\\emerald.exe\" \"%1\"'
+    WriteRegStr HKLM \"Software\\Classes\\Applications\\emerald.exe\\SupportedTypes\" \".md\" \"\"
+    WriteRegStr HKLM \"Software\\Classes\\Applications\\emerald.exe\\SupportedTypes\" \".markdown\" \"\"
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ]])
   set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [[
     SetRegView 64
-    DeleteRegValue HKLM "Software\Classes\.md\OpenWithProgids" "Emerald.Markdown"
-    DeleteRegValue HKLM "Software\Classes\.markdown\OpenWithProgids" "Emerald.Markdown"
-    DeleteRegKey HKLM "Software\Classes\Emerald.Markdown"
-    DeleteRegKey HKLM "Software\Classes\Applications\emerald.exe"
-    DeleteRegValue HKLM "Software\RegisteredApplications" "Emerald"
-    DeleteRegKey HKLM "Software\Emerald\Capabilities"
-    DeleteRegKey /ifempty HKLM "Software\Emerald"
+    DeleteRegValue HKLM \"Software\\Classes\\.md\\OpenWithProgids\" \"Emerald.Markdown\"
+    DeleteRegValue HKLM \"Software\\Classes\\.markdown\\OpenWithProgids\" \"Emerald.Markdown\"
+    DeleteRegKey HKLM \"Software\\Classes\\Emerald.Markdown\"
+    DeleteRegKey HKLM \"Software\\Classes\\Applications\\emerald.exe\"
+    DeleteRegValue HKLM \"Software\\RegisteredApplications\" \"Emerald\"
+    DeleteRegKey HKLM \"Software\\Emerald\\Capabilities\"
+    DeleteRegKey /ifempty HKLM \"Software\\Emerald\"
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ]])
 elseif(APPLE)
