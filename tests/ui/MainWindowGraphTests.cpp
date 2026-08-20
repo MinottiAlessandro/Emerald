@@ -1681,7 +1681,7 @@ void testWhatsNewAfterUpdate() {
         QStringLiteral("whatsNewAction"));
     check(content &&
               content->toPlainText().contains(
-                  QStringLiteral("offline spell checking"),
+                  QStringLiteral("Emerald %1").arg(currentVersion),
                   Qt::CaseInsensitive) &&
               settings.value(QStringLiteral("lastRunVersion")).toString() ==
                   currentVersion &&

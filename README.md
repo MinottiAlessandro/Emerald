@@ -92,13 +92,14 @@ it opens or installs a download.
 - **Obsidian-style callouts** — start a quote with `> [!tip]` (or add a custom title after the marker) to turn the whole quote group into a continuous, type-colored callout in Edit and Read modes. Each supported type has its own emoji, the title is bold, and the top-level card stays on the normal left content edge without changing the Markdown source.
 - **Overlapping emphasis** — bold / italic / strike / highlight nest and stack, so `==dog ~~cat *horse **elephant***~~==` layers all four styles incrementally.
 - **HTML comments** — write private author notes with `<!-- comment -->`, inline or across multiple lines. Comments remain visible as subdued source in Edit Mode, but disappear entirely from Read Mode, search, spelling, Graph View, Quick Jump, broken-link checks, and rename propagation. The same text inside code or math stays literal.
+- **Markdown images** — inline and reference-style images plus Obsidian `![[image.png]]` embeds render in Edit and Read Mode, including optional titles and size hints. Local paths remain vault-bounded; missing files use a compact fallback card.
 - **Pipe tables** — Enter anywhere in the header or separator formats the table when it fits and starts at the first cell of the first data row, auto-creating missing structure; in a body row it moves to the same cell below, adding a row at the bottom when needed. Tab walks/grows the grid, and auto-alignment is skipped whenever its padded rows would exceed the editor width. Tables remain plain Markdown in Edit Mode and render semantically in Read Mode.
 - **Smart lists** — Enter continues a bullet / numbered / task list (numbers increment, indentation preserved); pressing Enter mid-item splits the line, carrying the text after the caret onto a new marked item; Enter on an empty item ends it; Tab / Shift+Tab indent and outdent (a multi-line selection indents every line). Off the active line, dashes become real bullet glyphs (●/○/▪ by nesting level). Click a parent item's arrow to collapse or expand its complete child list in Edit or Read Mode.
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
 - **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).
 - **Folding** on heading sections, fenced blocks, and nested list trees.
-- **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block ordinary edits. Select text and press `Ctrl+Shift+H` to add or remove a persistent `==highlight==`; if any part of the selection is not highlighted, Emerald fills the gaps, otherwise it removes the selected highlight. Plain ↑/↓ scroll the page while search, links, folding and text selection remain available. Switching between Read and Edit Mode preserves the same source-backed viewport anchor, so even rapidly toggling a wrapped list does not make the page drift.
-- **Markdown-aware spell checking** — US English is included and works entirely offline. Misspelled prose is underlined incrementally without disturbing bold, links, or other live-preview styling; code, math, URLs, HTML, images, and wiki-link targets are skipped. Right-click a misspelling for corrections, **Add to personal dictionary**, or **Ignore for this session**. Settings can download independently verified Italian, German, French, and Spanish packs from versioned Emerald releases, outside the vault.
+- **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block ordinary edits. Select text and press `Ctrl+Shift+H` to add or remove a persistent `==highlight==`; if any part of the selection is not highlighted, Emerald fills the gaps, otherwise it removes the selected highlight. Plain ↑/↓ scroll the page while search, including matches inside rendered code blocks, links, folding and text selection remain available. Switching between Read and Edit Mode preserves the same source-backed viewport anchor, so even rapidly toggling a wrapped list does not make the page drift.
+- **Markdown-aware spell checking** — US English is included and works entirely offline. Misspelled prose is underlined incrementally without disturbing bold, links, or other live-preview styling; code, math, URLs, HTML, images, and wiki-link targets are skipped. Right-click a misspelling for corrections, **Add to personal dictionary**, or **Ignore for this session**. Settings can download independently verified Italian, German, French, and Spanish packs from versioned Emerald releases, activate several dictionaries together, and remember the language stack per vault.
 
 **Math** *(no dependencies — a small built-in TeX-subset typesetter)*
 - **Inline `$…$`** and **display `$$…$$`** render live in place; a `$$` block can span several lines (open/close on their own lines or carrying content), and the raw source reappears whenever the caret or selection is inside it. Bare dollars (`$5 and $12`) stay literal.
@@ -106,7 +107,7 @@ it opens or installs a download.
 - **Accents** (`\hat \bar \vec \tilde \dot \ddot \widehat \overline`), **grown delimiters** `\left( … \right]`, **`\text` / `\textbf` / `\operatorname`**, **matrices** (`pmatrix` `bmatrix` `vmatrix` …), ~150 symbol commands (Greek, operators, relations, arrows), and full Unicode (emoji, CJK).
 
 **Links & navigation**
-- `[[Note]]` links are clickable (plain click once rendered, Ctrl+click on the line you're editing) and auto-create their target. `[[Note|alias]]` shows just the alias. Typing `[[` pops a fuzzy autocomplete of existing titles. Hold `Alt` for a moment to label every visible link, then type its QWERTY-ordered hint to open it without the mouse (`X` is reserved for the shortcuts panel).
+- `[[Note]]` links are clickable (plain click once rendered, Ctrl+click on the line you're editing) and auto-create their target. `[[Note|alias]]` shows just the alias; `[[Note#Heading]]` and `[[#Heading]]` jump directly to headings. Typing `[[` pops a fuzzy autocomplete of existing titles and offers matching headings after `#`. Hold `Alt` for a moment to label every visible link, then type its QWERTY-ordered hint to open it without the mouse (`X` is reserved for the shortcuts panel).
 - **External links** — `[text](https://…)` renders as a clickable link (the `](url)` melts away, leaving just the text) and opens in your browser.
 - **Title = filename** — the note's title is the first line above the body; editing it renames the file and rewrites every inbound `[[link]]`.
 - **Back / forward history** like a browser (`Alt+←` / `Alt+→`, mouse side buttons, or the sidebar arrows).
@@ -114,11 +115,11 @@ it opens or installs a download.
 
 **Vault & search**
 - **Standalone files** — open an individual `.md` or `.markdown` from the gear menu, command line, Finder/File Explorer, or a Linux file manager. It gets its own window and file watcher; Emerald neither scans nor indexes neighboring files and leaves the last-vault setting untouched. Existing relative images render, while vault-only search, graphs, templates, attachment copying, and note creation stay disabled.
-- **Folder-tree sidebar** with drag-and-drop; right-click to create notes or sub-folders anywhere.
+- **Folder-tree sidebar** with drag-and-drop; right-click to create notes or sub-folders anywhere, and sort notes by name or modification time.
 - **Telescope-style search popup** — ranked results, type to filter, ↑/↓ to move, Enter jumps to the first match.
 - **Broken Links** — `Ctrl+Shift+B` (or **Settings → Vault → Broken links**) opens a filterable report of every `[[wiki-link]]` whose target note is missing or empty. Each result shows its source and line; Enter opens and selects the exact link.
 - **Templates** — point **Settings → Templates folder** at a folder in the vault, then **Insert Template…** (`Ctrl+T`) opens a quick picker of every note under it (sub-folders included) and drops the chosen one in at the caret. Templates can carry `{{date}}`, `{{time}}` and `{{title}}` placeholders — each filled in on insert; `{{date}}`/`{{time}}` take an optional Moment.js-style format after a colon (e.g. `{{date:YYYY/MM/DD}}`, `{{time:HH:mm:ss}}`).
-- **Debounced autosave** plus **external-edit detection** — Emerald reloads notes changed outside the app.
+- **Debounced autosave** plus **external-edit detection** — Emerald reloads notes changed outside the app. Each vault remembers its last note, while the vault switcher orders folders by recent activity and relaunch restores the last vault that was actually closed.
 
 **Mascots**
 - **A creature per note** — an optional, procedurally drawn mascot in the bottom-right corner, seeded from the note's title and text (rendered live from the seed by default — no image files needed). Around three dozen archetypes spanning ordinary animals, mythological creatures, and objects. Hover for a gentle blink and bob.
@@ -131,10 +132,10 @@ it opens or installs a download.
 - **No menubar** — a gear at the bottom of the sidebar holds settings and file actions; everything has a shortcut.
 - **Hold-to-view shortcut cheatsheet** — keep `Alt+X` pressed for a centered, categorized reference, then release either key to dismiss it without losing focus.
 - **Responsive layout** — at narrow widths, the folder tree and editor become separate full-width views with compact Notes/Editor navigation and always-available new-note, search, and gear controls.
-- **Adjustable editor font** (family + size, persisted) and **line spacing**; heading sizes scale with the font.
+- **Adjustable editor font** (family + size, persisted), fixed or full-width columns, and **line spacing**; heading sizes scale with the font.
 - **Smooth scrolling** — mouse-wheel steps ease between pixel positions; high-resolution trackpad deltas remain native and direct, and Read Mode's ↑/↓ movement uses the same pixel-based viewport.
 - **Self-updating** — **Check for Updates…** pulls the latest release from GitHub and installs in place on macOS and Linux AppImage builds. After an upgrade, Emerald opens an offline **What's New** panel once; the same notes remain available from the gear menu.
-- **Dark theme**, embedded in the binary.
+- **Application themes** — switch between the built-in Dark and Light palettes or create named custom themes with a live preview and per-role colors.
 
 ---
 
