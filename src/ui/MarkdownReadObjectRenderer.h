@@ -68,6 +68,10 @@ public:
     static QString codeText(const QTextCharFormat &format);
     static int codeSourceStart(const QTextCharFormat &format);
     static int codeSourceLength(const QTextCharFormat &format);
+    static void setCodeSearchMatch(QTextCharFormat &format, int start,
+                                   int length);
+    static int codeSearchMatchStart(const QTextCharFormat &format);
+    static int codeSearchMatchLength(const QTextCharFormat &format);
     // Plain-text alternative used by selection copy and assistive UI for a
     // custom object that would otherwise appear as U+FFFC.
     static QString accessibleText(const QTextCharFormat &format);
@@ -93,5 +97,7 @@ private:
         LanguageProperty,
         CodeSourceStartProperty,
         CodeSourceLengthProperty,
+        CodeSearchMatchStartProperty,
+        CodeSearchMatchLengthProperty,
     };
 };

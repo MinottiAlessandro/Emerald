@@ -177,6 +177,7 @@ private:
     QTextDocument *createReadDocument();
     void rebuildReadDocument(qreal scrollRatio = -1.0);
     void syncSourceCursorFromReadSelection();
+    void clearReadCodeSearchMatches();
     QString readSelectionText(const QTextCursor &selection) const;
     void copyReadSelection();
     // Ctrl+Shift+H in Read Mode edits the authoritative Markdown selection:

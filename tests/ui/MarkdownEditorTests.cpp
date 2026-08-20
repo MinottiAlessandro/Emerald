@@ -361,14 +361,56 @@ int main(int argc, char **argv) {
             searchEditor.textCursor().selectionStart());
         renderedCodeMatch.movePosition(QTextCursor::NextCharacter,
                                        QTextCursor::KeepAnchor);
+        const QTextCharFormat renderedCodeFormat =
+            renderedCodeMatch.charFormat();
+        MarkdownReadObjectRenderer codePainter;
+        QTextDocument codeDocument;
+        codeDocument.setTextWidth(380.0);
+        const QSizeF codeCardSize = codePainter.intrinsicSize(
+            &codeDocument, 0, renderedCodeFormat);
+        QImage codeCard(qCeil(codeCardSize.width()),
+                        qCeil(codeCardSize.height()),
+                        QImage::Format_ARGB32_Premultiplied);
+        codeCard.fill(Qt::transparent);
+        QPainter codeCardPainter(&codeCard);
+        codePainter.drawObject(&codeCardPainter,
+                               QRectF(QPointF(0, 0), codeCardSize),
+                               &codeDocument, 0, renderedCodeFormat);
+        codeCardPainter.end();
+        const QColor selectionColor =
+            searchEditor.palette().color(QPalette::Highlight);
+        bool codeSelectionPainted = false;
+        for (int y = 0; y < codeCard.height() && !codeSelectionPainted; ++y)
+            for (int x = 0; x < codeCard.width(); ++x)
+                if (codeCard.pixelColor(x, y) == selectionColor) {
+                    codeSelectionPainted = true;
+                    break;
+                }
         check(searchEditor.sourceTextCursor().selectedText() ==
                   QStringLiteral("read_search_target") &&
                   MarkdownReadObjectRenderer::kind(
-                      renderedCodeMatch.charFormat()) ==
+                      renderedCodeFormat) ==
                       MarkdownReadObjectRenderer::Kind::CodeBlock &&
+                  MarkdownReadObjectRenderer::codeSearchMatchStart(
+                      renderedCodeFormat) == 10 &&
+                  MarkdownReadObjectRenderer::codeSearchMatchLength(
+                      renderedCodeFormat) == 18 &&
+                  codeSelectionPainted &&
                   cursorIsCentered(),
               QStringLiteral("a Read Mode code match should retain its exact "
-                             "source selection and center the code card"));
+                             "source selection, paint a visible highlight, "
+                             "and center the code card"));
+        const int codeObjectPosition = renderedCodeMatch.selectionStart();
+        searchEditor.moveCursor(QTextCursor::End);
+        QApplication::processEvents();
+        QTextCursor clearedCodeMatch(searchEditor.document());
+        clearedCodeMatch.setPosition(codeObjectPosition);
+        clearedCodeMatch.movePosition(QTextCursor::NextCharacter,
+                                      QTextCursor::KeepAnchor);
+        check(MarkdownReadObjectRenderer::codeSearchMatchStart(
+                  clearedCodeMatch.charFormat()) < 0,
+              QStringLiteral("moving away from a Read Mode code result should "
+                             "clear its transient highlight"));
     }
 
     // Theme changes refresh both the cached live highlighter formats and the

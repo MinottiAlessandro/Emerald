@@ -551,6 +551,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
         if (m_switchingDocuments)
             return;
         if (m_readMode) {
+            clearReadCodeSearchMatches();
             syncSourceCursorFromReadSelection();
             viewport()->update();
             return;
@@ -595,6 +596,7 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
         if (m_switchingDocuments)
             return;
         if (m_readMode) {
+            clearReadCodeSearchMatches();
             syncSourceCursorFromReadSelection();
             viewport()->update();
             return;
@@ -703,6 +705,7 @@ void MarkdownEditor::setSourceTextCursor(const QTextCursor &cursor) {
     if (!m_readMode) {
         setTextCursor(sourceCursor);
     } else if (m_readDocument) {
+        clearReadCodeSearchMatches();
         const QTextCursor readCursor = MarkdownReadRenderer::mapToReadCursor(
             m_readDocument, sourceCursor);
         const bool wasSwitching = m_switchingDocuments;
@@ -1485,6 +1488,7 @@ bool MarkdownEditor::findAndCenter(const QString &text,
         if (!QTextEdit::find(text, flags))
             return false;
     } else {
+        clearReadCodeSearchMatches();
         struct CodeObject {
             int sourceStart = -1;
             int sourceEnd = -1;
@@ -1562,6 +1566,18 @@ bool MarkdownEditor::findAndCenter(const QString &text,
         const QTextCursor chosenRead = chooseCode ? codeReadMatch : readMatch;
         const QTextCursor chosenSource =
             chooseCode ? codeSourceMatch : readSourceMatch;
+
+        if (chooseCode) {
+            QTextCharFormat codeFormat = codeReadMatch.charFormat();
+            MarkdownReadObjectRenderer::setCodeSearchMatch(
+                codeFormat,
+                codeSourceMatch.selectionStart() -
+                    MarkdownReadObjectRenderer::codeSourceStart(codeFormat),
+                codeSourceMatch.selectionEnd() -
+                    codeSourceMatch.selectionStart());
+            codeReadMatch.setCharFormat(codeFormat);
+            m_readDocument->setModified(false);
+        }
 
         const bool wasSwitching = m_switchingDocuments;
         m_switchingDocuments = true;
@@ -1835,6 +1851,38 @@ void MarkdownEditor::syncSourceCursorFromReadSelection() {
     m_sourceCursor = MarkdownReadRenderer::mapToSourceCursor(
         m_sourceDocument, textCursor());
     m_readCursorChanged = true;
+}
+
+void MarkdownEditor::clearReadCodeSearchMatches() {
+    if (!m_readDocument)
+        return;
+
+    QVector<QTextCursor> highlightedObjects;
+    for (QTextBlock block = m_readDocument->firstBlock(); block.isValid();
+         block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() ||
+                MarkdownReadObjectRenderer::codeSearchMatchStart(
+                    fragment.charFormat()) < 0) {
+                continue;
+            }
+            QTextCursor object(m_readDocument);
+            object.setPosition(fragment.position());
+            object.setPosition(fragment.position() + fragment.length(),
+                               QTextCursor::KeepAnchor);
+            highlightedObjects.append(object);
+        }
+    }
+    for (QTextCursor &object : highlightedObjects) {
+        QTextCharFormat format = object.charFormat();
+        MarkdownReadObjectRenderer::setCodeSearchMatch(format, -1, 0);
+        object.setCharFormat(format);
+    }
+    if (!highlightedObjects.isEmpty()) {
+        m_readDocument->setModified(false);
+        viewport()->update();
+    }
 }
 
 QString MarkdownEditor::readSelectionText(
