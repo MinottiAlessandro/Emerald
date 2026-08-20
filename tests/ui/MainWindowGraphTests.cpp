@@ -1,4 +1,5 @@
 #include "core/Perf.h"
+#include "core/VaultSettings.h"
 #include "ui/AppTheme.h"
 #include "ui/GraphPage.h"
 #include "ui/GraphView.h"
@@ -606,6 +607,62 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   Q_UNUSED(settingsRoot);
 }
 
+void testLastNotePerVault() {
+  QSettings settings;
+  settings.clear();
+  QTemporaryDir parent;
+  check(parent.isValid(), QStringLiteral("last-note vault parent exists"));
+  if (!parent.isValid())
+    return;
+
+  const QString vaultA = parent.filePath(QStringLiteral("Vault A"));
+  const QString vaultB = parent.filePath(QStringLiteral("Vault B"));
+  check(QDir().mkpath(vaultA) && QDir().mkpath(vaultB),
+        QStringLiteral("last-note vaults are writable"));
+  const QString aFirst = QDir(vaultA).filePath(QStringLiteral("First A.md"));
+  const QString aLast = QDir(vaultA).filePath(QStringLiteral("Last A.md"));
+  const QString bFirst = QDir(vaultB).filePath(QStringLiteral("First B.md"));
+  const QString bLast = QDir(vaultB).filePath(QStringLiteral("Last B.md"));
+  check(writeFile(aFirst, QStringLiteral("first A\n")) &&
+            writeFile(aLast, QStringLiteral("last A\n")) &&
+            writeFile(bFirst, QStringLiteral("first B\n")) &&
+            writeFile(bLast, QStringLiteral("last B\n")),
+        QStringLiteral("last-note fixtures are writable"));
+  VaultSettings::setValue(vaultA, QStringLiteral("lastNote"),
+                          QStringLiteral("Last A.md"));
+  VaultSettings::setValue(vaultB, QStringLiteral("lastNote"),
+                          QStringLiteral("Last B.md"));
+
+  settings.setValue(QStringLiteral("lastVault"), vaultA);
+  {
+    MainWindow window;
+    window.show();
+    auto *title =
+        window.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    check(waitUntil([title] {
+            return title && title->text() == QStringLiteral("Last A");
+          }),
+          QStringLiteral("vault A restores its own last-open note"));
+    window.close();
+    QApplication::processEvents();
+  }
+
+  settings.setValue(QStringLiteral("lastVault"), vaultB);
+  {
+    MainWindow window;
+    window.show();
+    auto *title =
+        window.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    check(waitUntil([title] {
+            return title && title->text() == QStringLiteral("Last B");
+          }),
+          QStringLiteral("vault B restores its own last-open note"));
+    window.close();
+    QApplication::processEvents();
+  }
+  settings.clear();
+}
+
 void testFullWidthEditorPreference() {
   QSettings settings;
   settings.clear();
@@ -1178,6 +1235,7 @@ int main(int argc, char **argv) {
   AppTheme::apply(app, AppTheme::Id::Dark);
 
   testInPaneGraphNavigation(settingsDir.path());
+  testLastNotePerVault();
   testFullWidthEditorPreference();
   testFileTreeSortPreference();
   testThemePreference();

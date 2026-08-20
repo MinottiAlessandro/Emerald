@@ -34,7 +34,7 @@ const QStringList &legacyKeys() {
     static const QStringList keys{
         QStringLiteral("homeNote"), QStringLiteral("newNoteFolder"),
         QStringLiteral("templatesFolder"), QStringLiteral("spellLanguages"),
-        QStringLiteral("spellLanguage")};
+        QStringLiteral("spellLanguage"), QStringLiteral("lastNote")};
     return keys;
 }
 
@@ -121,7 +121,8 @@ void migrateLegacyForLastVault() {
     settings.setValue(QStringLiteral("rootPath"), root);
     for (auto it = legacy.constBegin(); it != legacy.constEnd(); ++it) {
         if (it.key() == QLatin1String("spellLanguage") ||
-            it.key() == QLatin1String("spellLanguages"))
+            it.key() == QLatin1String("spellLanguages") ||
+            it.key() == QLatin1String("lastNote"))
             continue;
         if (!settings.contains(it.key()))
             settings.setValue(it.key(), it.value());
@@ -137,6 +138,16 @@ void migrateLegacyForLastVault() {
         }
         if (!languages.isEmpty())
             settings.setValue(QStringLiteral("spellLanguages"), languages);
+    }
+    if (!settings.contains(QStringLiteral("lastNote"))) {
+        QString note = legacy.value(QStringLiteral("lastNote")).toString();
+        if (QDir::isAbsolutePath(note))
+            note = QDir(root).relativeFilePath(QFileInfo(note).absoluteFilePath());
+        note = QDir::cleanPath(note);
+        if (!note.isEmpty() && note != QLatin1String("..") &&
+            !note.startsWith(QStringLiteral("../")) &&
+            !QDir::isAbsolutePath(note))
+            settings.setValue(QStringLiteral("lastNote"), note);
     }
     settings.endGroup();
     settings.sync();

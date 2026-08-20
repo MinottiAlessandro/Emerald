@@ -3644,7 +3644,6 @@ void MainWindow::startIndexRebuild() {
 void MainWindow::openInitialNote() {
     if (!m_vault)
         return;
-    QSettings s;
     // A configured Home note wins; otherwise reopen the last-edited note.
     const QString home = VaultSettings::value(
         m_vault->root(), QStringLiteral("homeNote"));
@@ -3655,10 +3654,13 @@ void MainWindow::openInitialNote() {
             return;
         }
     }
-    const QString last = s.value(QStringLiteral("lastNote")).toString();
-    if (!last.isEmpty() && QFileInfo::exists(last) &&
-        last.startsWith(m_vault->root()))
-        openNoteByPath(last);
+    const QString last = VaultSettings::value(
+        m_vault->root(), QStringLiteral("lastNote"));
+    const QString lastPath = m_vault->resolveExistingFileWithinRoot(last);
+    if (!lastPath.isEmpty() &&
+        QFileInfo(lastPath).suffix().compare(QStringLiteral("md"),
+                                             Qt::CaseInsensitive) == 0)
+        openNoteByPath(lastPath);
 }
 
 void MainWindow::refreshTree(bool preserveExpansion) {
@@ -3805,7 +3807,9 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     m_titleEdit->blockSignals(false);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(m_currentTitle));
     selectInTree(path);
-    QSettings().setValue(QStringLiteral("lastNote"), path); // reopen on launch
+    VaultSettings::setValue(
+        m_vault->root(), QStringLiteral("lastNote"),
+        QDir(m_vault->root()).relativeFilePath(path));
     if (record)
         pushHistory({PageLocation::Kind::Note, path});
     showNotePage();
@@ -3955,6 +3959,9 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
     refreshGraphPage();
     refreshTree();
     setWindowTitle(QStringLiteral("Emerald — %1").arg(newTitle));
+    VaultSettings::setValue(
+        m_vault->root(), QStringLiteral("lastNote"),
+        QDir(m_vault->root()).relativeFilePath(newPath));
     notify(tr("Renamed to “%1”").arg(newTitle), 3000);
 }
 
@@ -3993,7 +4000,9 @@ void MainWindow::saveCurrent() {
         watchCurrent();
         selectInTree(note.path);
         setWindowTitle(QStringLiteral("Emerald — %1").arg(title));
-        QSettings().setValue(QStringLiteral("lastNote"), note.path);
+        VaultSettings::setValue(
+            m_vault->root(), QStringLiteral("lastNote"),
+            QDir(m_vault->root()).relativeFilePath(note.path));
         pushHistory({PageLocation::Kind::Note, note.path});
         updateNavActions();
         notify(tr("Created “%1”").arg(title), 2000);
@@ -4855,6 +4864,8 @@ void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
         VaultSettings::value(root, QStringLiteral("newNoteFolder"));
     const QString templates =
         VaultSettings::value(root, QStringLiteral("templatesFolder"));
+    const QString last =
+        VaultSettings::value(root, QStringLiteral("lastNote"));
     if (home == rel || (isFolder && home.startsWith(rel + QLatin1Char('/'))))
         VaultSettings::remove(root, QStringLiteral("homeNote"));
     if (isFolder && (nf == rel || nf.startsWith(rel + QLatin1Char('/'))))
@@ -4862,6 +4873,8 @@ void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
     if (isFolder &&
         (templates == rel || templates.startsWith(rel + QLatin1Char('/'))))
         VaultSettings::remove(root, QStringLiteral("templatesFolder"));
+    if (last == rel || (isFolder && last.startsWith(rel + QLatin1Char('/'))))
+        VaultSettings::remove(root, QStringLiteral("lastNote"));
 }
 
 // After a deletion: rescan, and if the open note was removed (on its own or
@@ -5070,7 +5083,9 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
         setWindowTitle(
             QStringLiteral("Emerald — %1").arg(Vault::titleFromPath(m_currentPath)));
         selectInTree(m_currentPath);
-        QSettings().setValue(QStringLiteral("lastNote"), m_currentPath);
+        VaultSettings::setValue(
+            m_vault->root(), QStringLiteral("lastNote"),
+            QDir(m_vault->root()).relativeFilePath(m_currentPath));
     }
 }
 
