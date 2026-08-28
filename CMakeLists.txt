@@ -137,6 +137,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/Note.h
   src/core/ContentSecurity.h
   src/core/ContentSecurity.cpp
+  src/core/RuntimeEnvironment.h
+  src/core/RuntimeEnvironment.cpp
   src/core/StandaloneFile.h
   src/core/StandaloneFile.cpp
   src/core/LegacyMascotMigration.h
@@ -578,6 +580,17 @@ if(EMERALD_BUILD_CORE_TESTS)
   target_link_libraries(emerald_update_channel_tests PRIVATE Qt6::Core)
   emerald_enable_sanitizers(emerald_update_channel_tests)
   add_test(NAME emerald_update_channel_tests COMMAND emerald_update_channel_tests)
+
+  add_executable(emerald_runtime_environment_tests
+    tests/core/RuntimeEnvironmentTests.cpp
+    src/core/RuntimeEnvironment.h
+    src/core/RuntimeEnvironment.cpp
+  )
+  target_include_directories(emerald_runtime_environment_tests PRIVATE src)
+  target_link_libraries(emerald_runtime_environment_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_runtime_environment_tests)
+  add_test(NAME emerald_runtime_environment_tests
+           COMMAND emerald_runtime_environment_tests)
 
   add_executable(emerald_markdown_image_tests
     tests/core/MarkdownImageTests.cpp

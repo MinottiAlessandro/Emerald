@@ -201,8 +201,10 @@ Spelling dependency provenance, offline verification, and the review-first
 update/release process are documented in
 [`docs/SPELLING_DEPENDENCIES.md`](docs/SPELLING_DEPENDENCIES.md).
 
-The widget backing store is composited on the GPU by default (Qt's RHI path) for
-smooth resizing; set `QT_WIDGETS_RHI=0` to fall back to CPU raster.
+Native builds composite the widget backing store on the GPU by default (Qt's
+RHI path); set `QT_WIDGETS_RHI=0` to use CPU raster. Linux AppImages default to
+the raster path for reliable XWayland/NVIDIA compatibility; set
+`QT_WIDGETS_RHI=1` to opt into GPU compositing there.
 
 ### Packaging
 

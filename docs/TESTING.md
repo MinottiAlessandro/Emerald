@@ -272,6 +272,10 @@ move the caret back onto the line, confirm the raw markers reappear.
       match GitHub's release metadata; missing or mismatched metadata/file data
       produces a verification error and removes the download.
 - [ ] On Linux AppImage, the in-place update path works (if a newer release exists).
+- [ ] On a Wayland desktop, the Linux AppImage opens **Settings** without
+      `Could not find the Qt platform plugin "wayland"` or `QRhiGles2` errors.
+- [ ] A Linux AppImage respects explicit `QT_QPA_PLATFORM=xcb` and
+      `QT_WIDGETS_RHI=1` overrides.
 
 ## 16. Keyboard shortcuts — full sweep ★
 Verify each fires and that menu items show their shortcut label.

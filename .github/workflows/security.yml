@@ -64,6 +64,7 @@ jobs:
           cmake --build build-security --target
           emerald_core_tests
           emerald_update_channel_tests
+          emerald_runtime_environment_tests
           emerald_markdown_image_tests
           emerald_broken_links_tests
           emerald_link_graph_tests

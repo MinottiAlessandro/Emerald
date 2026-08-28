@@ -68,7 +68,8 @@ fetch "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/${
       "$TOOLS_DIR/linuxdeploy-plugin-qt-${ARCH}.AppImage" "$QT_PLUGIN_SHA256"
 
 echo ">> configuring + building (Release)"
-cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+  -DEMERALD_VERSION_SUFFIX="${EMERALD_VERSION_SUFFIX:-}"
 cmake --build "$BUILD_DIR" -j"$(nproc)"
 
 echo ">> installing into AppDir"
