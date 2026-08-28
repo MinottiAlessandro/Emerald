@@ -1,5 +1,6 @@
 #include "Updater.h"
 
+#include "core/LinuxUpdate.h"
 #include "core/UpdateChannel.h"
 
 #include <QApplication>
@@ -24,6 +25,7 @@
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QTemporaryDir>
 #include <QUrl>
 #include <memory>
 
@@ -83,6 +85,17 @@ QString platformAssetName() {
                : QStringLiteral("Emerald-x86_64.AppImage");
 #endif
 }
+
+#if defined(Q_OS_LINUX)
+QString linuxUpdateStagePath() {
+    QTemporaryDir stage(QDir(QDir::tempPath()).filePath(
+        QStringLiteral("EmeraldUpdate-XXXXXX")));
+    if (!stage.isValid())
+        return {};
+    stage.setAutoRemove(false);
+    return stage.path();
+}
+#endif
 
 #if defined(Q_OS_MACOS)
 QString currentMacAppBundlePath() {
@@ -312,9 +325,8 @@ void Updater::onReleaseReply(QNetworkReply *reply,
     if (!notes.isEmpty())
         box.setDetailedText(notes);
 #if defined(Q_OS_LINUX)
-    const bool inPlace = !qEnvironmentVariableIsEmpty("APPIMAGE");
-    QPushButton *go = box.addButton(
-        inPlace ? tr("Install && Restart") : tr("Download"), QMessageBox::AcceptRole);
+    QPushButton *go =
+        box.addButton(tr("Install && Restart"), QMessageBox::AcceptRole);
 #elif defined(Q_OS_MACOS)
     QPushButton *go = box.addButton(tr("Install && Restart"), QMessageBox::AcceptRole);
 #else
@@ -333,16 +345,22 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                             qint64 expectedSize) {
     m_busy = true;
 
-    // Linux AppImage stages beside the running file so the final rename is a
-    // same-filesystem atomic replace. macOS stages in temp for the helper script.
-    // Everything else goes to Downloads, to be opened when finished.
+    // Linux and macOS stage in a private temporary directory for a detached
+    // installer helper. Windows keeps its installer in Downloads.
     QString savePath;
+    QString stagePath;
 #if defined(Q_OS_LINUX)
-    const QByteArray appimage = qgetenv("APPIMAGE");
-    if (!appimage.isEmpty())
-        savePath = QString::fromLocal8Bit(appimage) + QStringLiteral(".download");
+    stagePath = linuxUpdateStagePath();
+    if (stagePath.isEmpty()) {
+        m_busy = false;
+        QMessageBox::warning(
+            m_window, tr("Download Failed"),
+            tr("Couldn't create a private directory to stage the Linux update."));
+        return;
+    }
+    savePath = QDir(stagePath).filePath(assetName);
 #elif defined(Q_OS_MACOS)
-    const QString stagePath = macUpdateStagePath();
+    stagePath = macUpdateStagePath();
     if (!stagePath.isEmpty())
         savePath = QDir(stagePath).filePath(assetName);
 #endif
@@ -405,7 +423,7 @@ void Updater::startDownload(const QString &url, const QString &assetName,
     connect(progress, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, progress, out, writeFailed, sizeExceeded, hash, consume,
-             savePath, version, expectedSha256, expectedSize] {
+             savePath, stagePath, version, expectedSha256, expectedSize] {
                 consume();
                 if (!out->flush())
                     *writeFailed = true;
@@ -415,8 +433,14 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                 progress->deleteLater();
                 m_busy = false;
 
-                if (reply->error() != QNetworkReply::NoError) {
+                const auto discardDownload = [&] {
                     QFile::remove(savePath);
+                    if (!stagePath.isEmpty())
+                        QDir().rmdir(stagePath);
+                };
+
+                if (reply->error() != QNetworkReply::NoError) {
+                    discardDownload();
                     if (*sizeExceeded) {
                         QMessageBox::critical(
                             m_window, tr("Update Verification Failed"),
@@ -432,7 +456,7 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                 }
 
                 if (*writeFailed) {
-                    QFile::remove(savePath);
+                    discardDownload();
                     QMessageBox::warning(
                         m_window, tr("Download Failed"),
                         tr("Couldn't save the download to:\n%1").arg(savePath));
@@ -442,7 +466,7 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                 const bool verified = hash->result() == expectedSha256 &&
                                       QFileInfo(savePath).size() == expectedSize;
                 if (!verified) {
-                    QFile::remove(savePath);
+                    discardDownload();
                     QMessageBox::critical(
                         m_window, tr("Update Verification Failed"),
                         tr("The downloaded update did not match the SHA-256 "
@@ -452,6 +476,86 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                 }
                 finishDownload(savePath, version);
             });
+}
+
+bool Updater::installLinuxUpdate(const QString &imagePath,
+                                 const QString &version) {
+#if defined(Q_OS_LINUX)
+    const QString appImagePath = QString::fromLocal8Bit(qgetenv("APPIMAGE"));
+    QString target =
+        LinuxUpdate::installTarget(appImagePath, QDir::homePath());
+    if (target.isEmpty()) {
+        QMessageBox::warning(
+            m_window, tr("Update Failed"),
+            tr("Emerald couldn't determine a safe per-user installation path."));
+        return false;
+    }
+
+    const auto canPrepareTarget = [](const QString &path) {
+        const QString parent = QFileInfo(path).absolutePath();
+        return QDir().mkpath(parent) && QFileInfo(parent).isDir() &&
+               QFileInfo(parent).isWritable();
+    };
+    // A read-only AppImage may live in a system directory. Keep automatic
+    // updates privilege-free by installing it into the user's bin directory.
+    if (!canPrepareTarget(target) && !appImagePath.trimmed().isEmpty())
+        target = LinuxUpdate::installTarget({}, QDir::homePath());
+
+    if (target.isEmpty() || !canPrepareTarget(target)) {
+        QMessageBox::warning(
+            m_window, tr("Update Failed"),
+            tr("Emerald can't write to the installation folder:\n%1")
+                .arg(QFileInfo(target).absolutePath()));
+        return false;
+    }
+
+    const QDir stageDir(QFileInfo(imagePath).absolutePath());
+    const QString scriptPath =
+        stageDir.filePath(QStringLiteral("install-emerald-update.sh"));
+    const QString logPath = stageDir.filePath(QStringLiteral("install.log"));
+
+    const QByteArray installer = LinuxUpdate::installerScript();
+    QFile script(scriptPath);
+    if (!script.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        script.write(installer) != installer.size()) {
+        script.close();
+        QFile::remove(scriptPath);
+        QMessageBox::warning(
+            m_window, tr("Update Failed"),
+            tr("Couldn't stage the Linux installer helper.\n\nThe verified "
+               "AppImage remains at:\n%1")
+                .arg(imagePath));
+        return false;
+    }
+    script.close();
+    QFile::setPermissions(scriptPath,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                              QFileDevice::ExeOwner);
+
+    const QStringList args{scriptPath,
+                           QString::number(QCoreApplication::applicationPid()),
+                           imagePath,
+                           target,
+                           version,
+                           logPath};
+    if (!QProcess::startDetached(QStringLiteral("/bin/sh"), args)) {
+        QMessageBox::warning(
+            m_window, tr("Update Failed"),
+            tr("Couldn't start the Linux installer helper.\n\nThe verified "
+               "AppImage remains at:\n%1")
+                .arg(imagePath));
+        return false;
+    }
+
+    if (m_window)
+        m_window->close();
+    QApplication::quit();
+    return true;
+#else
+    Q_UNUSED(imagePath)
+    Q_UNUSED(version)
+    return false;
+#endif
 }
 
 bool Updater::installMacUpdate(const QString &dmgPath, const QString &version) {
@@ -527,40 +631,16 @@ bool Updater::installMacUpdate(const QString &dmgPath, const QString &version) {
 
 void Updater::finishDownload(const QString &savedPath, const QString &version) {
 #if defined(Q_OS_LINUX)
-    const QByteArray appimage = qgetenv("APPIMAGE");
-    if (!appimage.isEmpty() && savedPath.endsWith(QStringLiteral(".download"))) {
-        const QString target = QString::fromLocal8Bit(appimage);
-        QFile::setPermissions(savedPath,
-                              QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                  QFileDevice::ExeOwner | QFileDevice::ReadGroup |
-                                  QFileDevice::ExeGroup | QFileDevice::ReadOther |
-                                  QFileDevice::ExeOther);
-        // Drop the old path (its inode lives on for this running process) and
-        // move the freshly downloaded image into its place.
-        QFile::remove(target);
-        if (!QFile::rename(savedPath, target)) {
-            QFile::remove(savedPath);
-            QMessageBox::warning(m_window, tr("Update Failed"),
-                                 tr("Couldn't replace the application file at:\n%1")
-                                     .arg(target));
-            return;
-        }
-        if (QMessageBox::question(
-                m_window, tr("Update Ready"),
-                tr("Emerald v%1 is installed. Restart now?").arg(version)) ==
-            QMessageBox::Yes) {
-            QProcess::startDetached(target, {});
-            QApplication::quit();
-        }
+    if (installLinuxUpdate(savedPath, version))
         return;
-    }
 #endif
 #if defined(Q_OS_MACOS)
     if (savedPath.endsWith(QStringLiteral(".dmg"), Qt::CaseInsensitive) &&
         installMacUpdate(savedPath, version))
         return;
 #endif
-    // macOS / Windows / non-AppImage Linux: hand the installer to the OS.
+    // Hand the verified package to the OS if managed installation is
+    // unavailable, or when the platform normally uses an interactive installer.
     QMessageBox::information(
         m_window, tr("Download Complete"),
         tr("Emerald v%1 was downloaded to:\n%2\n\nIt will open now — follow the "

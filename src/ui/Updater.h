@@ -13,13 +13,12 @@ class QNetworkReply;
 // GitHub release channel and, when a newer version exists, downloads its
 // platform asset, verifies its SHA-256 digest and byte size against GitHub's
 // release metadata, and only then installs or opens it.
-//   Linux (running as an AppImage): replace the AppImage in place, then offer to
-//     relaunch. The running process keeps its open handle to the old inode, so
-//     overwriting the file's path is safe.
+//   Linux: stage a verified AppImage, then use a detached helper to safely
+//     replace the running AppImage or install it to ~/.local/bin/emerald. The
+//     helper rolls back on failure and relaunches Emerald without sudo.
 //   macOS: download the dmg to a staging directory, launch a small system-shell
 //     helper, quit Emerald, replace the current .app bundle, and relaunch.
-//   Windows / non-AppImage Linux: download the .zip/AppImage and open it,
-//     leaving the final extract/chmod step to the user.
+//   Windows: download the installer and open it for the user.
 // All dialogs parent to the window passed in. One instance is reused for the
 // app's lifetime; check() is a no-op while a check or download is in flight.
 class Updater : public QObject {
@@ -34,6 +33,7 @@ private:
     void startDownload(const QString &url, const QString &assetName,
                        const QString &version, const QByteArray &expectedSha256,
                        qint64 expectedSize);
+    bool installLinuxUpdate(const QString &imagePath, const QString &version);
     bool installMacUpdate(const QString &dmgPath, const QString &version);
     void finishDownload(const QString &savedPath, const QString &version);
 

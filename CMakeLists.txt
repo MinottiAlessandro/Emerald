@@ -137,6 +137,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/Note.h
   src/core/ContentSecurity.h
   src/core/ContentSecurity.cpp
+  src/core/LinuxUpdate.h
+  src/core/LinuxUpdate.cpp
   src/core/RuntimeEnvironment.h
   src/core/RuntimeEnvironment.cpp
   src/core/StandaloneFile.h
@@ -486,6 +488,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/StandaloneFile.cpp
     src/core/LegacyMascotMigration.h
     src/core/LegacyMascotMigration.cpp
+    src/core/LinuxUpdate.h
+    src/core/LinuxUpdate.cpp
     src/core/Vault.h
     src/core/Vault.cpp
     src/core/VaultSettings.h
@@ -592,6 +596,18 @@ if(EMERALD_BUILD_CORE_TESTS)
   emerald_enable_sanitizers(emerald_runtime_environment_tests)
   add_test(NAME emerald_runtime_environment_tests
            COMMAND emerald_runtime_environment_tests)
+
+  if(UNIX AND NOT APPLE)
+    add_executable(emerald_linux_update_tests
+      tests/core/LinuxUpdateTests.cpp
+      src/core/LinuxUpdate.h
+      src/core/LinuxUpdate.cpp
+    )
+    target_include_directories(emerald_linux_update_tests PRIVATE src)
+    target_link_libraries(emerald_linux_update_tests PRIVATE Qt6::Core)
+    emerald_enable_sanitizers(emerald_linux_update_tests)
+    add_test(NAME emerald_linux_update_tests COMMAND emerald_linux_update_tests)
+  endif()
 
   add_executable(emerald_markdown_image_tests
     tests/core/MarkdownImageTests.cpp

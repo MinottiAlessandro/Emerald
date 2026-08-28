@@ -271,7 +271,13 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] An update is opened/installed only after its SHA-256 digest and byte size
       match GitHub's release metadata; missing or mismatched metadata/file data
       produces a verification error and removes the download.
-- [ ] On Linux AppImage, the in-place update path works (if a newer release exists).
+- [ ] On Linux, **Install & Restart** replaces a running AppImage in place. When
+      running a native/development binary, it installs the verified AppImage to
+      `~/.local/bin/emerald` instead of leaving it in Downloads. Both paths
+      restart into the new version without requesting `sudo`.
+- [ ] If activating the Linux update fails after the old executable is moved,
+      the helper restores and relaunches the previous version; its temporary
+      directory retains `install.log` for diagnosis.
 - [ ] On a Wayland desktop, the Linux AppImage opens **Settings** without
       `Could not find the Qt platform plugin "wayland"` or `QRhiGles2` errors.
 - [ ] A Linux AppImage respects explicit `QT_QPA_PLATFORM=xcb` and
