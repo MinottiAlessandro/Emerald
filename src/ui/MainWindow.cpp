@@ -12,6 +12,7 @@
 #include "core/LegacyMascotMigration.h"
 #include "core/MascotSeed.h"
 #include "core/SpellChecker.h"
+#include "core/UpdateChannel.h"
 #include "core/Vault.h"
 #include "core/VaultSettings.h"
 #include "core/WikiLink.h"
@@ -83,7 +84,6 @@
 #include <QTreeView>
 #include <QUrl>
 #include <QVariant>
-#include <QVersionNumber>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <algorithm>
@@ -101,14 +101,7 @@ constexpr int kDefaultSidebarWidth = 260;
 constexpr auto kLastRunVersionSetting = "lastRunVersion";
 
 QString releaseVersion(QString version) {
-    version = version.trimmed();
-    if (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive))
-        version.remove(0, 1);
-    // Development builds may append a channel or commit suffix. Their bundled
-    // release notes still belong to the numeric package version.
-    version = version.section(QLatin1Char('-'), 0, 0);
-    version = version.section(QLatin1Char('+'), 0, 0);
-    return version;
+    return UpdateChannel::normalizedVersion(version);
 }
 
 // QComboBox always treats a row click as a completed single selection. A real
@@ -596,7 +589,8 @@ QString manualText() {
         "Vault…** to start a fresh vault, **Open File…** for an isolated "
         "Markdown document, **Delete Note** to remove the open one "
         "(it asks first), and **Check for Updates…** to fetch and install the "
-        "latest release. **What's New…** reopens the bundled notes for the "
+        "latest release from the Stable or Development channel selected under "
+        "Settings → Updates. **What's New…** reopens the bundled notes for the "
         "running version. **Switch Vault…** jumps between vaults in the same "
         "folder, and **Insert Template…** drops in a template — both live in the "
         "menu. Edits save themselves a moment after you stop typing — Ctrl+S "
@@ -2916,8 +2910,8 @@ void MainWindow::openSettings() {
     auto *heading = new QLabel(tr("Settings"), content);
     heading->setObjectName(QStringLiteral("settingsTitle"));
     auto *subtitle = new QLabel(
-        tr("Tune appearance, editor, spelling, vault defaults, and mascot "
-           "behavior."),
+        tr("Tune appearance, editor, spelling, updates, vault defaults, and "
+           "mascot behavior."),
         content);
     subtitle->setObjectName(QStringLiteral("settingsSubtitle"));
     subtitle->setWordWrap(true);
@@ -3141,6 +3135,20 @@ void MainWindow::openSettings() {
                     mascotAutoBox->setChecked(false);
             });
 
+    auto *releaseChannelBox = new QComboBox(&dlg);
+    releaseChannelBox->setObjectName(QStringLiteral("releaseChannel"));
+    releaseChannelBox->addItem(tr("Stable"), QStringLiteral("stable"));
+    releaseChannelBox->addItem(tr("Development"),
+                               QStringLiteral("development"));
+    releaseChannelBox->setToolTip(
+        tr("Development receives early test builds and later stable releases."));
+    const UpdateChannel::Channel savedChannel = UpdateChannel::fromKey(
+        s.value(QString::fromLatin1(UpdateChannel::SettingKey),
+                QStringLiteral("stable"))
+            .toString());
+    releaseChannelBox->setCurrentIndex(
+        releaseChannelBox->findData(UpdateChannel::key(savedChannel)));
+
     // New-note folder + Home note pickers (need an open vault).
     auto *folderBox = new QComboBox(&dlg);
     auto *homeBox = new QComboBox(&dlg);
@@ -3226,6 +3234,12 @@ void MainWindow::openSettings() {
     addSettingRow(spellingForm, tr("Languages"), spellLanguageWidget);
     addSettingRow(spellingForm, tr("Numbers"), ignoreNumbersBox);
     addSettingRow(spellingForm, tr("Capitals"), ignoreCapsBox);
+
+    auto *updatesForm = addSection(
+        tr("Updates"),
+        tr("Stable is recommended. Development receives early builds for "
+           "testing new functionality."));
+    addSettingRow(updatesForm, tr("Release channel"), releaseChannelBox);
 
     auto *vaultForm = addSection(
         tr("Vault"), tr("Defaults and maintenance tools for this vault."));
@@ -3455,6 +3469,8 @@ void MainWindow::openSettings() {
             });
         s.setValue(QStringLiteral("mascotAuto"), mascotAutoBox->isChecked());
         s.setValue(QStringLiteral("mascotThreshold"), mascotThreshBox->value());
+        s.setValue(QString::fromLatin1(UpdateChannel::SettingKey),
+                   releaseChannelBox->currentData().toString());
         if (m_vault) {
             const QString root = m_vault->root();
             VaultSettings::setValue(root, QStringLiteral("newNoteFolder"),
@@ -3738,11 +3754,7 @@ void MainWindow::maybeShowWhatsNew(bool hadPersistentSettings) {
 
     bool updated = !trackedBefore && hadPersistentSettings;
     if (trackedBefore && previous != current) {
-        const QVersionNumber previousNumber =
-            QVersionNumber::fromString(previous);
-        const QVersionNumber currentNumber = QVersionNumber::fromString(current);
-        updated = !previousNumber.isNull() && !currentNumber.isNull() &&
-                  QVersionNumber::compare(currentNumber, previousNumber) > 0;
+        updated = UpdateChannel::compareVersions(current, previous) > 0;
     }
 
     // Record the running release even for a clean install and a downgrade. A
@@ -3757,7 +3769,12 @@ void MainWindow::maybeShowWhatsNew(bool hadPersistentSettings) {
 void MainWindow::checkForUpdates() {
     if (!m_updater)
         m_updater = new Updater(this);
-    m_updater->check();
+    const UpdateChannel::Channel channel = UpdateChannel::fromKey(
+        QSettings()
+            .value(QString::fromLatin1(UpdateChannel::SettingKey),
+                   QStringLiteral("stable"))
+            .toString());
+    m_updater->check(channel);
 }
 
 void MainWindow::chooseVault() {

@@ -258,7 +258,16 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] If the open note is **deleted** externally, Emerald notes it ("removed on disk") and doesn't silently recreate an empty file. ◆
 
 ## 15. Updates
-- [ ] **Check for Updates…** queries GitHub for the latest release.
+- [ ] **Settings → Updates → Release channel** defaults to **Stable**, persists
+      after restarting, and offers **Stable** and **Development**.
+- [ ] On **Stable**, **Check for Updates…** ignores GitHub prereleases.
+- [ ] On **Development**, **Check for Updates…** offers the newest development
+      build or stable release by semantic version (`dev.10` is newer than
+      `dev.2`, and `2.3.0` is newer than `2.3.0-dev.N`).
+- [ ] Switching from Development back to Stable does not downgrade the app;
+      the next newer stable release is offered normally.
+- [ ] Drafts, dictionary-pack releases, and unrelated tags are never offered as
+      application updates.
 - [ ] An update is opened/installed only after its SHA-256 digest and byte size
       match GitHub's release metadata; missing or mismatched metadata/file data
       produces a verification error and removes the download.

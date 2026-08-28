@@ -1,5 +1,7 @@
 #include "Updater.h"
 
+#include "core/UpdateChannel.h"
+
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -12,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -26,8 +29,10 @@
 
 namespace {
 
-constexpr char kReleaseApi[] =
+constexpr char kStableReleaseApi[] =
     "https://api.github.com/repos/MinottiAlessandro/Emerald/releases/latest";
+constexpr char kDevelopmentReleaseApi[] =
+    "https://api.github.com/repos/MinottiAlessandro/Emerald/releases?per_page=100";
 
 // GitHub's API rejects requests without a User-Agent; the asset URLs 302 to a
 // CDN, so every request opts into following same-or-safer redirects.
@@ -62,19 +67,6 @@ bool isTrustedReleaseUrl(const QUrl &url) {
                               Qt::CaseInsensitive) == 0 &&
            url.path().startsWith(
                QLatin1String("/MinottiAlessandro/Emerald/releases/"));
-}
-
-// Dotted numeric compare ("1.10.0" > "1.9.0"). >0 if a is newer than b.
-int compareVersions(const QString &a, const QString &b) {
-    const QStringList pa = a.split(QLatin1Char('.'));
-    const QStringList pb = b.split(QLatin1Char('.'));
-    for (int i = 0; i < qMax(pa.size(), pb.size()); ++i) {
-        const int va = i < pa.size() ? pa[i].toInt() : 0;
-        const int vb = i < pb.size() ? pb[i].toInt() : 0;
-        if (va != vb)
-            return va - vb;
-    }
-    return 0;
 }
 
 // The release-asset filename this build should download. Mirrors the
@@ -189,21 +181,25 @@ exit 0
 Updater::Updater(QWidget *window)
     : QObject(window), m_window(window), m_net(new QNetworkAccessManager(this)) {}
 
-void Updater::check() {
+void Updater::check(UpdateChannel::Channel channel) {
     if (m_busy)
         return;
     m_busy = true;
 
-    QNetworkRequest req((QUrl(QString::fromLatin1(kReleaseApi))));
+    const char *api = channel == UpdateChannel::Channel::Development
+                          ? kDevelopmentReleaseApi
+                          : kStableReleaseApi;
+    QNetworkRequest req((QUrl(QString::fromLatin1(api))));
     req.setRawHeader("Accept", "application/vnd.github+json");
     prepare(req);
 
     QNetworkReply *reply = m_net->get(req);
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply] { onReleaseReply(reply); });
+            [this, reply, channel] { onReleaseReply(reply, channel); });
 }
 
-void Updater::onReleaseReply(QNetworkReply *reply) {
+void Updater::onReleaseReply(QNetworkReply *reply,
+                             UpdateChannel::Channel channel) {
     reply->deleteLater();
     m_busy = false;
 
@@ -214,17 +210,44 @@ void Updater::onReleaseReply(QNetworkReply *reply) {
         return;
     }
 
-    const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
-    const QString tag = obj.value(QStringLiteral("tag_name")).toString();
-    const QString latest = tag.startsWith(QLatin1Char('v')) ? tag.mid(1) : tag;
-    const QString current = QApplication::applicationVersion();
-    // Compare only the numeric portion so optional development-channel suffixes
-    // cannot cause the updater to offer the current release again.
-    const QString currentRelease = current.section(QLatin1Char('-'), 0, 0);
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(reply->readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError) {
+        QMessageBox::warning(m_window, tr("Check for Updates"),
+                             tr("GitHub returned invalid release information."));
+        return;
+    }
 
-    if (latest.isEmpty() || compareVersions(latest, currentRelease) <= 0) {
+    const QJsonObject obj = UpdateChannel::selectRelease(document, channel);
+    if (obj.isEmpty()) {
+        QMessageBox::warning(
+            m_window, tr("Check for Updates"),
+            tr("No published Emerald releases were found for the selected "
+               "release channel."));
+        return;
+    }
+
+    const QString tag = obj.value(QStringLiteral("tag_name")).toString();
+    const QString latest = UpdateChannel::normalizedVersion(tag);
+    const QString current =
+        UpdateChannel::normalizedVersion(QApplication::applicationVersion());
+    if (current.isEmpty()) {
+        QMessageBox::warning(m_window, tr("Check for Updates"),
+                             tr("This build has an invalid version and cannot be "
+                                "updated automatically."));
+        return;
+    }
+
+    if (latest.isEmpty() ||
+        UpdateChannel::compareVersions(latest, current) <= 0) {
+        const QString channelName =
+            channel == UpdateChannel::Channel::Development
+                ? tr("Development")
+                : tr("Stable");
         QMessageBox status(QMessageBox::NoIcon, tr("Check for Updates"),
-                           tr("You're on the latest version (v%1).").arg(current),
+                           tr("No newer %1 release is available (installed v%2).")
+                               .arg(channelName, current),
                            QMessageBox::Ok, m_window);
         status.setObjectName(QStringLiteral("updateStatusDialog"));
         status.setProperty("emeraldDialog", true);

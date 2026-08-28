@@ -134,7 +134,7 @@ it opens or installs a download.
 - **Responsive layout** — at narrow widths, the folder tree and editor become separate full-width views with compact Notes/Editor navigation and always-available new-note, search, and gear controls.
 - **Adjustable editor font** (family + size, persisted), fixed or full-width columns, and **line spacing**; heading sizes scale with the font.
 - **Smooth scrolling** — mouse-wheel steps ease between pixel positions; high-resolution trackpad deltas remain native and direct, and Read Mode's ↑/↓ movement uses the same pixel-based viewport.
-- **Self-updating** — **Check for Updates…** pulls the latest release from GitHub and installs in place on macOS and Linux AppImage builds. After an upgrade, Emerald opens an offline **What's New** panel once; the same notes remain available from the gear menu.
+- **Stable and Development updates** — choose a release channel under **Settings → Updates**, then **Check for Updates…**. Stable remains the default; Development receives early test builds and later stable releases. Verified updates install in place on macOS and Linux AppImage builds. After an upgrade, Emerald opens an offline **What's New** panel once; the same notes remain available from the gear menu.
 - **Application themes** — switch between the built-in Dark and Light palettes or create named custom themes with a live preview and per-role colors.
 
 ---
@@ -214,8 +214,13 @@ The build produces platform-native packages via the install rules and CPack:
 ./packaging/linux/make_appimage.sh       # portable Linux AppImage (via linuxdeploy)
 ```
 
-Tagging a `vX.Y.Z` release triggers the [GitHub Actions workflow](.github/workflows/release.yml),
-which builds all three platforms and attaches the packages to the release.
+Tagging a stable `vX.Y.Z` release triggers the
+[GitHub Actions workflow](.github/workflows/release.yml), which builds all three
+platforms and attaches the packages to a normal GitHub release. For an early
+test build, set `project(Emerald VERSION X.Y.Z)` to the intended next stable
+version, add `.github/release-notes/vX.Y.Z-dev.N.md`, and tag
+`vX.Y.Z-dev.N`. The same workflow embeds the full development version and marks
+the GitHub release as a prerelease; Stable users will not be offered it.
 
 ---
 
@@ -225,6 +230,7 @@ which builds all three platforms and attaches the packages to the release.
 core/   no GUI, unit-testable (depends only on QtCore)
   Vault            scan a folder, read/write .md files, resolve link targets
   VaultSettings    per-vault preferences in the platform settings store
+  UpdateChannel    SemVer comparison + Stable/Development release filtering
   SearchIndex      inverted index for fast full-text search
   WikiLink         the shared [[wiki-link]] pattern + target cleaning
   MarkdownWikiLinkScanner semantic link discovery outside code spans/fences

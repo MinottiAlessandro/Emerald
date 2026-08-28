@@ -1,9 +1,20 @@
 cmake_minimum_required(VERSION 3.21)
 project(Emerald VERSION 2.2.0 LANGUAGES CXX)
 
-# Keep the version shown in the UI and diagnostics aligned with the package
-# and native bundle metadata.
-set(EMERALD_BUILD_VERSION "${PROJECT_VERSION}")
+# Native package metadata stays numeric, while development builds may append a
+# SemVer prerelease suffix to the version shown by Emerald and its updater.
+set(EMERALD_VERSION_SUFFIX "" CACHE STRING
+  "SemVer prerelease suffix for development builds (for example -dev.1)")
+if(NOT EMERALD_VERSION_SUFFIX MATCHES "^$|^-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*$")
+  message(FATAL_ERROR
+    "Invalid EMERALD_VERSION_SUFFIX: ${EMERALD_VERSION_SUFFIX}")
+endif()
+if(EMERALD_VERSION_SUFFIX MATCHES "(^|-|\\.)0[0-9]+($|\\.)")
+  message(FATAL_ERROR
+    "Numeric prerelease identifiers cannot have leading zeroes: "
+    "${EMERALD_VERSION_SUFFIX}")
+endif()
+set(EMERALD_BUILD_VERSION "${PROJECT_VERSION}${EMERALD_VERSION_SUFFIX}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -82,10 +93,10 @@ endfunction()
 set(EMERALD_RELEASE_NOTES_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/.github/release-notes")
 set(EMERALD_CURRENT_RELEASE_NOTES
-    "${EMERALD_RELEASE_NOTES_DIR}/v${PROJECT_VERSION}.md")
+    "${EMERALD_RELEASE_NOTES_DIR}/v${EMERALD_BUILD_VERSION}.md")
 if(NOT EXISTS "${EMERALD_CURRENT_RELEASE_NOTES}")
   message(FATAL_ERROR
-    "Missing release notes for Emerald ${PROJECT_VERSION}: "
+    "Missing release notes for Emerald ${EMERALD_BUILD_VERSION}: "
     "${EMERALD_CURRENT_RELEASE_NOTES}")
 endif()
 
@@ -134,6 +145,8 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/Vault.cpp
   src/core/VaultSettings.h
   src/core/VaultSettings.cpp
+  src/core/UpdateChannel.h
+  src/core/UpdateChannel.cpp
   src/core/SearchIndex.h
   src/core/SearchIndex.cpp
   src/core/WikiLink.h
@@ -475,6 +488,8 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/Vault.cpp
     src/core/VaultSettings.h
     src/core/VaultSettings.cpp
+    src/core/UpdateChannel.h
+    src/core/UpdateChannel.cpp
     src/core/SearchIndex.h
     src/core/SearchIndex.cpp
     src/core/WikiLink.h
@@ -553,6 +568,16 @@ if(EMERALD_BUILD_CORE_TESTS)
   target_link_libraries(emerald_core_tests PRIVATE Qt6::Core)
   emerald_enable_sanitizers(emerald_core_tests)
   add_test(NAME emerald_core_tests COMMAND emerald_core_tests)
+
+  add_executable(emerald_update_channel_tests
+    tests/core/UpdateChannelTests.cpp
+    src/core/UpdateChannel.h
+    src/core/UpdateChannel.cpp
+  )
+  target_include_directories(emerald_update_channel_tests PRIVATE src)
+  target_link_libraries(emerald_update_channel_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_update_channel_tests)
+  add_test(NAME emerald_update_channel_tests COMMAND emerald_update_channel_tests)
 
   add_executable(emerald_markdown_image_tests
     tests/core/MarkdownImageTests.cpp

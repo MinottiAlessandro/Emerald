@@ -1,8 +1,9 @@
 name: Release
 
 # Build Emerald for Linux, macOS and Windows and attach the packages to the
-# GitHub Release for the tag. Runs automatically when a v* tag is pushed, or
-# manually (Actions > Release > Run workflow) against an existing tag.
+# GitHub Release for the tag. Stable tags use vX.Y.Z; development-channel tags
+# use vX.Y.Z-dev.N and are published as GitHub prereleases. Runs automatically
+# when a v* tag is pushed, or manually against an existing tag.
 on:
   push:
     tags:
@@ -72,9 +73,29 @@ jobs:
         if: matrix.name == 'windows'
         run: choco install nsis --version=3.12.0 --yes --no-progress
 
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          TAG="$RELEASE_TAG"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Refusing invalid release tag: $TAG" >&2
+            exit 1
+          fi
+          BUILD_VERSION="${TAG#v}"
+          SOURCE_VERSION="$(sed -n 's/^project(Emerald VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          if [[ "$BUILD_VERSION" != "$SOURCE_VERSION" && "$BUILD_VERSION" != "$SOURCE_VERSION"-* ]]; then
+            echo "Tag $TAG does not match source version $SOURCE_VERSION" >&2
+            exit 1
+          fi
+          VERSION_SUFFIX="${BUILD_VERSION:${#SOURCE_VERSION}}"
+          echo "EMERALD_VERSION_SUFFIX=$VERSION_SUFFIX" >> "$GITHUB_ENV"
+
       - name: Configure & build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DEMERALD_VERSION_SUFFIX="$EMERALD_VERSION_SUFFIX" \
+            ${{ matrix.cmake_args }}
           cmake --build build --config Release -j
 
       - name: Package — Linux AppImage
@@ -129,7 +150,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           TAG="$RELEASE_TAG"
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "Refusing invalid release tag: $TAG" >&2
             exit 1
           fi
@@ -139,10 +160,16 @@ jobs:
             # across 1.3.0 → 1.4.1, giving them all identical notes.) Fall back to
             # GitHub's auto-generated notes when a tag has no file yet.
             NOTES=".github/release-notes/${TAG}.md"
+            RELEASE_FLAGS=()
+            if [[ "$TAG" == *-* ]]; then
+              RELEASE_FLAGS+=(--prerelease)
+            fi
             if [ -f "$NOTES" ]; then
-              gh release create "$TAG" --title "Emerald $TAG" --notes-file "$NOTES"
+              gh release create "$TAG" --title "Emerald $TAG" \
+                --notes-file "$NOTES" "${RELEASE_FLAGS[@]}"
             else
-              gh release create "$TAG" --title "Emerald $TAG" --generate-notes
+              gh release create "$TAG" --title "Emerald $TAG" \
+                --generate-notes "${RELEASE_FLAGS[@]}"
             fi
           fi
           gh release upload "$TAG" dist/* --clobber

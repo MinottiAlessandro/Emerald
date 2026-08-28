@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/UpdateChannel.h"
+
 #include <QByteArray>
 #include <QObject>
 
@@ -7,10 +9,10 @@ class QWidget;
 class QNetworkAccessManager;
 class QNetworkReply;
 
-// Manual "Check for Updates": queries the latest GitHub release and, when a
-// newer version exists, downloads its platform asset, verifies its SHA-256
-// digest and byte size against GitHub's release metadata, and only then installs
-// or opens it.
+// Manual "Check for Updates": queries the selected Stable or Development
+// GitHub release channel and, when a newer version exists, downloads its
+// platform asset, verifies its SHA-256 digest and byte size against GitHub's
+// release metadata, and only then installs or opens it.
 //   Linux (running as an AppImage): replace the AppImage in place, then offer to
 //     relaunch. The running process keeps its open handle to the old inode, so
 //     overwriting the file's path is safe.
@@ -25,10 +27,10 @@ class Updater : public QObject {
 public:
     explicit Updater(QWidget *window);
 
-    void check();
+    void check(UpdateChannel::Channel channel);
 
 private:
-    void onReleaseReply(QNetworkReply *reply);
+    void onReleaseReply(QNetworkReply *reply, UpdateChannel::Channel channel);
     void startDownload(const QString &url, const QString &assetName,
                        const QString &version, const QByteArray &expectedSha256,
                        qint64 expectedSize);

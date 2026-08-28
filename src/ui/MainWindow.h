@@ -77,7 +77,7 @@ private:
     void openManual();
     void showWhatsNew();          // bundled notes for the running release
     void maybeShowWhatsNew(bool hadPersistentSettings);
-    void checkForUpdates();       // query GitHub for a newer release, then update
+    void checkForUpdates();       // query the selected GitHub release channel
     void newVault();              // create a fresh vault folder, then open it
     void deleteCurrentNote();     // delete the open note (with confirmation)
     void changeFontSize(int delta); // +1 / -1 step; 0 resets to the default

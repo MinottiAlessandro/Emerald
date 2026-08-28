@@ -1325,6 +1325,62 @@ void testThemePreference() {
   AppTheme::apply(*qApp, AppTheme::Id::Dark);
 }
 
+void testReleaseChannelPreference() {
+  QSettings settings;
+  settings.clear();
+
+  MainWindow window;
+  window.resize(900, 650);
+  window.show();
+  check(waitUntil([&window] { return window.isVisible(); }),
+        QStringLiteral("release-channel settings window becomes visible"));
+  auto *settingsAction =
+      window.findChild<QAction *>(QStringLiteral("settingsAction"));
+
+  bool stableDefaultSeen = false;
+  QTimer::singleShot(0, [&] {
+    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+    auto *channel = dialog ? dialog->findChild<QComboBox *>(
+                                 QStringLiteral("releaseChannel"))
+                           : nullptr;
+    stableDefaultSeen = channel && channel->count() == 2 &&
+                        channel->currentData() == QStringLiteral("stable");
+    if (channel)
+      channel->setCurrentIndex(
+          channel->findData(QStringLiteral("development")));
+    if (dialog)
+      dialog->accept();
+  });
+  if (settingsAction)
+    settingsAction->trigger();
+
+  check(stableDefaultSeen,
+        QStringLiteral("Settings defaults existing users to Stable"));
+  check(settings.value(QStringLiteral("updateChannel")).toString() ==
+            QStringLiteral("development"),
+        QStringLiteral("accepting Settings persists the Development channel"));
+
+  bool developmentRestored = false;
+  QTimer::singleShot(0, [&] {
+    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+    auto *channel = dialog ? dialog->findChild<QComboBox *>(
+                                 QStringLiteral("releaseChannel"))
+                           : nullptr;
+    developmentRestored =
+        channel && channel->currentData() == QStringLiteral("development");
+    if (dialog)
+      dialog->reject();
+  });
+  if (settingsAction)
+    settingsAction->trigger();
+  check(developmentRestored,
+        QStringLiteral("Settings restores the selected release channel"));
+
+  window.close();
+  QApplication::processEvents();
+  settings.clear();
+}
+
 void testCustomThemes() {
   QSettings settings;
   settings.clear();
@@ -1780,6 +1836,7 @@ int main(int argc, char **argv) {
   testWikiHeadingNavigation();
   testFullWidthEditorPreference();
   testFileTreeSortPreference();
+  testReleaseChannelPreference();
   testThemePreference();
   testCustomThemes();
   testStandaloneFileSession();
