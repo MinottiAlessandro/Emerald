@@ -32,10 +32,14 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
     headerLayout->setSpacing(8);
     m_title = new QLabel(tr("Search vault"), header);
     m_title->setObjectName(QStringLiteral("searchPopupTitle"));
+    m_matchCounter = new QLabel(tr("0 / 0"), header);
+    m_matchCounter->setObjectName(QStringLiteral("searchMatchCounter"));
+    m_matchCounter->hide();
     auto *dismissHint = new QLabel(tr("Esc"), header);
     dismissHint->setObjectName(QStringLiteral("searchPopupDismissHint"));
     headerLayout->addWidget(m_title);
     headerLayout->addStretch();
+    headerLayout->addWidget(m_matchCounter);
     headerLayout->addWidget(dismissHint);
 
     m_input = new QLineEdit(this);
@@ -55,6 +59,8 @@ SearchPopup::SearchPopup(const SearchIndex *index, QWidget *parent)
     col->addWidget(m_results);
 
     connect(m_input, &QLineEdit::textChanged, this, &SearchPopup::refresh);
+    connect(m_results, &QListWidget::currentRowChanged, this,
+            [this] { updateMatchCounter(); });
     connect(m_results, &QListWidget::itemClicked, this,
             [this](QListWidgetItem *) { accept(); });
 
@@ -79,6 +85,7 @@ void SearchPopup::showCentered(bool titlesOnly) {
                                            : tr("Search notes…"));
     m_input->clear();
     m_results->clear();
+    updateMatchCounter();
     reposition();
     show();
     raise();
@@ -140,6 +147,19 @@ void SearchPopup::reposition() {
     move((p->width() - width()) / 2, qMax(40, p->height() / 8));
 }
 
+void SearchPopup::updateMatchCounter() {
+    if (!m_matchCounter)
+        return;
+    const bool fullTextSearch = !m_titlesOnly && !m_vaultMode &&
+                                !m_templateMode && !m_brokenLinkMode;
+    m_matchCounter->setVisible(fullTextSearch);
+    if (!fullTextSearch)
+        return;
+    const int total = m_results ? m_results->count() : 0;
+    const int current = total > 0 ? m_results->currentRow() + 1 : 0;
+    m_matchCounter->setText(tr("%1 / %2").arg(current).arg(total));
+}
+
 void SearchPopup::refresh(const QString &text) {
     m_results->clear();
     if (m_brokenLinkMode) {
@@ -166,6 +186,7 @@ void SearchPopup::refresh(const QString &text) {
         }
         adjustSize();
         reposition();
+        updateMatchCounter();
         return;
     }
     if (m_templateMode) {
@@ -181,6 +202,7 @@ void SearchPopup::refresh(const QString &text) {
             m_results->setCurrentRow(0);
         adjustSize();
         reposition();
+        updateMatchCounter();
         return;
     }
     if (m_vaultMode) {
@@ -196,10 +218,12 @@ void SearchPopup::refresh(const QString &text) {
             m_results->setCurrentRow(0);
         adjustSize();
         reposition();
+        updateMatchCounter();
         return;
     }
     if (!m_index || text.trimmed().isEmpty()) {
         adjustSize();
+        updateMatchCounter();
         return;
     }
     const QList<SearchIndex::Result> results =
@@ -215,6 +239,7 @@ void SearchPopup::refresh(const QString &text) {
         m_results->setCurrentRow(0);
     adjustSize();
     reposition();
+    updateMatchCounter();
 }
 
 void SearchPopup::accept() {

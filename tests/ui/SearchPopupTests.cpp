@@ -11,8 +11,13 @@
 // Broken-link mode never queries the full-text index. These two definitions
 // satisfy SearchPopup's normal search branches without pulling the entire Vault
 // implementation into this focused widget regression test.
-QList<SearchIndex::Result> SearchIndex::search(const QString &, int) const {
-    return {};
+QList<SearchIndex::Result> SearchIndex::search(const QString &query, int) const {
+    if (query.isEmpty())
+        return {};
+    return {{QStringLiteral("/vault/One.md"), QStringLiteral("One"), {}, 3},
+            {QStringLiteral("/vault/Two.md"), QStringLiteral("Two"), {}, 2},
+            {QStringLiteral("/vault/Three.md"), QStringLiteral("Three"), {},
+             1}};
 }
 
 QList<SearchIndex::Result> SearchIndex::searchTitles(const QString &, int) const {
@@ -49,10 +54,12 @@ int main(int argc, char **argv) {
     auto *input = popup.findChild<QLineEdit *>(QStringLiteral("searchInput"));
     auto *title =
         popup.findChild<QLabel *>(QStringLiteral("searchPopupTitle"));
+    auto *counter =
+        popup.findChild<QLabel *>(QStringLiteral("searchMatchCounter"));
     auto *results =
         popup.findChild<QListWidget *>(QStringLiteral("searchResults"));
     check(popup.isVisible(), QStringLiteral("broken-link popup is visible"));
-    check(input && results && title,
+    check(input && results && title && counter,
           QStringLiteral("popup exposes its compact command-palette controls"));
     check(title && title->text() == QStringLiteral("Broken links"),
           QStringLiteral("popup identifies the active command mode"));
@@ -82,6 +89,17 @@ int main(int argc, char **argv) {
               QStringLiteral("Enter emits the exact source occurrence"));
         check(!popup.isVisible(),
               QStringLiteral("accepting a broken link dismisses the popup"));
+
+        popup.showCentered(false);
+        input->setText(QStringLiteral("needle"));
+        QApplication::processEvents();
+        check(results->count() == 3 && counter && counter->isVisible() &&
+                  counter->text() == QStringLiteral("1 / 3"),
+              QStringLiteral("vault search shows the selected match and total"));
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(input, &down);
+        check(counter && counter->text() == QStringLiteral("2 / 3"),
+              QStringLiteral("vault search counter follows result navigation"));
 
         popup.showCentered(true);
         QApplication::processEvents();

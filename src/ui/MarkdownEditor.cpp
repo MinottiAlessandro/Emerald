@@ -45,6 +45,10 @@
 #include <QTextDocument>
 #include <QTextFragment>
 #include <QTextLayout>
+#include <QTextTable>
+#include <QTextTableCell>
+#include <QTextTableCellFormat>
+#include <QTextTableFormat>
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QVector>
@@ -57,6 +61,45 @@
 
 namespace {
 constexpr int CommentBlockState = 3; // MarkdownHighlighter::StateComment
+
+void setReadTableCollapsed(QTextTable *table, bool collapsed) {
+    if (!table)
+        return;
+    QTextTableFormat format = table->format();
+    format.setBorder(collapsed ? 0.0 : 1.0);
+    format.setBorderStyle(collapsed
+                              ? QTextFrameFormat::BorderStyle_None
+                              : QTextFrameFormat::BorderStyle_Solid);
+    format.setBorderBrush(
+        collapsed ? QBrush(Qt::NoBrush)
+                  : QBrush(AppTheme::color(QColor(0x31, 0x51, 0x40))));
+    format.setCellPadding(collapsed ? 0.0 : 8.0);
+    format.setCellSpacing(0.0);
+    format.setTopMargin(collapsed ? 0.0 : 7.0);
+    format.setBottomMargin(collapsed ? 0.0 : 9.0);
+    table->setFormat(format);
+
+    for (int row = 0; row < table->rows(); ++row) {
+        for (int column = 0; column < table->columns(); ++column) {
+            QTextTableCell cell = table->cellAt(row, column);
+            QTextTableCellFormat cellFormat =
+                cell.format().toTableCellFormat();
+            if (collapsed) {
+                cellFormat.clearBackground();
+            } else if (row == 0) {
+                cellFormat.setBackground(
+                    AppTheme::color(QColor(0x1a, 0x35, 0x27)));
+            } else if ((row % 2) == 0) {
+                cellFormat.setBackground(
+                    AppTheme::color(QColor(0x15, 0x24, 0x1c)));
+            } else {
+                cellFormat.setBackground(
+                    AppTheme::color(QColor(0x11, 0x1d, 0x17)));
+            }
+            cell.setFormat(cellFormat);
+        }
+    }
+}
 
 MarkdownComment::LineAnalysis commentAnalysisForBlock(
     const QTextBlock &block) {
@@ -4380,6 +4423,36 @@ void MarkdownEditor::reapplyFolds() {
         if (!b.isVisible())
             b.setVisible(true);
 
+    struct ReadTableRange {
+        QTextTable *table = nullptr;
+        int firstSource = std::numeric_limits<int>::max();
+        int lastSource = -1;
+    };
+    QList<ReadTableRange> readTables;
+    QHash<QTextTable *, int> readTableIndexes;
+    if (m_readMode) {
+        for (QTextBlock block = document()->firstBlock(); block.isValid();
+             block = block.next()) {
+            QTextCursor cursor(block);
+            QTextTable *table = cursor.currentTable();
+            const int sourceBlock =
+                MarkdownReadRenderer::sourceBlockNumber(block);
+            if (!table || sourceBlock < 0)
+                continue;
+            int index = readTableIndexes.value(table, -1);
+            if (index < 0) {
+                index = readTables.size();
+                readTableIndexes.insert(table, index);
+                readTables.append({table});
+            }
+            ReadTableRange &range = readTables[index];
+            range.firstSource = qMin(range.firstSource, sourceBlock);
+            range.lastSource = qMax(range.lastSource, sourceBlock);
+        }
+        for (const ReadTableRange &table : std::as_const(readTables))
+            setReadTableCollapsed(table.table, false);
+    }
+
     for (const Fold &f : m_folds) {
         // Use the extent captured when the fold was made. If that block was
         // deleted since, fall back to recomputing so the fold still holds.
@@ -4405,6 +4478,11 @@ void MarkdownEditor::reapplyFolds() {
                     MarkdownReadRenderer::sourceBlockNumber(b);
                 if (sourceBlock >= firstSource && sourceBlock <= lastSource)
                     b.setVisible(false);
+            }
+            for (const ReadTableRange &table : std::as_const(readTables)) {
+                if (table.firstSource >= firstSource &&
+                    table.lastSource <= lastSource)
+                    setReadTableCollapsed(table.table, true);
             }
         }
     }

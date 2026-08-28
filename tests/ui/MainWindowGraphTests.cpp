@@ -211,15 +211,21 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   auto *settingsAction =
       window.findChild<QAction *>(QStringLiteral("settingsAction"));
   auto *editor = window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+  auto *findInput =
+      window.findChild<QLineEdit *>(QStringLiteral("findInput"));
+  auto *findCounter =
+      window.findChild<QLabel *>(QStringLiteral("findMatchCounter"));
   auto *cheatsheet =
       window.findChild<QFrame *>(QStringLiteral("shortcutCheatsheet"));
   check(pages && graphPage && graphView && graphAction && localGraphAction &&
             backAction && forwardAction && title && sidebar && sideTitle &&
-            splitter && gearMenu && settingsAction && editor && cheatsheet,
+            splitter && gearMenu && settingsAction && editor && findInput &&
+            findCounter && cheatsheet,
         QStringLiteral("graph page and navigation controls are discoverable"));
   if (!pages || !graphPage || !graphView || !graphAction || !localGraphAction ||
       !backAction || !forwardAction || !title || !sidebar || !sideTitle ||
-      !splitter || !gearMenu || !settingsAction || !editor || !cheatsheet)
+      !splitter || !gearMenu || !settingsAction || !editor || !findInput ||
+      !findCounter || !cheatsheet)
     return;
 
   check(!cheatsheet->isVisible(),
@@ -310,6 +316,19 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
 
   check(title->text() == QStringLiteral("Alpha"),
         QStringLiteral("fixture starts on Alpha"));
+  const QString originalAlpha = editor->toPlainText();
+  editor->setPlainText(QStringLiteral(
+      "needle at the start\nsecond needle\nthird needle"));
+  findInput->setText(QStringLiteral("needle"));
+  QApplication::processEvents();
+  check(findCounter->text() == QStringLiteral("1 / 3"),
+        QStringLiteral("Find in Note shows the current and total matches"));
+  sendKey(findInput, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+  QApplication::processEvents();
+  check(findCounter->text() == QStringLiteral("2 / 3"),
+        QStringLiteral("Find in Note counter follows forward navigation"));
+  findInput->clear();
+  editor->setPlainText(originalAlpha);
   check(!window.findChild<QToolButton *>(QStringLiteral("graphButton")),
         QStringLiteral("sidebar footer has no dedicated Graph button"));
   bool mobileGraphButton = false;
@@ -352,8 +371,10 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   bool settingsGraphControlsSeen = false;
   bool spellingControlsSeen = false;
   bool spellingLanguagePopupStaysOpen = false;
+  bool spellingLanguagePopupOpaque = false;
   bool fontPopupOpaque = false;
   bool spellingManagerSeen = false;
+  bool clearMascotsSettingSeen = false;
   QTimer::singleShot(0, [&] {
     auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
     auto *openGlobal = dialog ? dialog->findChild<QPushButton *>(
@@ -371,6 +392,9 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     auto *manageLanguages = dialog ? dialog->findChild<QPushButton *>(
                                          QStringLiteral("manageSpellLanguages"))
                                    : nullptr;
+    auto *clearMascots = dialog ? dialog->findChild<QPushButton *>(
+                                      QStringLiteral("clearAllMascots"))
+                                : nullptr;
     auto *fontFamily = dialog ? dialog->findChild<QFontComboBox *>() : nullptr;
     const QString settingsScreenshot =
         QString::fromLocal8Bit(qgetenv("EMERALD_TEST_SETTINGS_SCREENSHOT"));
@@ -379,6 +403,7 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
       dialog->grab().save(settingsScreenshot);
     }
     settingsGraphControlsSeen = openGlobal && openLocal;
+    clearMascotsSettingSeen = clearMascots && clearMascots->isEnabled();
     spellingControlsSeen = spellEnabled && spellLanguage && manageLanguages &&
                            spellEnabled->isChecked() &&
                            spellLanguage->property("selectedLanguages")
@@ -392,6 +417,7 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
       popup->popup(spellLanguage->mapToGlobal(
           QPoint(0, spellLanguage->height())));
       QApplication::processEvents();
+      spellingLanguagePopupOpaque = widgetRendersOpaque(popup);
       const QRect testRow = popup ? popup->actionGeometry(testLanguage) : QRect();
       if (popup && testRow.isValid() && !testRow.isEmpty()) {
         clickWidget(popup, testRow.center());
@@ -427,6 +453,8 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
         spellingManagerSeen =
             manager && manager->objectName() ==
                            QStringLiteral("spellLanguageDialog") &&
+            manager->findChild<QLabel *>(
+                QStringLiteral("spellDownloadProgressPercent")) &&
             manager->findChildren<QPushButton *>(
                        QRegularExpression(QStringLiteral("spellLanguageAction_.*")))
                     .size() == 5;
@@ -450,10 +478,14 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   check(spellingLanguagePopupStaysOpen,
         QStringLiteral("selecting a spelling dictionary keeps the multi-select "
                        "popup open"));
+  check(spellingLanguagePopupOpaque,
+        QStringLiteral("the spelling-language popup is fully opaque"));
   check(fontPopupOpaque,
         QStringLiteral("the font-family popup is fully opaque"));
   check(spellingManagerSeen,
         QStringLiteral("language manager lists bundled and optional packs"));
+  check(clearMascotsSettingSeen,
+        QStringLiteral("Settings exposes vault-wide mascot clearing"));
   check(waitUntil(
             [pages, graphPage] { return pages->currentWidget() == graphPage; }),
         QStringLiteral("Settings can open the Graph View"));

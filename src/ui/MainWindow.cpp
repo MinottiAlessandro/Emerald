@@ -117,7 +117,12 @@ QString releaseVersion(QString version) {
 // outside clicks, focus loss, and keyboard navigation normally.
 class PersistentCheckMenu final : public QMenu {
 public:
-    explicit PersistentCheckMenu(QWidget *parent = nullptr) : QMenu(parent) {}
+    explicit PersistentCheckMenu(QWidget *parent = nullptr) : QMenu(parent) {
+        setObjectName(QStringLiteral("spellLanguageMenu"));
+        setAttribute(Qt::WA_StyledBackground, true);
+        setAttribute(Qt::WA_TranslucentBackground, false);
+        setAutoFillBackground(true);
+    }
 
     std::function<void(QAction *)> toggleRequested;
 
@@ -1776,7 +1781,11 @@ void MainWindow::buildUi() {
     m_findInput = new QLineEdit(m_findBar);
     m_findInput->setObjectName(QStringLiteral("findInput"));
     m_findInput->setPlaceholderText(tr("Find in note…  (Enter / Shift+Enter)"));
-    fh->addWidget(m_findInput);
+    m_findCounter = new QLabel(tr("0 / 0"), m_findBar);
+    m_findCounter->setObjectName(QStringLiteral("findMatchCounter"));
+    m_findCounter->setAlignment(Qt::AlignCenter);
+    fh->addWidget(m_findInput, 1);
+    fh->addWidget(m_findCounter);
     m_findBar->hide();
     connect(m_findInput, &QLineEdit::textChanged, this, [this] {
         // Incremental: search from the start of the current selection.
@@ -2154,6 +2163,59 @@ void MainWindow::deleteMascot() {
     setAutoMascotOff(m_currentPath, true);
     m_editor->setMascot(0); // removes the header line; hides the creature
     notify(tr("Mascot removed"));
+}
+
+bool MainWindow::clearAllMascots() {
+    if (!ensureVaultWritable() || !m_vault)
+        return false;
+    QWidget *messageParent = QApplication::activeModalWidget();
+    if (!messageParent)
+        messageParent = this;
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        messageParent, tr("Clear all mascots"),
+        tr("Remove every mascot from this vault? Automatic mascot generation "
+           "will also be turned off. This updates the affected note files."),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes)
+        return false;
+
+    saveCurrent();
+    QSettings().setValue(QStringLiteral("mascotAuto"), false);
+    QStringList failedPaths;
+    const QStringList changed = m_vault->clearMascots(&failedPaths);
+    for (const QString &path : changed) {
+        const QString content = m_vault->read(path);
+        const QString title = Vault::titleFromPath(path);
+        m_searchIndex.updateNote(path, title, content);
+        m_linkGraphIndex.updateNote(path, title, content);
+        markNoteMetaCurrent(path, title);
+    }
+
+    if (changed.contains(m_currentPath)) {
+        const bool wasLoading = m_loading;
+        m_loading = true;
+        m_editor->setMascot(0);
+        m_editor->sourceDocument()->setModified(false);
+        m_lastSavedFingerprint =
+            contentFingerprint(m_editor->toPlainText());
+        m_loading = wasLoading;
+        watchCurrent();
+    }
+    refreshMascot();
+    refreshGraphPage();
+    refreshTree();
+
+    if (!failedPaths.isEmpty()) {
+        notify(tr("Removed %1 mascot(s); %2 note(s) could not be updated.")
+                   .arg(changed.size())
+                   .arg(failedPaths.size()),
+               5000);
+    } else if (changed.isEmpty()) {
+        notify(tr("This vault has no mascots"));
+    } else {
+        notify(tr("Removed %n mascot(s)", nullptr, changed.size()));
+    }
+    return true;
 }
 
 bool MainWindow::autoMascotOff(const QString &path) const {
@@ -3069,6 +3131,15 @@ void MainWindow::openSettings() {
     mascotThreshBox->setEnabled(mascotAutoBox->isChecked());
     connect(mascotAutoBox, &QCheckBox::toggled, mascotThreshBox,
             &QWidget::setEnabled);
+    auto *clearMascotsButton = new QPushButton(tr("Clear all mascots…"), &dlg);
+    clearMascotsButton->setObjectName(QStringLiteral("clearAllMascots"));
+    clearMascotsButton->setProperty("dialogRole", QStringLiteral("destructive"));
+    clearMascotsButton->setEnabled(m_vault && !m_readMode);
+    connect(clearMascotsButton, &QPushButton::clicked, &dlg,
+            [this, mascotAutoBox] {
+                if (clearAllMascots())
+                    mascotAutoBox->setChecked(false);
+            });
 
     // New-note folder + Home note pickers (need an open vault).
     auto *folderBox = new QComboBox(&dlg);
@@ -3170,6 +3241,7 @@ void MainWindow::openSettings() {
         tr("Mascot"), tr("Optional automatic mascot generation for notes."));
     addSettingRow(mascotForm, tr("Generate"), mascotAutoBox);
     addSettingRow(mascotForm, tr("After"), mascotThreshBox);
+    addSettingRow(mascotForm, tr("Vault"), clearMascotsButton);
 
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -5189,14 +5261,17 @@ void MainWindow::openFindInFile() {
     positionFindBar();
     m_findBar->show();
     m_findBar->raise();
+    updateFindCounter();
     m_findInput->setFocus();
     m_findInput->selectAll();
 }
 
 void MainWindow::findInFile(bool forward) {
     const QString text = m_findInput->text();
-    if (text.isEmpty())
+    if (text.isEmpty()) {
+        updateFindCounter();
         return;
+    }
     QTextDocument::FindFlags flags;
     if (!forward)
         flags |= QTextDocument::FindBackward;
@@ -5206,13 +5281,41 @@ void MainWindow::findInFile(bool forward) {
         m_editor->setTextCursor(c);
         m_editor->findAndCenter(text, flags);
     }
+    updateFindCounter();
+}
+
+void MainWindow::updateFindCounter() {
+    if (!m_findCounter || !m_findInput || !m_editor)
+        return;
+    const QString query = m_findInput->text();
+    if (query.isEmpty()) {
+        m_findCounter->setText(tr("0 / 0"));
+        return;
+    }
+
+    const int selectedStart =
+        m_editor->sourceTextCursor().selectionStart();
+    int current = 0;
+    int total = 0;
+    QTextCursor search(m_editor->sourceDocument());
+    while (true) {
+        const QTextCursor match =
+            m_editor->sourceDocument()->find(query, search);
+        if (match.isNull())
+            break;
+        ++total;
+        if (match.selectionStart() == selectedStart)
+            current = total;
+        search.setPosition(match.selectionEnd());
+    }
+    m_findCounter->setText(tr("%1 / %2").arg(current).arg(total));
 }
 
 void MainWindow::positionFindBar() {
     if (!m_findBar)
         return;
     m_findBar->adjustSize();
-    const int w = qMin(320, m_editor->width() - 24);
+    const int w = qMin(380, m_editor->width() - 24);
     m_findBar->setFixedWidth(w);
     m_findBar->move(m_editor->width() - w - 14, 8);
 }

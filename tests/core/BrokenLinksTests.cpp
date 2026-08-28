@@ -118,11 +118,42 @@ void testBrokenLinkScan() {
               issue.target + QStringLiteral(" retains its source line"));
     }
 }
+
+void testClearMascots() {
+    QTemporaryDir temp;
+    check(temp.isValid(), QStringLiteral("mascot-clear temp vault exists"));
+    if (!temp.isValid())
+        return;
+
+    const QString first = temp.filePath(QStringLiteral("First.md"));
+    const QString second = temp.filePath(QStringLiteral("Second.md"));
+    const QString plain = temp.filePath(QStringLiteral("Plain.md"));
+    check(writeFile(first, MascotSeed::line(41) + QStringLiteral("\nBody\n")) &&
+              writeFile(second, MascotSeed::line(82, QStringLiteral("owl")) +
+                                    QStringLiteral("\n")) &&
+              writeFile(plain, QStringLiteral("No mascot here\n")),
+          QStringLiteral("mascot-clear fixtures are writable"));
+
+    Vault vault(temp.path());
+    vault.scan();
+    QStringList failures;
+    const QStringList changed = vault.clearMascots(&failures);
+    check(failures.isEmpty() && changed.size() == 2 &&
+              changed.contains(first) && changed.contains(second),
+          QStringLiteral("clearing mascots reports every changed note"));
+    check(vault.read(first) == QStringLiteral("Body\n") &&
+              vault.read(second).isEmpty() &&
+              vault.read(plain) == QStringLiteral("No mascot here\n"),
+          QStringLiteral("clearing mascots removes only leading seed lines"));
+    check(vault.clearMascots().isEmpty(),
+          QStringLiteral("clearing an already-clean vault is a no-op"));
+}
 } // namespace
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     testBrokenLinkScan();
+    testClearMascots();
 
     if (failures == 0)
         QTextStream(stdout) << "All broken-link tests passed.\n";

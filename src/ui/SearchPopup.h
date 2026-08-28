@@ -54,12 +54,14 @@ protected:
 
 private:
     void setModeTitle(const QString &title);
+    void updateMatchCounter();
     void refresh(const QString &text);
     void accept();      // open the highlighted result
     void reposition();  // keep centred over the parent
 
     const SearchIndex *m_index = nullptr;
     QLabel *m_title = nullptr;
+    QLabel *m_matchCounter = nullptr;
     QLineEdit *m_input = nullptr;
     QListWidget *m_results = nullptr;
     bool m_titlesOnly = false;

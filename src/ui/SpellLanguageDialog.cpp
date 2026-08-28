@@ -98,15 +98,32 @@ void SpellLanguageDialog::buildUi() {
     root->addWidget(scroll, 1);
 
     m_progress = new QProgressBar(this);
+    m_progress->setObjectName(QStringLiteral("spellDownloadProgress"));
     m_progress->setRange(0, 100);
     m_progress->setValue(0);
     m_progress->setTextVisible(false);
     m_progress->hide();
+    m_progressPercent = new QLabel(tr("0%"), this);
+    m_progressPercent->setObjectName(
+        QStringLiteral("spellDownloadProgressPercent"));
+    m_progressPercent->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_progressPercent->setMinimumWidth(
+        m_progressPercent->fontMetrics().horizontalAdvance(QStringLiteral("100%")));
+    m_progressPercent->hide();
+    connect(m_progress, &QProgressBar::valueChanged, m_progressPercent,
+            [this](int value) {
+                m_progressPercent->setText(tr("%1%").arg(value));
+            });
     m_message = new QLabel(this);
     m_message->setObjectName(QStringLiteral("settingsSectionDescription"));
     m_message->setWordWrap(true);
     m_message->hide();
-    root->addWidget(m_progress);
+    auto *progressRow = new QHBoxLayout();
+    progressRow->setContentsMargins(0, 0, 0, 0);
+    progressRow->setSpacing(10);
+    progressRow->addWidget(m_progress, 1);
+    progressRow->addWidget(m_progressPercent);
+    root->addLayout(progressRow);
     root->addWidget(m_message);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -171,6 +188,7 @@ void SpellLanguageDialog::startInstall(const QString &locale) {
     m_message->show();
     m_progress->setValue(0);
     m_progress->show();
+    m_progressPercent->show();
     setActionsEnabled(false);
     requestNextPart();
 }
@@ -286,6 +304,7 @@ void SpellLanguageDialog::finishInstall() {
                            .arg(language ? language->name : m_installingLocale));
     m_progress->setValue(100);
     m_progress->hide();
+    m_progressPercent->hide();
     m_installingLocale.clear();
     m_downloadedParts.clear();
     refreshRows();
@@ -295,6 +314,7 @@ void SpellLanguageDialog::finishInstall() {
 void SpellLanguageDialog::failInstall(const QString &message) {
     m_message->setText(message);
     m_progress->hide();
+    m_progressPercent->hide();
     m_installingLocale.clear();
     m_downloadedParts.clear();
     setActionsEnabled(true);

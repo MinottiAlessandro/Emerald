@@ -72,7 +72,8 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] Inline/fenced code, `$math$`, URLs, email addresses, HTML, image paths, and unaliased `[[wiki targets]]` are ignored. Visible `[link labels](url)` and `[[target|aliases]]` are checked.
 - [ ] Right-click a misspelling: correction suggestions appear on demand and replace only that word.
 - [ ] **Add to personal dictionary** removes every matching underline immediately and survives restarting Emerald. **Ignore for this session** lasts only until restart.
-- [ ] **Manage languages…** shows English as included. Download Italian, German, French, or Spanish; interrupted/corrupt downloads do not appear as installed. Select an installed language, restart, and confirm it remains selected. A selected pack cannot be removed until another language is active.
+- [ ] **Manage languages…** shows English as included. Download Italian, German, French, or Spanish; the numeric percentage remains visible beside (not inside) the progress bar, and interrupted/corrupt downloads do not appear as installed. Select an installed language, restart, and confirm it remains selected. A selected pack cannot be removed until another language is active.
+- [ ] On macOS, open the spelling-language selector and confirm its menu has a solid themed background rather than showing the Settings dialog through it.
 - [ ] Optional language downloads use the matching `spell-dictionaries-v*` Emerald release and still fail closed if an asset is missing, oversized, or does not match the SHA-256 embedded in the application.
 - [ ] After installing an optional language, a newer application manifest with different hashes reports **Update available**. Updating safely replaces the old pack; an interrupted update leaves the existing files recoverable.
 - [ ] Downloaded dictionaries and personal words live in Emerald's application-data folder, not in the vault.
@@ -86,6 +87,7 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] Leaving a table re-aligns (prettifies) its columns when the padded rows fit the editor width.
 - [ ] Edit Mode shows plain Markdown table source without a background, borders, header skin, or alternating row shading.
 - [ ] Read Mode still renders a semantic table.
+- [ ] In Read Mode, collapse a heading containing a table. Its contents, cell backgrounds, border, and spacing all disappear; expanding the heading restores the complete table. ◆
 - [ ] **A row that would wrap to a new line does NOT get auto-formatted** (grid no longer breaks). ★
 - [ ] **Tab on the `| --- |` separator row** lands in the first cell of the data row below — creating that row only when the table is still just header + separator (an existing data row is reused, not pushed down). ◆
 
@@ -143,8 +145,8 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Broken Links** (`Ctrl+Shift+B`, gear menu, or **Settings → Vault → Broken links → Review…**) opens a search-style popup. Confirm missing targets and targets containing only whitespace are labelled correctly; populated targets and links inside inline/fenced code are absent. Type to filter, then press Enter or click a row and confirm its source note opens with the exact `[[link]]` selected. An issue-free vault shows “No broken links found”. ◆
 
 ## 9. Search
-- [ ] **Find in note** (`Ctrl+F`).
-- [ ] **Search vault** (`Ctrl+Shift+F`) — popup with ranked results; type to filter, ↑/↓ to move, Enter jumps to first match.
+- [ ] **Find in note** (`Ctrl+F`) shows `current / total`; Enter and Shift+Enter update the counter while stepping through matches.
+- [ ] **Search vault** (`Ctrl+Shift+F`) — popup with ranked results and `current / total`; type to filter, ↑/↓ to move and update the counter, Enter jumps to the selected match.
 
 ## 9a. Graph View
 - [ ] **Open Graph View** (`Ctrl+Shift+G` or **Settings → Vault → Graph view → Open global**). It replaces the note in the central pane; no dialog, dock, or second top-level window appears. ◆
@@ -175,6 +177,7 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] `Ctrl+M` is disabled with no note open, and re-rolls the creature on an open note. ◆
 - [ ] `Ctrl+Shift+M` is disabled until the note has a mascot, then removes it (clears the seed line). ◆
 - [ ] With auto-generation on (**Settings → Mascot**), deleting a note's mascot (`Ctrl+Shift+M`) stops it from auto-regenerating for that note even as you keep typing; a manual **Generate** (`Ctrl+M`) resumes auto-gen. ◆
+- [ ] **Settings → Mascot → Clear all mascots…** asks for confirmation, removes mascot seed lines from every note in the vault without changing their bodies, refreshes the open note/gallery, and turns automatic generation off. ◆
 - [ ] Hover gives a gentle blink/bob.
 - [ ] Clicking a mascot **or pressing `Ctrl+G`** opens the vault-wide gallery; clicking a creature jumps to its note. ◆
 - [ ] Press **↑** at the top of a note reveals the hidden seed line (`<!-- mascot: … -->`); editing/deleting it updates the creature.

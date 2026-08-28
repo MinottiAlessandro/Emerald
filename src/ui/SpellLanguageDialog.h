@@ -48,6 +48,7 @@ private:
     QNetworkAccessManager *m_network = nullptr;
     QNetworkReply *m_reply = nullptr;
     QProgressBar *m_progress = nullptr;
+    QLabel *m_progressPercent = nullptr;
     QLabel *m_message = nullptr;
     QString m_installingLocale;
     int m_partIndex = 0;

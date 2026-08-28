@@ -2,6 +2,7 @@
 
 #include "MarkdownComment.h"
 #include "MarkdownWikiLinkScanner.h"
+#include "MascotSeed.h"
 #include "Perf.h"
 #include "WikiLink.h"
 #include <QDir>
@@ -61,6 +62,23 @@ bool Vault::write(const QString &path, const QString &content) const {
         return false;
     const QByteArray bytes = content.toUtf8();
     return f.write(bytes) == bytes.size();
+}
+
+QStringList Vault::clearMascots(QStringList *failedPaths) const {
+    if (failedPaths)
+        failedPaths->clear();
+    QStringList changed;
+    for (const Note &note : m_notes) {
+        const QString content = read(note.path);
+        const QString cleared = MascotSeed::strip(content);
+        if (cleared == content)
+            continue;
+        if (write(note.path, cleared))
+            changed.append(note.path);
+        else if (failedPaths)
+            failedPaths->append(note.path);
+    }
+    return changed;
 }
 
 QString Vault::resolveExistingFileWithinRoot(const QString &relativePath) const {

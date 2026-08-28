@@ -1469,6 +1469,40 @@ int main(int argc, char **argv) {
     check(editor.document()->findBlockByNumber(1).isVisible(),
           QStringLiteral("clicking the same fold gutter should expand it"));
 
+    editor.setPlainText(QStringLiteral(
+        "# Fold table\n"
+        "| Name | Score |\n"
+        "| --- | ---: |\n"
+        "| Ada | 10 |\n"
+        "# Next"));
+    editor.setReadMode(true);
+    QApplication::processEvents();
+    const QTextBlock readTableHeading =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 0);
+    const QTextBlock readTableCell =
+        MarkdownReadRenderer::blockForSourceBlock(editor.document(), 1);
+    QTextTable *foldedTable = QTextCursor(readTableCell).currentTable();
+    const QRect readTableHeadingRect =
+        editor.cursorRect(QTextCursor(readTableHeading));
+    const QPoint readTableFoldPoint(
+        qMax(1, readTableHeadingRect.left() - 8),
+        readTableHeadingRect.center().y());
+    clickEditor(editor, readTableFoldPoint);
+    check(foldedTable && !readTableCell.isVisible() &&
+              foldedTable->format().border() == 0.0 &&
+              foldedTable->cellAt(0, 0).format().background().style() ==
+                  Qt::NoBrush,
+          QStringLiteral("a collapsed heading should hide the complete Read "
+                         "Mode table surface and its cells"));
+    clickEditor(editor, readTableFoldPoint);
+    check(foldedTable && readTableCell.isVisible() &&
+              foldedTable->format().border() > 0.0 &&
+              foldedTable->cellAt(0, 0).format().background().style() !=
+                  Qt::NoBrush,
+          QStringLiteral("expanding a heading should restore its Read Mode "
+                         "table surface"));
+    editor.setReadMode(false);
+
     // Consecutive, deeper-indented list items form a source-backed tree. The
     // cached parent makes guide painting linear, while each fold hides only its
     // own descendant run and leaves the next same-level sibling visible.

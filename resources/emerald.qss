@@ -278,6 +278,14 @@ QLabel#searchPopupTitle {
     font-size: 13px;
     font-weight: 700;
 }
+QLabel#searchMatchCounter,
+QLabel#findMatchCounter {
+    background: transparent;
+    color: #789384;
+    font-family: monospace;
+    font-size: 11px;
+    min-width: 42px;
+}
 QLabel#searchPopupDismissHint {
     background: #1a211d;
     color: #789384;
@@ -548,6 +556,14 @@ QDialog QToolButton#spellLanguage::menu-indicator {
     subcontrol-position: right center;
     right: 8px;
 }
+/* The menu is parented beneath settingsSection. This selector deliberately
+   outranks the section's transparent-child rule so macOS paints a solid popup
+   surface instead of showing the dialog through it. */
+QFrame#settingsSection QMenu#spellLanguageMenu {
+    background: #121512;
+    color: #a8c3b5;
+    border: 1px solid #315140;
+}
 QDialog QCheckBox,
 QDialog QRadioButton {
     color: #d7eee2;
@@ -628,6 +644,12 @@ QDialog QProgressBar {
 QDialog QProgressBar::chunk {
     background: #39bd79;
     border-radius: 3px;
+}
+QLabel#spellDownloadProgressPercent {
+    background: transparent;
+    color: #789384;
+    font-family: monospace;
+    font-size: 11px;
 }
 QDialog QSlider::groove:horizontal {
     background: #263c31;

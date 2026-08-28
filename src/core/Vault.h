@@ -83,6 +83,11 @@ public:
     // UI can take the user directly to the link that needs attention.
     QVector<BrokenLink> brokenLinks() const;
 
+    // Remove the leading inline mascot seed from every note that has one.
+    // Returns the paths changed successfully; optional failures are reported
+    // separately so callers can give accurate vault-wide feedback.
+    QStringList clearMascots(QStringList *failedPaths = nullptr) const;
+
     static QString titleFromPath(const QString &path);
     // A title usable as a filename (non-empty, no path/illegal characters).
     static bool isValidTitle(const QString &title);

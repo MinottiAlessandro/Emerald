@@ -160,6 +160,7 @@ private:
     void notify(const QString &text, int ms = 3000); // transient toast message
     void openFindInFile();
     void findInFile(bool forward);
+    void updateFindCounter();
     void positionFindBar();
     void buildShortcutCheatsheet();
     void positionShortcutCheatsheet();
@@ -171,6 +172,7 @@ private:
     void onMascotSeedChanged(quint64 seed); // editor reported a new/edited seed
     void generateMascot(); // create/replace this note's mascot from its content
     void deleteMascot();   // remove this note's mascot (clears the header line)
+    bool clearAllMascots(); // remove mascot headers throughout the open vault
     void openMascotGallery(); // transient grid of every mascot in the vault
     void maybeAutoGenerateMascot(); // auto-create once past the char threshold
     void updateMascotActions();     // enable/disable the menu entries
@@ -237,6 +239,7 @@ private:
     QTimer *m_toastTimer = nullptr;
     QFrame *m_findBar = nullptr;       // in-note find overlay
     QLineEdit *m_findInput = nullptr;
+    QLabel *m_findCounter = nullptr;
     QFrame *m_shortcutCheatsheet = nullptr; // visible only while Alt+X is held
     QBoxLayout *m_shortcutColumnsLayout = nullptr;
     QTimer *m_shortcutReleaseTimer = nullptr; // filters native repeat releases
