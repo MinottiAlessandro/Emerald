@@ -76,9 +76,11 @@ echo ">> installing into AppDir"
 rm -rf "$APPDIR"
 DESTDIR="$APPDIR" cmake --install "$BUILD_DIR" --prefix /usr
 
-# VERSION is embedded in the AppImage's metadata; the filename stays version-less
-# so README can link to /releases/latest/download/Emerald-<arch>.AppImage forever.
-VERSION="$(sed -n 's/^project(Emerald VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
+# VERSION is embedded in the AppImage's metadata; include the development
+# suffix when present. The filename stays version-less so README can link to
+# /releases/latest/download/Emerald-<arch>.AppImage forever.
+BASE_VERSION="$(sed -n 's/^project(Emerald VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
+VERSION="${BASE_VERSION}${EMERALD_VERSION_SUFFIX:-}"
 export VERSION
 export OUTPUT="Emerald-${ARCH}.AppImage"
 

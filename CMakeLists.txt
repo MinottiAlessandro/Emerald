@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Emerald VERSION 2.2.1 LANGUAGES CXX)
+project(Emerald VERSION 2.2.2 LANGUAGES CXX)
 
 # Native package metadata stays numeric, while development builds may append a
 # SemVer prerelease suffix to the version shown by Emerald and its updater.
@@ -557,7 +557,8 @@ endif()
 
 # --- Core regression tests -----------------------------------------------
 # QtCore-only tests for application behavior that does not need a widget
-# surface: per-vault settings and broken-link discovery.
+# surface, including settings, release selection, packaged runtime defaults,
+# image parsing, and link discovery.
 option(EMERALD_BUILD_CORE_TESTS "Build core regression tests" OFF)
 if(EMERALD_BUILD_CORE_TESTS)
   enable_testing()
