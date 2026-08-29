@@ -260,6 +260,12 @@ move the caret back onto the line, confirm the raw markers reappear.
 ## 15. Updates
 - [ ] **Settings → Updates → Release channel** defaults to **Stable**, persists
       after restarting, and offers **Stable** and **Development**.
+- [ ] On startup, Emerald checks the selected release channel once and shows an
+      update prompt only when a newer release exists. Network/API errors and an
+      up-to-date result remain silent; they are still reported by a manual
+      **Check for Updates…**.
+- [ ] If **What's New**, Settings, or another Emerald dialog is open when the
+      startup result arrives, the update prompt waits until that dialog closes.
 - [ ] On **Stable**, **Check for Updates…** ignores GitHub prereleases.
 - [ ] On **Development**, **Check for Updates…** offers the newest development
       build or stable release by semantic version (`dev.10` is newer than

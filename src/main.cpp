@@ -18,6 +18,32 @@
 Q_LOGGING_CATEGORY(emeraldPerf, "emerald.perf")
 
 namespace {
+void scheduleStartupUpdateCheck() {
+    static bool scheduled = false;
+    if (scheduled)
+        return;
+    scheduled = true;
+
+    // Let the first window finish painting and restoring its vault before the
+    // asynchronous network request starts. Select a live window at delivery
+    // time so closing the window that initiated startup cannot leave a stale
+    // pointer behind.
+    QTimer::singleShot(1500, qApp, [] {
+        if (auto *active =
+                qobject_cast<MainWindow *>(QApplication::activeWindow())) {
+            active->checkForUpdatesOnStartup();
+            return;
+        }
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            auto *window = qobject_cast<MainWindow *>(widget);
+            if (window && window->isVisible()) {
+                window->checkForUpdatesOnStartup();
+                return;
+            }
+        }
+    });
+}
+
 class EmeraldApplication final : public QApplication {
 public:
     EmeraldApplication(int &argc, char **argv) : QApplication(argc, argv) {}
@@ -65,6 +91,7 @@ bool openStandaloneWindow(const QString &requestedPath) {
         window->setAttribute(Qt::WA_DeleteOnClose);
         window->resize(1100, 720);
         window->show();
+        scheduleStartupUpdateCheck();
         return true;
     }
 
@@ -87,6 +114,7 @@ bool openStandaloneWindow(const QString &requestedPath) {
     window->setAttribute(Qt::WA_DeleteOnClose);
     window->resize(1100, 720);
     window->show();
+    scheduleStartupUpdateCheck();
     return true;
 }
 
@@ -145,6 +173,7 @@ int main(int argc, char *argv[]) {
         window->setAttribute(Qt::WA_DeleteOnClose);
         window->resize(1100, 720);
         window->show();
+        scheduleStartupUpdateCheck();
     });
     return app.exec();
 }

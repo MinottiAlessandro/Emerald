@@ -75,6 +75,19 @@ bool widgetRendersOpaque(QWidget *widget) {
   return true;
 }
 
+QDialog *activeTestDialog() {
+  if (auto *modal =
+          qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+    return modal;
+  if (auto *active = qobject_cast<QDialog *>(QApplication::activeWindow()))
+    return active;
+  for (QWidget *widget : QApplication::topLevelWidgets())
+    if (auto *dialog = qobject_cast<QDialog *>(widget);
+        dialog && dialog->isVisible())
+      return dialog;
+  return nullptr;
+}
+
 bool writeFile(const QString &path, const QString &content) {
   QFile file(path);
   const QByteArray bytes = content.toUtf8();
@@ -375,8 +388,9 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   bool fontPopupOpaque = false;
   bool spellingManagerSeen = false;
   bool clearMascotsSettingSeen = false;
+  bool settingsAllowsPointerOutside = false;
   QTimer::singleShot(0, [&] {
-    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+    auto *dialog = activeTestDialog();
     auto *openGlobal = dialog ? dialog->findChild<QPushButton *>(
                                     QStringLiteral("settingsOpenGraph"))
                               : nullptr;
@@ -403,6 +417,9 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
       dialog->grab().save(settingsScreenshot);
     }
     settingsGraphControlsSeen = openGlobal && openLocal;
+    settingsAllowsPointerOutside =
+        dialog && !dialog->isModal() &&
+        dialog->windowModality() == Qt::NonModal;
     clearMascotsSettingSeen = clearMascots && clearMascots->isEnabled();
     spellingControlsSeen = spellEnabled && spellLanguage && manageLanguages &&
                            spellEnabled->isChecked() &&
@@ -443,7 +460,7 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
     }
     if (manageLanguages) {
       QTimer::singleShot(0, [&spellingManagerSeen] {
-        auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        auto *manager = activeTestDialog();
         const QString spellingScreenshot = QString::fromLocal8Bit(
             qgetenv("EMERALD_TEST_SPELLING_SCREENSHOT"));
         if (manager && !spellingScreenshot.isEmpty()) {
@@ -472,6 +489,8 @@ void testInPaneGraphNavigation(const QString &settingsRoot) {
   check(settingsGraphControlsSeen,
         QStringLiteral("Settings > Vault contains Global and Local Graph "
                        "launchers"));
+  check(settingsAllowsPointerOutside,
+        QStringLiteral("Settings is non-modal and does not confine the pointer"));
   check(spellingControlsSeen,
         QStringLiteral("Settings exposes enabled bundled-English spelling and "
                        "the optional-language manager"));
@@ -982,7 +1001,7 @@ void testFullWidthEditorPreference() {
     bool fullWidthPreviewSeen = false;
     bool settingsWheelScrollSeen = false;
     QTimer::singleShot(0, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *dialog = activeTestDialog();
       auto *fullWidth = dialog ? dialog->findChild<QCheckBox *>(
                                      QStringLiteral("editorFullWidth"))
                                : nullptr;
@@ -1123,8 +1142,7 @@ void testFileTreeSortPreference() {
     bool selectorComplete = false;
     for (const SortCase &sortCase : cases) {
       QTimer::singleShot(0, [&] {
-        auto *dialog =
-            qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        auto *dialog = activeTestDialog();
         auto *sort = dialog ? dialog->findChild<QComboBox *>(
                                   QStringLiteral("fileTreeSort"))
                             : nullptr;
@@ -1148,8 +1166,7 @@ void testFileTreeSortPreference() {
           QStringLiteral("Settings exposes all four file-tree sort orders"));
 
     QTimer::singleShot(0, [&] {
-      auto *dialog =
-          qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *dialog = activeTestDialog();
       auto *sort = dialog ? dialog->findChild<QComboBox *>(
                                 QStringLiteral("fileTreeSort"))
                           : nullptr;
@@ -1234,7 +1251,7 @@ void testThemePreference() {
     int previewSpacing = -1;
     int previewWidth = -1;
     QTimer::singleShot(0, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *dialog = activeTestDialog();
       auto *theme = dialog ? dialog->findChild<QComboBox *>(
                                  QStringLiteral("appTheme"))
                            : nullptr;
@@ -1290,7 +1307,7 @@ void testThemePreference() {
                          "without persisting the preview"));
 
     QTimer::singleShot(0, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *dialog = activeTestDialog();
       auto *theme = dialog ? dialog->findChild<QComboBox *>(
                                  QStringLiteral("appTheme"))
                            : nullptr;
@@ -1339,7 +1356,7 @@ void testReleaseChannelPreference() {
 
   bool stableDefaultSeen = false;
   QTimer::singleShot(0, [&] {
-    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+    auto *dialog = activeTestDialog();
     auto *channel = dialog ? dialog->findChild<QComboBox *>(
                                  QStringLiteral("releaseChannel"))
                            : nullptr;
@@ -1362,7 +1379,7 @@ void testReleaseChannelPreference() {
 
   bool developmentRestored = false;
   QTimer::singleShot(0, [&] {
-    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+    auto *dialog = activeTestDialog();
     auto *channel = dialog ? dialog->findChild<QComboBox *>(
                                  QStringLiteral("releaseChannel"))
                            : nullptr;
@@ -1421,8 +1438,7 @@ void testCustomThemes() {
         window.findChild<QAction *>(QStringLiteral("settingsAction"));
 
     QTimer::singleShot(0, [&] {
-      auto *settingsDialog =
-          qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *settingsDialog = activeTestDialog();
       auto *themeBox = settingsDialog
                            ? settingsDialog->findChild<QComboBox *>(
                                  QStringLiteral("appTheme"))
@@ -1446,8 +1462,7 @@ void testCustomThemes() {
       }
 
       QTimer::singleShot(0, [&] {
-        auto *editorDialog =
-            qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        auto *editorDialog = activeTestDialog();
         auto *name = editorDialog
                          ? editorDialog->findChild<QLineEdit *>(
                                QStringLiteral("customThemeName"))
@@ -1493,8 +1508,7 @@ void testCustomThemes() {
         QTimer::singleShot(
             60, [&, applicationThemeBefore, applicationBaseBefore,
                  applicationStyleBefore, previewStyleBefore] {
-              auto *activeEditor =
-                  qobject_cast<QDialog *>(QApplication::activeModalWidget());
+              auto *activeEditor = activeTestDialog();
               auto *activePreview =
                   activeEditor
                       ? activeEditor->findChild<QTextBrowser *>(

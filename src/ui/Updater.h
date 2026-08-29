@@ -8,11 +8,13 @@
 class QWidget;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QJsonObject;
 
-// Manual "Check for Updates": queries the selected Stable or Development
-// GitHub release channel and, when a newer version exists, downloads its
-// platform asset, verifies its SHA-256 digest and byte size against GitHub's
-// release metadata, and only then installs or opens it.
+// Queries the selected Stable or Development GitHub release channel and, when
+// a newer version exists, downloads its platform asset, verifies its SHA-256
+// digest and byte size against GitHub's release metadata, and only then
+// installs or opens it. Startup checks are quiet unless an update is available;
+// manual checks also report errors and confirm when the app is current.
 //   Linux: stage a verified AppImage, then use a detached helper to safely
 //     replace the running AppImage or install it to ~/.local/bin/emerald. The
 //     helper rolls back on failure and relaunches Emerald without sudo.
@@ -24,12 +26,21 @@ class QNetworkReply;
 class Updater : public QObject {
     Q_OBJECT
 public:
+    enum class CheckMode {
+        Manual,
+        Startup,
+    };
+
     explicit Updater(QWidget *window);
 
-    void check(UpdateChannel::Channel channel);
+    void check(UpdateChannel::Channel channel,
+               CheckMode mode = CheckMode::Manual);
 
 private:
-    void onReleaseReply(QNetworkReply *reply, UpdateChannel::Channel channel);
+    void onReleaseReply(QNetworkReply *reply, UpdateChannel::Channel channel,
+                        CheckMode mode);
+    void processRelease(const QJsonObject &release,
+                        UpdateChannel::Channel channel, CheckMode mode);
     void startDownload(const QString &url, const QString &assetName,
                        const QString &version, const QByteArray &expectedSha256,
                        qint64 expectedSize);

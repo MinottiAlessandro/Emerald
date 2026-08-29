@@ -32,6 +32,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -2880,10 +2881,23 @@ void MainWindow::updateResponsiveLayout() {
 }
 
 void MainWindow::openSettings() {
+    if (auto *existing =
+            findChild<QDialog *>(QStringLiteral("settingsDialog"),
+                                 Qt::FindDirectChildrenOnly)) {
+        existing->show();
+        existing->raise();
+        existing->activateWindow();
+        return;
+    }
+
     QDialog dlg(this);
     dlg.setObjectName(QStringLiteral("settingsDialog"));
     dlg.setProperty("emeraldDialog", true);
     dlg.setWindowTitle(tr("Settings"));
+    // Settings has live previews but does not need to block the rest of the
+    // desktop. Avoid QDialog::exec(): its modal window path can become a
+    // pointer grab for an XCB AppImage running through XWayland.
+    dlg.setWindowModality(Qt::NonModal);
     dlg.setFocusPolicy(Qt::StrongFocus);
     const bool compactSettings = m_mobileLayout || width() <= kMobileBreakpoint;
     dlg.setMinimumSize(compactSettings ? QSize(320, 420) : QSize(620, 560));
@@ -3406,7 +3420,14 @@ void MainWindow::openSettings() {
     dlg.setFocus(Qt::OtherFocusReason);
     QTimer::singleShot(0, &dlg,
                        [&dlg] { dlg.setFocus(Qt::OtherFocusReason); });
-    if (dlg.exec() == QDialog::Accepted) {
+    QEventLoop settingsLoop;
+    connect(&dlg, &QDialog::finished, &settingsLoop, &QEventLoop::quit);
+    dlg.show();
+    dlg.raise();
+    dlg.activateWindow();
+    settingsLoop.exec();
+
+    if (dlg.result() == QDialog::Accepted) {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
@@ -3767,6 +3788,14 @@ void MainWindow::maybeShowWhatsNew(bool hadPersistentSettings) {
 }
 
 void MainWindow::checkForUpdates() {
+    startUpdateCheck(false);
+}
+
+void MainWindow::checkForUpdatesOnStartup() {
+    startUpdateCheck(true);
+}
+
+void MainWindow::startUpdateCheck(bool atStartup) {
     if (!m_updater)
         m_updater = new Updater(this);
     const UpdateChannel::Channel channel = UpdateChannel::fromKey(
@@ -3774,7 +3803,8 @@ void MainWindow::checkForUpdates() {
             .value(QString::fromLatin1(UpdateChannel::SettingKey),
                    QStringLiteral("stable"))
             .toString());
-    m_updater->check(channel);
+    m_updater->check(channel, atStartup ? Updater::CheckMode::Startup
+                                        : Updater::CheckMode::Manual);
 }
 
 void MainWindow::chooseVault() {
@@ -3990,6 +4020,15 @@ void MainWindow::openVaultSwitcher() {
 }
 
 void MainWindow::openVault(const QString &path) {
+    // Vault-specific controls in a modeless Settings window describe the vault
+    // that was open when the window was created. Cancel that transaction before
+    // switching so stale choices cannot be written into the new vault.
+    if (auto *settings =
+            findChild<QDialog *>(QStringLiteral("settingsDialog"),
+                                 Qt::FindDirectChildrenOnly);
+        settings && settings->isVisible())
+        settings->reject();
+
     saveCurrent();
     if (m_vault && m_graphPage)
         VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),
@@ -5803,6 +5842,19 @@ void MainWindow::newFolderIn(const QString &dir) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    // Settings runs in a small non-modal event loop so its existing live
+    // preview transaction can stay stack-scoped. Close it first, let that loop
+    // restore or apply the preview, then retry closing this window.
+    if (auto *settings =
+            findChild<QDialog *>(QStringLiteral("settingsDialog"),
+                                 Qt::FindDirectChildrenOnly);
+        settings && settings->isVisible()) {
+        settings->reject();
+        event->ignore();
+        QTimer::singleShot(0, this, &QWidget::close);
+        return;
+    }
+
     saveCurrent();
     if (m_vault && m_graphPage)
         VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),

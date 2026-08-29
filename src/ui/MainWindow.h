@@ -50,6 +50,7 @@ public:
     QString standalonePath() const {
         return m_standaloneMode ? m_currentPath : QString();
     }
+    void checkForUpdatesOnStartup();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -78,6 +79,7 @@ private:
     void showWhatsNew();          // bundled notes for the running release
     void maybeShowWhatsNew(bool hadPersistentSettings);
     void checkForUpdates();       // query the selected GitHub release channel
+    void startUpdateCheck(bool atStartup);
     void newVault();              // create a fresh vault folder, then open it
     void deleteCurrentNote();     // delete the open note (with confirmation)
     void changeFontSize(int delta); // +1 / -1 step; 0 resets to the default

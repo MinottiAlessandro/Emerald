@@ -8,6 +8,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFileDevice>
@@ -26,6 +27,7 @@
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUrl>
 #include <memory>
 
@@ -35,6 +37,7 @@ constexpr char kStableReleaseApi[] =
     "https://api.github.com/repos/MinottiAlessandro/Emerald/releases/latest";
 constexpr char kDevelopmentReleaseApi[] =
     "https://api.github.com/repos/MinottiAlessandro/Emerald/releases?per_page=100";
+constexpr int kReleaseCheckTimeoutMs = 15000;
 
 // GitHub's API rejects requests without a User-Agent; the asset URLs 302 to a
 // CDN, so every request opts into following same-or-safer redirects.
@@ -69,6 +72,20 @@ bool isTrustedReleaseUrl(const QUrl &url) {
                               Qt::CaseInsensitive) == 0 &&
            url.path().startsWith(
                QLatin1String("/MinottiAlessandro/Emerald/releases/"));
+}
+
+bool startupNotificationBlocked(QWidget *window) {
+    if (QApplication::activeModalWidget())
+        return true;
+    if (!window)
+        return false;
+    const auto dialogs =
+        window->findChildren<QDialog *>(QString(), Qt::FindDirectChildrenOnly);
+    for (QDialog *dialog : dialogs) {
+        if (dialog->isVisible())
+            return true;
+    }
+    return false;
 }
 
 // The release-asset filename this build should download. Mirrors the
@@ -194,7 +211,7 @@ exit 0
 Updater::Updater(QWidget *window)
     : QObject(window), m_window(window), m_net(new QNetworkAccessManager(this)) {}
 
-void Updater::check(UpdateChannel::Channel channel) {
+void Updater::check(UpdateChannel::Channel channel, CheckMode mode) {
     if (m_busy)
         return;
     m_busy = true;
@@ -204,22 +221,26 @@ void Updater::check(UpdateChannel::Channel channel) {
                           : kStableReleaseApi;
     QNetworkRequest req((QUrl(QString::fromLatin1(api))));
     req.setRawHeader("Accept", "application/vnd.github+json");
+    req.setTransferTimeout(kReleaseCheckTimeoutMs);
     prepare(req);
 
     QNetworkReply *reply = m_net->get(req);
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, channel] { onReleaseReply(reply, channel); });
+            [this, reply, channel, mode] {
+                onReleaseReply(reply, channel, mode);
+            });
 }
 
 void Updater::onReleaseReply(QNetworkReply *reply,
-                             UpdateChannel::Channel channel) {
+                             UpdateChannel::Channel channel, CheckMode mode) {
     reply->deleteLater();
-    m_busy = false;
 
     if (reply->error() != QNetworkReply::NoError) {
-        QMessageBox::warning(m_window, tr("Check for Updates"),
-                             tr("Couldn't check for updates:\n%1")
-                                 .arg(reply->errorString()));
+        m_busy = false;
+        if (mode == CheckMode::Manual)
+            QMessageBox::warning(m_window, tr("Check for Updates"),
+                                 tr("Couldn't check for updates:\n%1")
+                                     .arg(reply->errorString()));
         return;
     }
 
@@ -227,33 +248,49 @@ void Updater::onReleaseReply(QNetworkReply *reply,
     const QJsonDocument document =
         QJsonDocument::fromJson(reply->readAll(), &parseError);
     if (parseError.error != QJsonParseError::NoError) {
-        QMessageBox::warning(m_window, tr("Check for Updates"),
-                             tr("GitHub returned invalid release information."));
+        m_busy = false;
+        if (mode == CheckMode::Manual)
+            QMessageBox::warning(
+                m_window, tr("Check for Updates"),
+                tr("GitHub returned invalid release information."));
         return;
     }
 
     const QJsonObject obj = UpdateChannel::selectRelease(document, channel);
     if (obj.isEmpty()) {
-        QMessageBox::warning(
-            m_window, tr("Check for Updates"),
-            tr("No published Emerald releases were found for the selected "
-               "release channel."));
+        m_busy = false;
+        if (mode == CheckMode::Manual)
+            QMessageBox::warning(
+                m_window, tr("Check for Updates"),
+                tr("No published Emerald releases were found for the selected "
+                   "release channel."));
         return;
     }
 
-    const QString tag = obj.value(QStringLiteral("tag_name")).toString();
+    processRelease(obj, channel, mode);
+}
+
+void Updater::processRelease(const QJsonObject &release,
+                             UpdateChannel::Channel channel, CheckMode mode) {
+    const QString tag = release.value(QStringLiteral("tag_name")).toString();
     const QString latest = UpdateChannel::normalizedVersion(tag);
     const QString current =
         UpdateChannel::normalizedVersion(QApplication::applicationVersion());
     if (current.isEmpty()) {
-        QMessageBox::warning(m_window, tr("Check for Updates"),
-                             tr("This build has an invalid version and cannot be "
-                                "updated automatically."));
+        m_busy = false;
+        if (mode == CheckMode::Manual)
+            QMessageBox::warning(
+                m_window, tr("Check for Updates"),
+                tr("This build has an invalid version and cannot be updated "
+                   "automatically."));
         return;
     }
 
     if (latest.isEmpty() ||
         UpdateChannel::compareVersions(latest, current) <= 0) {
+        m_busy = false;
+        if (mode == CheckMode::Startup)
+            return;
         const QString channelName =
             channel == UpdateChannel::Channel::Development
                 ? tr("Development")
@@ -268,12 +305,23 @@ void Updater::onReleaseReply(QNetworkReply *reply,
         return;
     }
 
+    // A startup response can arrive while What's New, Settings, or another
+    // window-owned dialog is open. Keep the result and wait instead of stacking
+    // a second prompt on top of the user's current task.
+    if (mode == CheckMode::Startup && startupNotificationBlocked(m_window)) {
+        QTimer::singleShot(500, this, [this, release, channel, mode] {
+            processRelease(release, channel, mode);
+        });
+        return;
+    }
+    m_busy = false;
+
     // Find the download URL for this platform's asset.
     const QString assetName = platformAssetName();
     QString url;
     QByteArray expectedSha256;
     qint64 expectedSize = -1;
-    const QJsonArray assets = obj.value(QStringLiteral("assets")).toArray();
+    const QJsonArray assets = release.value(QStringLiteral("assets")).toArray();
     for (const QJsonValue &v : assets) {
         const QJsonObject a = v.toObject();
         if (a.value(QStringLiteral("name")).toString() == assetName) {
@@ -287,7 +335,8 @@ void Updater::onReleaseReply(QNetworkReply *reply,
 
     // No matching asset (unusual): fall back to the release page in the browser.
     if (url.isEmpty()) {
-        const QString page = obj.value(QStringLiteral("html_url")).toString();
+        const QString page =
+            release.value(QStringLiteral("html_url")).toString();
         if (QMessageBox::information(
                 m_window, tr("Update Available"),
                 tr("Emerald v%1 is available — you have v%2.\n\n"
@@ -301,13 +350,28 @@ void Updater::onReleaseReply(QNetworkReply *reply,
     const QUrl assetUrl(url);
     if (!isTrustedReleaseUrl(assetUrl) || expectedSha256.isEmpty() ||
         expectedSize <= 0) {
-        QMessageBox::warning(m_window, tr("Update Verification Unavailable"),
-                             tr("Emerald v%1 does not provide valid package verification "
-                                "metadata. For your safety, it will not be downloaded or "
-                                "installed automatically.")
-                                 .arg(latest));
-        const QUrl page(obj.value(QStringLiteral("html_url")).toString());
-        if (isTrustedReleaseUrl(page))
+        const QUrl page(
+            release.value(QStringLiteral("html_url")).toString());
+        QMessageBox warning(
+            QMessageBox::Warning, tr("Update Verification Unavailable"),
+            tr("Emerald v%1 does not provide valid package verification "
+               "metadata. For your safety, it will not be downloaded or "
+               "installed automatically.")
+                .arg(latest),
+            QMessageBox::NoButton, m_window);
+        warning.setObjectName(QStringLiteral("updateVerificationDialog"));
+        warning.setProperty("emeraldDialog", true);
+        QPushButton *openPage = nullptr;
+        if (isTrustedReleaseUrl(page)) {
+            warning.setInformativeText(tr("You can open the release page and "
+                                          "download it manually."));
+            openPage = warning.addButton(QMessageBox::Open);
+            warning.addButton(QMessageBox::Cancel);
+        } else {
+            warning.addButton(QMessageBox::Ok);
+        }
+        warning.exec();
+        if (openPage && warning.clickedButton() == openPage)
             QDesktopServices::openUrl(page);
         return;
     }
@@ -319,7 +383,8 @@ void Updater::onReleaseReply(QNetworkReply *reply,
                     QMessageBox::NoButton, m_window);
     box.setObjectName(QStringLiteral("updateDialog"));
     box.setProperty("emeraldDialog", true);
-    QString notes = obj.value(QStringLiteral("body")).toString().trimmed();
+    QString notes =
+        release.value(QStringLiteral("body")).toString().trimmed();
     if (notes.size() > 1200)
         notes = notes.left(1200) + QStringLiteral("…");
     if (!notes.isEmpty())
