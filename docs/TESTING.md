@@ -187,6 +187,10 @@ move the caret back onto the line, confirm the raw markers reappear.
 
 ## 12. Editor appearance & settings
 - [ ] **Settings** (`Ctrl+,`) opens the dialog. ★
+- [ ] Move the pointer outside Settings and every other Emerald dialog tested
+      here (confirmations, name prompts, gallery, spelling/theme editors,
+      file/color pickers, What's New, and update dialogs). The pointer remains
+      free and no dialog creates a desktop-level confinement/grab.
 - [ ] Settings dialog shows shortcut labels next to actions where applicable. ★
 - [ ] Change editor **font family + size** — applies and persists across restart.
 - [ ] **Default font** is a system monospace face on a clean profile (no saved font override). ★
@@ -277,6 +281,8 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] An update is opened/installed only after its SHA-256 digest and byte size
       match GitHub's release metadata; missing or mismatched metadata/file data
       produces a verification error and removes the download.
+- [ ] During an application update, the progress bar contains no overlaid text;
+      the numeric percentage remains readable in a separate label beside it.
 - [ ] On Linux, **Install & Restart** replaces a running AppImage in place. When
       running a native/development binary, it installs the verified AppImage to
       `~/.local/bin/emerald` instead of leaving it in Downloads. Both paths

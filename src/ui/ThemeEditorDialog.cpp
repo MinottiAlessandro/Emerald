@@ -1,6 +1,7 @@
 #include "ThemeEditorDialog.h"
 
-#include <QColorDialog>
+#include "DialogUtils.h"
+
 #include <QDialogButtonBox>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -312,7 +313,7 @@ ThemeEditorDialog::ThemeEditorDialog(const QString &basedOnTheme,
             updateColorControls();
     });
     connect(pickButton, &QPushButton::clicked, this, [this] {
-        const QColor selected = QColorDialog::getColor(
+        const QColor selected = DialogUtils::getColor(
             m_theme.colors.value(m_selectedRole), this, tr("Choose color"));
         if (selected.isValid())
             setRoleColor(selected);

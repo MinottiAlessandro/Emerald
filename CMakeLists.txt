@@ -168,6 +168,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/core/MarkdownImage.cpp
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
+  src/ui/DialogUtils.h
   src/ui/AppTheme.h
   src/ui/AppTheme.cpp
   src/ui/ThemeEditorDialog.h
@@ -198,6 +199,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/SpellLanguageDialog.cpp
   src/ui/Updater.h
   src/ui/Updater.cpp
+  src/ui/UpdateProgressDialog.h
   resources/resources.qrc
   ${EMERALD_PLATFORM_SOURCES}
 )
@@ -513,6 +515,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/MarkdownImage.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
+    src/ui/DialogUtils.h
     src/ui/AppTheme.h
     src/ui/AppTheme.cpp
     src/ui/ThemeEditorDialog.h
@@ -543,6 +546,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/ui/SpellLanguageDialog.cpp
     src/ui/Updater.h
     src/ui/Updater.cpp
+    src/ui/UpdateProgressDialog.h
     resources/resources.qrc
   )
   target_include_directories(emerald_main_window_graph_tests PRIVATE src)

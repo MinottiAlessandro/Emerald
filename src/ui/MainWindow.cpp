@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "AppTheme.h"
+#include "DialogUtils.h"
 #include "GraphPage.h"
 #include "MarkdownEditor.h"
 #include "Mascot.h"
@@ -32,7 +33,6 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
-#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -1266,7 +1266,7 @@ bool runFolderNameDialog(QWidget *parent, QString *out) {
     dlg.adjustSize();
     dlg.setFixedSize(dlg.sizeHint());
     input->setFocus();
-    if (dlg.exec() != QDialog::Accepted)
+    if (DialogUtils::run(dlg) != QDialog::Accepted)
         return false;
     *out = input->text().trimmed();
     return true;
@@ -1292,7 +1292,7 @@ bool runTrashDialog(QWidget *parent, const QString &question) {
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     dlg.adjustSize();
     dlg.setFixedSize(dlg.sizeHint());
-    return dlg.exec() == QDialog::Accepted;
+    return DialogUtils::run(dlg) == QDialog::Accepted;
 }
 
 bool runVaultNameDialog(QWidget *parent, QString *out) {
@@ -1336,7 +1336,7 @@ bool runVaultNameDialog(QWidget *parent, QString *out) {
     dlg.adjustSize();
     dlg.setFixedSize(dlg.sizeHint());
     input->setFocus();
-    if (dlg.exec() != QDialog::Accepted)
+    if (DialogUtils::run(dlg) != QDialog::Accepted)
         return false;
     *out = input->text().trimmed();
     return true;
@@ -2166,7 +2166,7 @@ bool MainWindow::clearAllMascots() {
     QWidget *messageParent = QApplication::activeModalWidget();
     if (!messageParent)
         messageParent = this;
-    const QMessageBox::StandardButton answer = QMessageBox::question(
+    const QMessageBox::StandardButton answer = DialogUtils::question(
         messageParent, tr("Clear all mascots"),
         tr("Remove every mascot from this vault? Automatic mascot generation "
            "will also be turned off. This updates the affected note files."),
@@ -2348,7 +2348,7 @@ void MainWindow::openMascotGallery() {
     prepareDialogButtons(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     outer->addWidget(buttons);
-    dlg.exec();
+    DialogUtils::run(dlg);
 }
 
 void MainWindow::buildActions() {
@@ -3121,7 +3121,7 @@ void MainWindow::openSettings() {
                                             &dlg);
                 connect(&manager, &SpellLanguageDialog::languagesChanged, &dlg,
                         refreshSpellLanguages);
-                manager.exec();
+                DialogUtils::run(manager);
                 refreshSpellLanguages();
             });
     updateSpellControlState();
@@ -3368,7 +3368,7 @@ void MainWindow::openSettings() {
             [this, &dlg, themeBox, populateThemes, restoreEditorPreview] {
                 const QString basedOn = themeBox->currentData().toString();
                 ThemeEditorDialog editor(basedOn, &dlg);
-                if (editor.exec() == QDialog::Accepted) {
+                if (DialogUtils::run(editor) == QDialog::Accepted) {
                     const AppTheme::CustomTheme theme = editor.theme();
                     AppTheme::saveCustomTheme(theme);
                     populateThemes(theme.key);
@@ -3382,7 +3382,7 @@ void MainWindow::openSettings() {
                 if (!AppTheme::isCustom(selected))
                     return;
                 const QString name = AppTheme::displayName(selected);
-                const QMessageBox::StandardButton answer = QMessageBox::question(
+                const QMessageBox::StandardButton answer = DialogUtils::question(
                     themeBox, tr("Delete custom theme"),
                     tr("Delete the custom theme “%1”? This cannot be undone.")
                         .arg(name),
@@ -3420,14 +3420,7 @@ void MainWindow::openSettings() {
     dlg.setFocus(Qt::OtherFocusReason);
     QTimer::singleShot(0, &dlg,
                        [&dlg] { dlg.setFocus(Qt::OtherFocusReason); });
-    QEventLoop settingsLoop;
-    connect(&dlg, &QDialog::finished, &settingsLoop, &QEventLoop::quit);
-    dlg.show();
-    dlg.raise();
-    dlg.activateWindow();
-    settingsLoop.exec();
-
-    if (dlg.result() == QDialog::Accepted) {
+    if (DialogUtils::run(dlg) == QDialog::Accepted) {
         QFont f = fontBox->currentFont();
         f.setPointSize(sizeBox->value());
         m_editor->applyFont(f);
@@ -3559,7 +3552,7 @@ void MainWindow::toggleSidebar() {
 }
 
 void MainWindow::newVault() {
-    const QString parent = QFileDialog::getExistingDirectory(
+    const QString parent = DialogUtils::getExistingDirectory(
         this, tr("Choose where to create the vault"), vaultStartDir(),
         QFileDialog::ShowDirsOnly | QFileDialog::DontUseNativeDialog);
     if (parent.isEmpty())
@@ -3707,7 +3700,7 @@ void MainWindow::showWhatsNew() {
     dlg->setProperty("emeraldDialog", true);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setWindowTitle(tr("What's New in Emerald %1").arg(version));
-    dlg->setWindowModality(Qt::WindowModal);
+    dlg->setWindowModality(Qt::NonModal);
     dlg->setSizeGripEnabled(true);
 
     const bool compact = m_mobileLayout || width() <= kMobileBreakpoint;
@@ -3808,7 +3801,7 @@ void MainWindow::startUpdateCheck(bool atStartup) {
 }
 
 void MainWindow::chooseVault() {
-    const QString dir = QFileDialog::getExistingDirectory(
+    const QString dir = DialogUtils::getExistingDirectory(
         this, tr("Open Vault"), vaultStartDir(),
         QFileDialog::ShowDirsOnly | QFileDialog::DontUseNativeDialog);
     if (!dir.isEmpty())
@@ -3819,7 +3812,7 @@ void MainWindow::chooseStandaloneFile() {
     const QString start = m_currentPath.isEmpty()
                               ? vaultStartDir()
                               : QFileInfo(m_currentPath).absolutePath();
-    const QString path = QFileDialog::getOpenFileName(
+    const QString path = DialogUtils::getOpenFileName(
         this, tr("Open Markdown File"), start,
         tr("Markdown Files (*.md *.markdown)"), nullptr,
         QFileDialog::DontUseNativeDialog);
@@ -3925,7 +3918,7 @@ void MainWindow::integrateLinuxDesktop() {
                3500);
         return;
     }
-    if (QMessageBox::question(
+    if (DialogUtils::question(
             this, tr("Integrate Emerald"),
             tr("Add this AppImage to your application menu and make Emerald "
                "available in Open With for Markdown files?\n\nIf the AppImage "
@@ -4021,13 +4014,19 @@ void MainWindow::openVaultSwitcher() {
 
 void MainWindow::openVault(const QString &path) {
     // Vault-specific controls in a modeless Settings window describe the vault
-    // that was open when the window was created. Cancel that transaction before
-    // switching so stale choices cannot be written into the new vault.
+    // that was open when the window was created. Unwind its deepest open child,
+    // then Settings itself, before switching so its stack-scoped transaction
+    // finishes against the old vault.
     if (auto *settings =
             findChild<QDialog *>(QStringLiteral("settingsDialog"),
                                  Qt::FindDirectChildrenOnly);
-        settings && settings->isVisible())
-        settings->reject();
+        settings) {
+        if (QDialog *dialog = DialogUtils::deepestVisibleDialog(settings)) {
+            dialog->reject();
+            QTimer::singleShot(0, this, [this, path] { openVault(path); });
+            return;
+        }
+    }
 
     saveCurrent();
     if (m_vault && m_graphPage)
@@ -5150,7 +5149,7 @@ void MainWindow::insertImage() {
     patterns.sort(Qt::CaseInsensitive);
     const QString filter =
         tr("Images (%1);;All Files (*)").arg(patterns.join(QLatin1Char(' ')));
-    const QStringList paths = QFileDialog::getOpenFileNames(
+    const QStringList paths = DialogUtils::getOpenFileNames(
         this, tr("Insert Image"), QFileInfo(m_currentPath).absolutePath(), filter,
         nullptr, QFileDialog::DontUseNativeDialog);
     insertImagesFromFiles(paths);
@@ -5842,14 +5841,11 @@ void MainWindow::newFolderIn(const QString &dir) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
-    // Settings runs in a small non-modal event loop so its existing live
-    // preview transaction can stay stack-scoped. Close it first, let that loop
-    // restore or apply the preview, then retry closing this window.
-    if (auto *settings =
-            findChild<QDialog *>(QStringLiteral("settingsDialog"),
-                                 Qt::FindDirectChildrenOnly);
-        settings && settings->isVisible()) {
-        settings->reject();
+    // Dialog actions keep synchronous, stack-scoped results through small
+    // non-modal event loops. Unwind the deepest visible child first, then retry
+    // closing so no parent window can destroy a dialog whose loop is active.
+    if (QDialog *dialog = DialogUtils::deepestVisibleDialog(this)) {
+        dialog->reject();
         event->ignore();
         QTimer::singleShot(0, this, &QWidget::close);
         return;

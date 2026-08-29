@@ -2,11 +2,13 @@
 #include "core/StandaloneFile.h"
 #include "core/VaultSettings.h"
 #include "ui/AppTheme.h"
+#include "ui/DialogUtils.h"
 #include "ui/GraphPage.h"
 #include "ui/GraphView.h"
 #include "ui/MainWindow.h"
 #include "ui/MarkdownEditor.h"
 #include "ui/SearchPopup.h"
+#include "ui/UpdateProgressDialog.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -26,9 +28,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -76,16 +80,25 @@ bool widgetRendersOpaque(QWidget *widget) {
 }
 
 QDialog *activeTestDialog() {
-  if (auto *modal =
-          qobject_cast<QDialog *>(QApplication::activeModalWidget()))
-    return modal;
-  if (auto *active = qobject_cast<QDialog *>(QApplication::activeWindow()))
-    return active;
-  for (QWidget *widget : QApplication::topLevelWidgets())
-    if (auto *dialog = qobject_cast<QDialog *>(widget);
-        dialog && dialog->isVisible())
-      return dialog;
-  return nullptr;
+  QDialog *best = nullptr;
+  int bestDepth = -1;
+  bool bestIsActive = false;
+  for (QWidget *widget : QApplication::topLevelWidgets()) {
+    auto *dialog = qobject_cast<QDialog *>(widget);
+    if (!dialog || !dialog->isVisible())
+      continue;
+    int depth = 0;
+    for (QObject *ancestor = dialog->parent(); ancestor;
+         ancestor = ancestor->parent())
+      ++depth;
+    const bool isActive = dialog == QApplication::activeWindow();
+    if (depth > bestDepth || (depth == bestDepth && isActive && !bestIsActive)) {
+      best = dialog;
+      bestDepth = depth;
+      bestIsActive = isActive;
+    }
+  }
+  return best;
 }
 
 bool writeFile(const QString &path, const QString &content) {
@@ -1774,6 +1787,9 @@ void testWhatsNewAfterUpdate() {
             return automatic && automatic->isVisible();
           }),
           QStringLiteral("an upgraded installation opens What's New"));
+    check(automatic && !automatic->isModal() &&
+              automatic->windowModality() == Qt::NonModal,
+          QStringLiteral("What's New does not confine desktop pointer input"));
 
     auto *content = automatic
                         ? automatic->findChild<QTextBrowser *>(
@@ -1827,6 +1843,59 @@ void testWhatsNewAfterUpdate() {
   QCoreApplication::setApplicationVersion(originalVersion);
   settings.clear();
 }
+
+void testNonModalDialogsAndUpdateProgress() {
+  QWidget parent;
+  parent.resize(640, 480);
+  parent.show();
+
+  QDialog dialog(&parent);
+  bool plainDialogNonModal = false;
+  QTimer::singleShot(0, [&] {
+    plainDialogNonModal = dialog.isVisible() && !dialog.isModal() &&
+                          dialog.windowModality() == Qt::NonModal;
+    dialog.accept();
+  });
+  check(DialogUtils::run(dialog) == QDialog::Accepted && plainDialogNonModal,
+        QStringLiteral("shared dialog runner preserves synchronous results "
+                       "without modal pointer confinement"));
+
+  bool messageNonModal = false;
+  QTimer::singleShot(0, [&] {
+    auto *box = qobject_cast<QMessageBox *>(activeTestDialog());
+    messageNonModal = box && box->isVisible() && !box->isModal() &&
+                      box->windowModality() == Qt::NonModal;
+    if (box) {
+      if (auto *cancel = box->button(QMessageBox::Cancel))
+        cancel->click();
+      else
+        box->reject();
+    }
+  });
+  const auto answer = DialogUtils::question(
+      &parent, QStringLiteral("Question"), QStringLiteral("Continue?"),
+      QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+  check(messageNonModal && answer == QMessageBox::Cancel,
+        QStringLiteral("message boxes use the non-modal runner and return the "
+                       "clicked standard button"));
+
+  UpdateProgressDialog progress(QStringLiteral("2.2.2-test"), &parent);
+  progress.setPercentage(73);
+  progress.show();
+  QApplication::processEvents();
+  auto *bar = progress.findChild<QProgressBar *>(
+      QStringLiteral("updateProgressBar"));
+  auto *percentage = progress.findChild<QLabel *>(
+      QStringLiteral("updateProgressPercentage"));
+  check(bar && percentage && !bar->isTextVisible() && bar->value() == 73 &&
+            percentage->text() == QStringLiteral("73%") &&
+            !progress.isModal() &&
+            progress.windowModality() == Qt::NonModal,
+        QStringLiteral("update download percentage is a separate label outside "
+                       "the non-modal progress bar"));
+  progress.close();
+  parent.close();
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1855,6 +1924,7 @@ int main(int argc, char **argv) {
   testCustomThemes();
   testStandaloneFileSession();
   testWhatsNewAfterUpdate();
+  testNonModalDialogsAndUpdateProgress();
   if (failures == 0)
     QTextStream(stdout) << "All MainWindow graph tests passed.\n";
   return failures == 0 ? 0 : 1;

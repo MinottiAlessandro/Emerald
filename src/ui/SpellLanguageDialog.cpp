@@ -1,5 +1,7 @@
 #include "SpellLanguageDialog.h"
 
+#include "DialogUtils.h"
+
 #include <QCryptographicHash>
 #include <QDialogButtonBox>
 #include <QFrame>
@@ -325,7 +327,7 @@ void SpellLanguageDialog::removePack(const QString &locale) {
     const SpellLanguage *language = pack(locale);
     if (!language || language->builtIn || m_activeLanguages.contains(locale))
         return;
-    if (QMessageBox::question(
+    if (DialogUtils::question(
             this, tr("Remove language"),
             tr("Remove the downloaded %1 dictionary?").arg(language->name),
             QMessageBox::Yes | QMessageBox::Cancel,

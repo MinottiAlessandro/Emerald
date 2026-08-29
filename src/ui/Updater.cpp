@@ -1,5 +1,7 @@
 #include "Updater.h"
 
+#include "DialogUtils.h"
+#include "UpdateProgressDialog.h"
 #include "core/LinuxUpdate.h"
 #include "core/UpdateChannel.h"
 
@@ -22,7 +24,6 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
-#include <QProgressDialog>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QSysInfo>
@@ -77,15 +78,7 @@ bool isTrustedReleaseUrl(const QUrl &url) {
 bool startupNotificationBlocked(QWidget *window) {
     if (QApplication::activeModalWidget())
         return true;
-    if (!window)
-        return false;
-    const auto dialogs =
-        window->findChildren<QDialog *>(QString(), Qt::FindDirectChildrenOnly);
-    for (QDialog *dialog : dialogs) {
-        if (dialog->isVisible())
-            return true;
-    }
-    return false;
+    return DialogUtils::deepestVisibleDialog(window) != nullptr;
 }
 
 // The release-asset filename this build should download. Mirrors the
@@ -238,7 +231,7 @@ void Updater::onReleaseReply(QNetworkReply *reply,
     if (reply->error() != QNetworkReply::NoError) {
         m_busy = false;
         if (mode == CheckMode::Manual)
-            QMessageBox::warning(m_window, tr("Check for Updates"),
+            DialogUtils::warning(m_window, tr("Check for Updates"),
                                  tr("Couldn't check for updates:\n%1")
                                      .arg(reply->errorString()));
         return;
@@ -250,7 +243,7 @@ void Updater::onReleaseReply(QNetworkReply *reply,
     if (parseError.error != QJsonParseError::NoError) {
         m_busy = false;
         if (mode == CheckMode::Manual)
-            QMessageBox::warning(
+            DialogUtils::warning(
                 m_window, tr("Check for Updates"),
                 tr("GitHub returned invalid release information."));
         return;
@@ -260,7 +253,7 @@ void Updater::onReleaseReply(QNetworkReply *reply,
     if (obj.isEmpty()) {
         m_busy = false;
         if (mode == CheckMode::Manual)
-            QMessageBox::warning(
+            DialogUtils::warning(
                 m_window, tr("Check for Updates"),
                 tr("No published Emerald releases were found for the selected "
                    "release channel."));
@@ -279,7 +272,7 @@ void Updater::processRelease(const QJsonObject &release,
     if (current.isEmpty()) {
         m_busy = false;
         if (mode == CheckMode::Manual)
-            QMessageBox::warning(
+            DialogUtils::warning(
                 m_window, tr("Check for Updates"),
                 tr("This build has an invalid version and cannot be updated "
                    "automatically."));
@@ -301,7 +294,7 @@ void Updater::processRelease(const QJsonObject &release,
                            QMessageBox::Ok, m_window);
         status.setObjectName(QStringLiteral("updateStatusDialog"));
         status.setProperty("emeraldDialog", true);
-        status.exec();
+        DialogUtils::run(status);
         return;
     }
 
@@ -337,7 +330,7 @@ void Updater::processRelease(const QJsonObject &release,
     if (url.isEmpty()) {
         const QString page =
             release.value(QStringLiteral("html_url")).toString();
-        if (QMessageBox::information(
+        if (DialogUtils::information(
                 m_window, tr("Update Available"),
                 tr("Emerald v%1 is available — you have v%2.\n\n"
                    "Open the download page?").arg(latest, current),
@@ -370,7 +363,7 @@ void Updater::processRelease(const QJsonObject &release,
         } else {
             warning.addButton(QMessageBox::Ok);
         }
-        warning.exec();
+        DialogUtils::run(warning);
         if (openPage && warning.clickedButton() == openPage)
             QDesktopServices::openUrl(page);
         return;
@@ -399,7 +392,7 @@ void Updater::processRelease(const QJsonObject &release,
 #endif
     box.addButton(tr("Later"), QMessageBox::RejectRole);
     box.setDefaultButton(go);
-    box.exec();
+    DialogUtils::run(box);
     if (box.clickedButton() == go)
         startDownload(url, assetName, latest, expectedSha256, expectedSize);
 }
@@ -418,7 +411,7 @@ void Updater::startDownload(const QString &url, const QString &assetName,
     stagePath = linuxUpdateStagePath();
     if (stagePath.isEmpty()) {
         m_busy = false;
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Download Failed"),
             tr("Couldn't create a private directory to stage the Linux update."));
         return;
@@ -439,21 +432,13 @@ void Updater::startDownload(const QString &url, const QString &assetName,
     if (!out->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         delete out;
         m_busy = false;
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Download Failed"),
             tr("Couldn't save the download to:\n%1").arg(savePath));
         return;
     }
 
-    auto *progress = new QProgressDialog(
-        tr("Downloading Emerald v%1…").arg(version), tr("Cancel"), 0, 100, m_window);
-    progress->setObjectName(QStringLiteral("updateProgressDialog"));
-    progress->setProperty("emeraldDialog", true);
-    progress->setWindowModality(Qt::WindowModal);
-    progress->setMinimumDuration(0);
-    progress->setAutoClose(false);
-    progress->setAutoReset(false);
-    progress->setValue(0);
+    auto *progress = new UpdateProgressDialog(version, m_window);
 
     QNetworkRequest req((QUrl(url)));
     prepare(req);
@@ -480,12 +465,17 @@ void Updater::startDownload(const QString &url, const QString &assetName,
     };
 
     connect(reply, &QNetworkReply::downloadProgress, progress,
-            [progress](qint64 received, qint64 total) {
-                if (total > 0)
-                    progress->setValue(int(received * 100 / total));
+            [progress, expectedSize](qint64 received, qint64 total) {
+                const qint64 denominator = total > 0 ? total : expectedSize;
+                if (denominator > 0)
+                    progress->setPercentage(
+                        int(received * 100 / denominator));
             });
     connect(reply, &QNetworkReply::readyRead, out, consume);
-    connect(progress, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
+    connect(progress, &QDialog::rejected, reply, &QNetworkReply::abort);
+    progress->show();
+    progress->raise();
+    progress->activateWindow();
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, progress, out, writeFailed, sizeExceeded, hash, consume,
              savePath, stagePath, version, expectedSha256, expectedSize] {
@@ -507,14 +497,14 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                 if (reply->error() != QNetworkReply::NoError) {
                     discardDownload();
                     if (*sizeExceeded) {
-                        QMessageBox::critical(
+                        DialogUtils::critical(
                             m_window, tr("Update Verification Failed"),
                             tr("The update exceeded the size published by GitHub. "
                                "The partial file was deleted and will not be "
                                "opened or installed."));
                     } else if (reply->error() !=
                                QNetworkReply::OperationCanceledError) {
-                        QMessageBox::warning(m_window, tr("Download Failed"),
+                        DialogUtils::warning(m_window, tr("Download Failed"),
                                              reply->errorString());
                     }
                     return;
@@ -522,7 +512,7 @@ void Updater::startDownload(const QString &url, const QString &assetName,
 
                 if (*writeFailed) {
                     discardDownload();
-                    QMessageBox::warning(
+                    DialogUtils::warning(
                         m_window, tr("Download Failed"),
                         tr("Couldn't save the download to:\n%1").arg(savePath));
                     return;
@@ -532,7 +522,7 @@ void Updater::startDownload(const QString &url, const QString &assetName,
                                       QFileInfo(savePath).size() == expectedSize;
                 if (!verified) {
                     discardDownload();
-                    QMessageBox::critical(
+                    DialogUtils::critical(
                         m_window, tr("Update Verification Failed"),
                         tr("The downloaded update did not match the SHA-256 "
                            "digest and size published by GitHub. The file was "
@@ -550,7 +540,7 @@ bool Updater::installLinuxUpdate(const QString &imagePath,
     QString target =
         LinuxUpdate::installTarget(appImagePath, QDir::homePath());
     if (target.isEmpty()) {
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Failed"),
             tr("Emerald couldn't determine a safe per-user installation path."));
         return false;
@@ -567,7 +557,7 @@ bool Updater::installLinuxUpdate(const QString &imagePath,
         target = LinuxUpdate::installTarget({}, QDir::homePath());
 
     if (target.isEmpty() || !canPrepareTarget(target)) {
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Failed"),
             tr("Emerald can't write to the installation folder:\n%1")
                 .arg(QFileInfo(target).absolutePath()));
@@ -585,7 +575,7 @@ bool Updater::installLinuxUpdate(const QString &imagePath,
         script.write(installer) != installer.size()) {
         script.close();
         QFile::remove(scriptPath);
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Failed"),
             tr("Couldn't stage the Linux installer helper.\n\nThe verified "
                "AppImage remains at:\n%1")
@@ -604,7 +594,7 @@ bool Updater::installLinuxUpdate(const QString &imagePath,
                            version,
                            logPath};
     if (!QProcess::startDetached(QStringLiteral("/bin/sh"), args)) {
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Failed"),
             tr("Couldn't start the Linux installer helper.\n\nThe verified "
                "AppImage remains at:\n%1")
@@ -627,7 +617,7 @@ bool Updater::installMacUpdate(const QString &dmgPath, const QString &version) {
 #if defined(Q_OS_MACOS)
     const QString appBundle = currentMacAppBundlePath();
     if (appBundle.isEmpty()) {
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Downloaded"),
             tr("Emerald isn't running from a macOS app bundle, so it can't install "
                "this update automatically.\n\nThe disk image will open now."));
@@ -638,7 +628,7 @@ bool Updater::installMacUpdate(const QString &dmgPath, const QString &version) {
     const QFileInfo appInfo(appBundle);
     const QFileInfo parentInfo(appInfo.absolutePath());
     if (!parentInfo.isWritable()) {
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Downloaded"),
             tr("Emerald can't write to:\n%1\n\nThe disk image will open now so you "
                "can install the update manually.")
@@ -653,7 +643,7 @@ bool Updater::installMacUpdate(const QString &dmgPath, const QString &version) {
 
     QFile script(scriptPath);
     if (!script.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Failed"),
             tr("Couldn't stage the macOS installer helper.\n\nThe disk image will "
                "open now."));
@@ -675,7 +665,7 @@ bool Updater::installMacUpdate(const QString &dmgPath, const QString &version) {
                            version,
                            logPath};
     if (!QProcess::startDetached(QStringLiteral("/bin/sh"), args)) {
-        QMessageBox::warning(
+        DialogUtils::warning(
             m_window, tr("Update Failed"),
             tr("Couldn't start the macOS installer helper.\n\nThe disk image will "
                "open now."));
@@ -706,7 +696,7 @@ void Updater::finishDownload(const QString &savedPath, const QString &version) {
 #endif
     // Hand the verified package to the OS if managed installation is
     // unavailable, or when the platform normally uses an interactive installer.
-    QMessageBox::information(
+    DialogUtils::information(
         m_window, tr("Download Complete"),
         tr("Emerald v%1 was downloaded to:\n%2\n\nIt will open now — follow the "
            "usual steps for your platform to finish updating.")
