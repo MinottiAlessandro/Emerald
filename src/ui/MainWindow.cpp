@@ -1190,6 +1190,17 @@ void prepareDialogButtons(QDialogButtonBox *buttons) {
     }
 }
 
+void setReadableSettingsNumberWidth(QSpinBox *box,
+                                    const QString &widestText) {
+    if (!box)
+        return;
+    constexpr int kMinimumNumericFieldWidth = 112;
+    constexpr int kHorizontalChrome = 36;
+    box->setMinimumWidth(qMax(
+        kMinimumNumericFieldWidth,
+        box->fontMetrics().horizontalAdvance(widestText) + kHorizontalChrome));
+}
+
 QVBoxLayout *createEmeraldDialogRoot(QDialog *dlg, const QString &title,
                                      const QString &subtitle = QString(),
                                      const QString &objectName =
@@ -3037,26 +3048,33 @@ void MainWindow::openSettings() {
     fontBox->setEditable(false);
     fontBox->setCurrentFont(m_editor->font());
     auto *sizeBox = new QSpinBox(&dlg);
+    sizeBox->setObjectName(QStringLiteral("editorFontSize"));
     sizeBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     sizeBox->setRange(8, 32);
     sizeBox->setValue(m_editor->font().pointSize());
+    setReadableSettingsNumberWidth(sizeBox, QStringLiteral("32"));
     auto *widthBox = new QSpinBox(&dlg);
+    widthBox->setObjectName(QStringLiteral("editorColumnWidth"));
     widthBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     widthBox->setRange(500, 1600);
     widthBox->setSingleStep(20);
     widthBox->setSuffix(tr(" px"));
     widthBox->setValue(m_editorColumnWidth);
-    widthBox->setObjectName(QStringLiteral("editorColumnWidth"));
+    setReadableSettingsNumberWidth(
+        widthBox, QStringLiteral("1600") + widthBox->suffix());
     auto *fullWidthBox = new QCheckBox(tr("Use all available space"), &dlg);
     fullWidthBox->setObjectName(QStringLiteral("editorFullWidth"));
     fullWidthBox->setChecked(m_editorFullWidth);
     widthBox->setEnabled(!m_editorFullWidth);
     auto *spacingBox = new QSpinBox(&dlg);
+    spacingBox->setObjectName(QStringLiteral("editorLineSpacing"));
     spacingBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spacingBox->setRange(100, 250);
     spacingBox->setSingleStep(10);
     spacingBox->setSuffix(tr(" %"));
     spacingBox->setValue(s.value(QStringLiteral("lineSpacing"), 100).toInt());
+    setReadableSettingsNumberWidth(
+        spacingBox, QStringLiteral("250") + spacingBox->suffix());
 
     // Spelling is checked incrementally in the Markdown highlighter. English
     // ships with Emerald; Manage languages installs/removes verified optional

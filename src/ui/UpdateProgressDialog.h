@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DialogUtils.h"
+
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFontMetrics>
@@ -59,6 +61,7 @@ public:
             cancel->setAutoDefault(false);
             cancel->setDefault(false);
             cancel->setProperty("dialogRole", QStringLiteral("secondary"));
+            DialogUtils::ensureButtonTextFits(cancel);
         }
         connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
         root->addWidget(buttons);

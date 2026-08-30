@@ -1011,6 +1011,7 @@ void testFullWidthEditorPreference() {
           QStringLiteral("saved pixel width constrains the editor by default"));
 
     bool controlsSeen = false;
+    bool numericFieldsReadable = false;
     bool fullWidthPreviewSeen = false;
     bool settingsWheelScrollSeen = false;
     QTimer::singleShot(0, [&] {
@@ -1021,6 +1022,12 @@ void testFullWidthEditorPreference() {
       auto *pixelWidth = dialog ? dialog->findChild<QSpinBox *>(
                                       QStringLiteral("editorColumnWidth"))
                                 : nullptr;
+      auto *fontSize = dialog ? dialog->findChild<QSpinBox *>(
+                                    QStringLiteral("editorFontSize"))
+                              : nullptr;
+      auto *lineSpacing = dialog ? dialog->findChild<QSpinBox *>(
+                                       QStringLiteral("editorLineSpacing"))
+                                 : nullptr;
       auto *settingsScroll =
           dialog ? dialog->findChild<QScrollArea *>() : nullptr;
       auto *fileOrder = dialog ? dialog->findChild<QComboBox *>(
@@ -1028,6 +1035,10 @@ void testFullWidthEditorPreference() {
                                : nullptr;
       controlsSeen = fullWidth && pixelWidth && !fullWidth->isChecked() &&
                      pixelWidth->isEnabled() && pixelWidth->value() == 520;
+      numericFieldsReadable =
+          fontSize && pixelWidth && lineSpacing &&
+          fontSize->minimumWidth() >= 112 && pixelWidth->minimumWidth() >= 112 &&
+          lineSpacing->minimumWidth() >= 112;
       if (pixelWidth && fileOrder && settingsScroll) {
         QScrollBar *bar = settingsScroll->verticalScrollBar();
         const int valueBefore = pixelWidth->value();
@@ -1059,6 +1070,9 @@ void testFullWidthEditorPreference() {
 
     check(controlsSeen,
           QStringLiteral("Settings exposes Full width beside the pixel width"));
+    check(numericFieldsReadable,
+          QStringLiteral("Settings numeric editor controls have room for their "
+                         "largest displayed values"));
     check(fullWidthPreviewSeen,
           QStringLiteral("Full width disables the pixel limit and expands the "
                          "editor immediately"));
@@ -1878,6 +1892,23 @@ void testNonModalDialogsAndUpdateProgress() {
   check(messageNonModal && answer == QMessageBox::Cancel,
         QStringLiteral("message boxes use the non-modal runner and return the "
                        "clicked standard button"));
+
+  QMessageBox updateBox(QMessageBox::Information,
+                        QStringLiteral("Update Available"),
+                        QStringLiteral("A new build is ready."),
+                        QMessageBox::NoButton, &parent);
+  auto *install = updateBox.addButton(QStringLiteral("Install && Restart"),
+                                      QMessageBox::AcceptRole);
+  bool updaterButtonFits = false;
+  QTimer::singleShot(0, [&] {
+    const int labelWidth = install->fontMetrics().horizontalAdvance(
+        QStringLiteral("Install & Restart"));
+    updaterButtonFits = install->width() >= labelWidth + 36;
+    updateBox.reject();
+  });
+  DialogUtils::run(updateBox);
+  check(updaterButtonFits,
+        QStringLiteral("updater actions are wide enough for their full labels"));
 
   UpdateProgressDialog progress(QStringLiteral("2.2.2-test"), &parent);
   progress.setPercentage(73);

@@ -5,6 +5,7 @@
 #include <QEventLoop>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QPushButton>
 
 // QDialog::exec() marks a window modal before entering its nested event loop.
 // With an XCB AppImage running through XWayland that modal path can become a
@@ -12,6 +13,45 @@
 // actions rely on, but show a genuinely non-modal window so the pointer remains
 // free to leave every dialog.
 namespace DialogUtils {
+
+inline QString visibleButtonText(const QString &text) {
+    QString visible;
+    visible.reserve(text.size());
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        if (text.at(i) != QLatin1Char('&')) {
+            visible.append(text.at(i));
+            continue;
+        }
+        if (i + 1 < text.size() && text.at(i + 1) == QLatin1Char('&')) {
+            visible.append(QLatin1Char('&'));
+            ++i;
+        }
+    }
+    return visible;
+}
+
+// QMessageBox can constrain its buttons to the theme's fixed minimum width.
+// Size each one from the actual, translated label so actions such as
+// "Install & Restart" never get clipped.
+inline void ensureButtonTextFits(QPushButton *button) {
+    if (!button)
+        return;
+    constexpr int kMinimumButtonWidth = 96;
+    constexpr int kHorizontalChrome = 36;
+    int contentWidth = button->fontMetrics().horizontalAdvance(
+        visibleButtonText(button->text()));
+    if (!button->icon().isNull())
+        contentWidth += button->iconSize().width() + 8;
+    button->setMinimumWidth(
+        qMax(button->minimumWidth(),
+             qMax(kMinimumButtonWidth, contentWidth + kHorizontalChrome)));
+}
+
+inline void ensureMessageBoxButtonsFit(QMessageBox &box) {
+    const auto buttons = box.findChildren<QPushButton *>();
+    for (QPushButton *button : buttons)
+        ensureButtonTextFits(button);
+}
 
 inline QDialog *deepestVisibleDialog(QWidget *root) {
     if (!root)
@@ -44,6 +84,9 @@ inline QDialog *deepestVisibleDialog(QWidget *root) {
 inline int run(QDialog &dialog) {
     dialog.setModal(false);
     dialog.setWindowModality(Qt::NonModal);
+
+    if (auto *messageBox = qobject_cast<QMessageBox *>(&dialog))
+        ensureMessageBoxButtonsFit(*messageBox);
 
     QEventLoop loop;
     QObject::connect(&dialog, &QDialog::finished, &loop, &QEventLoop::quit);
