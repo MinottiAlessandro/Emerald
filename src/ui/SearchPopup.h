@@ -2,6 +2,7 @@
 
 #include <QFrame>
 #include <QList>
+#include <QPointer>
 #include <QStringList>
 
 class QLineEdit;
@@ -24,6 +25,12 @@ public:
         int length = 0;
     };
 
+    struct HeadingItem {
+        QString text;
+        int level = 0;
+        int position = -1;
+    };
+
     SearchPopup(const SearchIndex *index, QWidget *parent);
 
     // titlesOnly = a quick "go to note" picker that matches note titles only.
@@ -41,11 +48,16 @@ public:
     // exact [[link]] occurrence in its source note.
     void showBrokenLinks(const QList<BrokenLinkItem> &items);
 
+    // A filterable outline of the current note. Selecting a row asks the
+    // editor to reveal that exact heading without adding navigation history.
+    void showHeadings(const QList<HeadingItem> &items);
+
 signals:
     void openRequested(const QString &path, const QString &query);
     void openVaultRequested(const QString &path);
     void templateRequested(const QString &path);
     void brokenLinkRequested(const QString &path, int position, int length);
+    void headingRequested(int position);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -68,7 +80,10 @@ private:
     bool m_vaultMode = false;     // listing vault folders instead of notes
     bool m_templateMode = false;  // listing template files instead of notes
     bool m_brokenLinkMode = false; // listing broken wiki-link occurrences
+    bool m_headingMode = false; // listing headings in the current note
     QStringList m_vaultDirs;      // candidate vault folder paths (full)
     QStringList m_templateFiles;  // candidate template file paths (full)
     QList<BrokenLinkItem> m_brokenLinkItems;
+    QList<HeadingItem> m_headingItems;
+    QPointer<QWidget> m_previousFocus;
 };

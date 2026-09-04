@@ -2,6 +2,7 @@
 
 #include "core/SearchIndex.h"
 
+#include <QApplication>
 #include <QFileInfo>
 #include <QHideEvent>
 #include <QHBoxLayout>
@@ -9,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <utility>
 
@@ -76,9 +78,12 @@ void SearchPopup::setModeTitle(const QString &title) {
 }
 
 void SearchPopup::showCentered(bool titlesOnly) {
+    if (!isVisible())
+        m_previousFocus = QApplication::focusWidget();
     m_vaultMode = false;
     m_templateMode = false;
     m_brokenLinkMode = false;
+    m_headingMode = false;
     m_titlesOnly = titlesOnly;
     setModeTitle(titlesOnly ? tr("Go to note") : tr("Search vault"));
     m_input->setPlaceholderText(titlesOnly ? tr("Go to note…")
@@ -93,9 +98,12 @@ void SearchPopup::showCentered(bool titlesOnly) {
 }
 
 void SearchPopup::showVaults(const QStringList &dirs) {
+    if (!isVisible())
+        m_previousFocus = QApplication::focusWidget();
     m_vaultMode = true;
     m_templateMode = false;
     m_brokenLinkMode = false;
+    m_headingMode = false;
     setModeTitle(tr("Switch vault"));
     m_vaultDirs = dirs;
     m_input->setPlaceholderText(tr("Switch vault…"));
@@ -108,9 +116,12 @@ void SearchPopup::showVaults(const QStringList &dirs) {
 }
 
 void SearchPopup::showTemplates(const QStringList &files) {
+    if (!isVisible())
+        m_previousFocus = QApplication::focusWidget();
     m_vaultMode = false;
     m_templateMode = true;
     m_brokenLinkMode = false;
+    m_headingMode = false;
     setModeTitle(tr("Insert template"));
     m_templateFiles = files;
     m_input->setPlaceholderText(tr("Insert template…"));
@@ -123,12 +134,34 @@ void SearchPopup::showTemplates(const QStringList &files) {
 }
 
 void SearchPopup::showBrokenLinks(const QList<BrokenLinkItem> &items) {
+    if (!isVisible())
+        m_previousFocus = QApplication::focusWidget();
     m_vaultMode = false;
     m_templateMode = false;
     m_brokenLinkMode = true;
+    m_headingMode = false;
     setModeTitle(tr("Broken links"));
     m_brokenLinkItems = items;
     m_input->setPlaceholderText(tr("Filter broken links…"));
+    m_input->clear();
+    refresh(QString());
+    reposition();
+    show();
+    raise();
+    m_input->setFocus();
+}
+
+void SearchPopup::showHeadings(const QList<HeadingItem> &items) {
+    if (!isVisible())
+        m_previousFocus = QApplication::focusWidget();
+    m_vaultMode = false;
+    m_templateMode = false;
+    m_brokenLinkMode = false;
+    m_headingMode = true;
+    m_titlesOnly = false;
+    setModeTitle(tr("Note index"));
+    m_headingItems = items;
+    m_input->setPlaceholderText(tr("Filter headings…"));
     m_input->clear();
     refresh(QString());
     reposition();
@@ -150,18 +183,55 @@ void SearchPopup::reposition() {
 void SearchPopup::updateMatchCounter() {
     if (!m_matchCounter)
         return;
-    const bool fullTextSearch = !m_titlesOnly && !m_vaultMode &&
-                                !m_templateMode && !m_brokenLinkMode;
-    m_matchCounter->setVisible(fullTextSearch);
-    if (!fullTextSearch)
+    const bool showCounter =
+        m_headingMode || (!m_titlesOnly && !m_vaultMode &&
+                          !m_templateMode && !m_brokenLinkMode);
+    m_matchCounter->setVisible(showCounter);
+    if (!showCounter)
         return;
-    const int total = m_results ? m_results->count() : 0;
-    const int current = total > 0 ? m_results->currentRow() + 1 : 0;
+    int total = 0;
+    int current = 0;
+    if (m_results) {
+        for (int row = 0; row < m_results->count(); ++row) {
+            const QListWidgetItem *item = m_results->item(row);
+            if (!item || !(item->flags() & Qt::ItemIsEnabled))
+                continue;
+            ++total;
+            if (row == m_results->currentRow())
+                current = total;
+        }
+    }
     m_matchCounter->setText(tr("%1 / %2").arg(current).arg(total));
 }
 
 void SearchPopup::refresh(const QString &text) {
     m_results->clear();
+    if (m_headingMode) {
+        const QString needle = text.trimmed();
+        for (const HeadingItem &heading : std::as_const(m_headingItems)) {
+            if (!needle.isEmpty() &&
+                !heading.text.contains(needle, Qt::CaseInsensitive))
+                continue;
+            const QString indent(qMax(0, heading.level - 1), QChar(0x2003));
+            auto *item = new QListWidgetItem(indent + heading.text, m_results);
+            item->setData(kPositionRole, heading.position);
+        }
+        if (m_headingItems.isEmpty()) {
+            auto *empty = new QListWidgetItem(tr("No headings in this note"),
+                                              m_results);
+            empty->setFlags(Qt::NoItemFlags);
+        } else if (m_results->count() == 0) {
+            auto *empty = new QListWidgetItem(tr("No matching headings"),
+                                              m_results);
+            empty->setFlags(Qt::NoItemFlags);
+        } else {
+            m_results->setCurrentRow(0);
+        }
+        adjustSize();
+        reposition();
+        updateMatchCounter();
+        return;
+    }
     if (m_brokenLinkMode) {
         const QString needle = text.trimmed();
         for (const BrokenLinkItem &entry : std::as_const(m_brokenLinkItems)) {
@@ -246,6 +316,14 @@ void SearchPopup::accept() {
     QListWidgetItem *item = m_results->currentItem();
     if (!item)
         return;
+    if (m_headingMode) {
+        const int position = item->data(kPositionRole).toInt();
+        if (position >= 0) {
+            emit headingRequested(position);
+            hide();
+        }
+        return;
+    }
     const QString path = item->data(kPathRole).toString();
     if (path.isEmpty())
         return;
@@ -312,5 +390,17 @@ void SearchPopup::hideEvent(QHideEvent *event) {
         m_brokenLinkItems.clear();
         m_results->clear();
     }
+    if (m_headingMode) {
+        m_headingMode = false;
+        m_headingItems.clear();
+        m_results->clear();
+    }
+    const QPointer<QWidget> previousFocus = m_previousFocus;
+    m_previousFocus.clear();
+    QTimer::singleShot(0, this, [previousFocus] {
+        if (previousFocus && previousFocus->isVisible() &&
+            previousFocus->isEnabled())
+            previousFocus->setFocus();
+    });
     QFrame::hideEvent(event);
 }

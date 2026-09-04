@@ -1,6 +1,7 @@
 #include "core/LinkGraphIndex.h"
 #include "core/MarkdownComment.h"
 #include "core/MarkdownWikiLinkScanner.h"
+#include "core/WikiLink.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -87,6 +88,35 @@ void testSemanticScanner() {
                        "code and math literal"));
 }
 
+void testHeadingOutline() {
+  const QString markdown = QStringLiteral(
+      "# Introduction\n"
+      "Text\n"
+      "   ### Details ###\n"
+      "<!-- ## Hidden comment -->\n"
+      "```md\n# Hidden code\n```\n"
+      "## Details\n");
+  const QList<WikiLink::Heading> outline =
+      WikiLink::headingOutline(markdown);
+  check(outline.size() == 3,
+        QStringLiteral("note outline excludes comments and fenced code"));
+  check(outline.value(0).text == QStringLiteral("Introduction") &&
+            outline.value(0).level == 1 &&
+            outline.value(0).position ==
+                markdown.indexOf(QStringLiteral("Introduction")),
+        QStringLiteral("outline records the first heading level and position"));
+  check(outline.value(1).text == QStringLiteral("Details") &&
+            outline.value(1).level == 3 &&
+            outline.value(2).text == QStringLiteral("Details") &&
+            outline.value(2).level == 2 &&
+            outline.value(1).position != outline.value(2).position,
+        QStringLiteral("outline retains exact duplicate heading occurrences"));
+  check(WikiLink::headings(markdown) ==
+            QStringList({QStringLiteral("Introduction"),
+                         QStringLiteral("Details")}),
+        QStringLiteral("link completion continues to deduplicate headings"));
+}
+
 void testGraphIndex() {
   QTemporaryDir temp;
   check(temp.isValid(), QStringLiteral("graph-index temp vault exists"));
@@ -154,6 +184,7 @@ void testGraphIndex() {
 int main(int argc, char **argv) {
   QCoreApplication app(argc, argv);
   testSemanticScanner();
+  testHeadingOutline();
   testGraphIndex();
   if (failures == 0)
     QTextStream(stdout) << "All link-graph tests passed.\n";

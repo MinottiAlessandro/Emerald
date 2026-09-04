@@ -5,13 +5,8 @@
 #include <QRegularExpression>
 
 namespace {
-struct HeadingOccurrence {
-    QString text;
-    int position = -1;
-};
-
-QList<HeadingOccurrence> headingOccurrences(const QString &markdown) {
-    QList<HeadingOccurrence> result;
+QList<WikiLink::Heading> headingOccurrences(const QString &markdown) {
+    QList<WikiLink::Heading> result;
     const QString visible = MarkdownComment::masked(markdown);
     static const QRegularExpression fenceRe(
         QStringLiteral("^\\s*(`{3,}|~{3,})\\s*(\\S*).*$"));
@@ -49,8 +44,8 @@ QList<HeadingOccurrence> headingOccurrences(const QString &markdown) {
                 text.remove(closingHashes);
                 text = text.trimmed();
                 if (!text.isEmpty())
-                    result.append(
-                        {text, lineStart + int(match.capturedStart(2))});
+                    result.append({text, int(match.capturedLength(1)),
+                                   lineStart + int(match.capturedStart(2))});
             }
         }
         if (lineEnd == visible.size())
@@ -94,10 +89,14 @@ QString displayText(const QString &inner) {
 
 QStringList headings(const QString &markdown) {
     QStringList result;
-    for (const HeadingOccurrence &occurrence : headingOccurrences(markdown))
+    for (const Heading &occurrence : headingOccurrences(markdown))
         if (!result.contains(occurrence.text, Qt::CaseInsensitive))
             result.append(occurrence.text);
     return result;
+}
+
+QList<Heading> headingOutline(const QString &markdown) {
+    return headingOccurrences(markdown);
 }
 
 int headingPosition(const QString &markdown, const QString &headingTarget) {
@@ -106,7 +105,7 @@ int headingPosition(const QString &markdown, const QString &headingTarget) {
     if (wanted.isEmpty())
         return -1;
 
-    for (const HeadingOccurrence &occurrence : headingOccurrences(markdown))
+    for (const Heading &occurrence : headingOccurrences(markdown))
         if (occurrence.text.normalized(QString::NormalizationForm_C)
                 .compare(wanted, Qt::CaseInsensitive) == 0)
             return occurrence.position;

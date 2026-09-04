@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/MarkdownImage.h"
+#include "ReadScrollPosition.h"
 
 #include <QList>
 #include <QHash>
@@ -89,6 +90,9 @@ public:
     bool readMode() const { return m_readMode; }
     bool smoothScrollActive() const;
     int smoothScrollTarget() const { return m_smoothScrollTarget; }
+    void stopSmoothScroll();
+    ReadScrollPosition captureReadScrollPosition() const;
+    void restoreReadScrollPosition(const ReadScrollPosition &position);
 
     // The note's mascot seed, stored as a hidden header line at the top of the
     // document (see MascotSeed). 0 when the note has no mascot.
@@ -141,6 +145,7 @@ signals:
     void linkClicked(const QString &target);
     void navigateBack();
     void navigateForward();
+    void noteIndexRequested();
     void noticeRequested(const QString &text); // transient feedback (e.g. "Copied")
     // A pasted or dropped image should be attached by MainWindow, which knows
     // the active vault and note path.
@@ -171,12 +176,6 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
-    struct ScrollAnchor {
-        int sourcePosition = -1;
-        qreal viewportOffset = 0.0;
-        qreal fallbackRatio = 0.0;
-    };
-
     void updateActiveHighlight();
     QTextDocument *createReadDocument();
     void rebuildReadDocument(qreal scrollRatio = -1.0);
@@ -188,8 +187,6 @@ private:
     // remove == only when every selected word is highlighted; otherwise fill
     // every missing portion. Returns false when there is no eligible text.
     bool toggleReadHighlight();
-    ScrollAnchor captureScrollAnchor() const;
-    void restoreScrollAnchor(const ScrollAnchor &anchor);
     qreal currentScrollRatio() const;
     void restoreScrollRatio(qreal ratio);
     QTextCharFormat readObjectFormat(const QTextBlock &block) const;
@@ -214,8 +211,8 @@ private:
                                     bool preserveModification = false);
     bool updateImageReferences();
     void smoothScrollBy(qreal pixels, int durationMs = 140);
-    void stopSmoothScroll();
     void watchScrollPastEnd(QTextDocument *watchedDocument);
+    int contentBottomScrollValue() const;
     void applyScrollPastEndRange(int naturalMaximum);
     void scheduleScrollPastEndRangeUpdate();
     void updateScrollPastEndRange();

@@ -106,6 +106,28 @@ int main(int argc, char **argv) {
         check(title && title->text() == QStringLiteral("Go to note"),
               QStringLiteral("quick-open updates the command-palette title"));
 
+        int selectedHeading = -1;
+        QObject::connect(&popup, &SearchPopup::headingRequested,
+                         [&](int position) { selectedHeading = position; });
+        popup.showHeadings({{QStringLiteral("Introduction"), 1, 4},
+                            {QStringLiteral("Details"), 3, 42},
+                            {QStringLiteral("Details"), 2, 84}});
+        QApplication::processEvents();
+        check(title && title->text() == QStringLiteral("Note index") &&
+                  results->count() == 3 && counter && counter->isVisible() &&
+                  counter->text() == QStringLiteral("1 / 3") &&
+                  results->item(1)->text().startsWith(QChar(0x2003)),
+              QStringLiteral("note index lists and indents every heading"));
+        input->setText(QStringLiteral("details"));
+        QApplication::processEvents();
+        check(results->count() == 2 &&
+                  counter->text() == QStringLiteral("1 / 2"),
+              QStringLiteral("note index filters duplicate heading rows"));
+        QApplication::sendEvent(input, &down);
+        QApplication::sendEvent(input, &enter);
+        check(selectedHeading == 84 && !popup.isVisible(),
+              QStringLiteral("note index emits the selected exact heading"));
+
         popup.showBrokenLinks({});
         QApplication::processEvents();
         check(results->count() == 1 &&

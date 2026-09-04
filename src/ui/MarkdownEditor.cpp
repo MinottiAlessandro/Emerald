@@ -1296,6 +1296,17 @@ void MarkdownEditor::watchScrollPastEnd(QTextDocument *watchedDocument) {
             });
 }
 
+int MarkdownEditor::contentBottomScrollValue() const {
+    const QScrollBar *const bar = verticalScrollBar();
+    if (!bar || !document() || !document()->documentLayout())
+        return bar ? bar->minimum() : 0;
+
+    const int documentHeight =
+        document()->documentLayout()->documentSize().toSize().height();
+    const int naturalMaximum = qMax(0, documentHeight - bar->pageStep());
+    return qMax(bar->minimum(), naturalMaximum);
+}
+
 void MarkdownEditor::applyScrollPastEndRange(int naturalMaximum) {
     if (m_adjustingScroll)
         return;
@@ -1325,10 +1336,7 @@ void MarkdownEditor::scheduleScrollPastEndRangeUpdate() {
 void MarkdownEditor::updateScrollPastEndRange() {
     if (!document() || !document()->documentLayout())
         return;
-    const int viewportHeight = verticalScrollBar()->pageStep();
-    const int documentHeight =
-        document()->documentLayout()->documentSize().toSize().height();
-    applyScrollPastEndRange(qMax(0, documentHeight - viewportHeight));
+    applyScrollPastEndRange(contentBottomScrollValue());
 }
 
 void MarkdownEditor::smoothScrollBy(qreal pixels, int durationMs) {
@@ -1656,6 +1664,9 @@ bool MarkdownEditor::findAndCenter(const QString &text,
 
 void MarkdownEditor::centerCursor() {
     stopSmoothScroll();
+    // An explicit navigation target (heading, search match, restored caret)
+    // supersedes any deferred scroll restoration queued by a document swap.
+    ++m_scrollRestoreGeneration;
     const int delta = cursorRect().center().y() - viewport()->height() / 2;
     verticalScrollBar()->setValue(verticalScrollBar()->value() + delta);
 }
@@ -1666,7 +1677,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
 
     stopSmoothScroll();
     m_mouseSelectionDrag = false;
-    const ScrollAnchor scrollAnchor = captureScrollAnchor();
+    const ReadScrollPosition scrollAnchor = captureReadScrollPosition();
     if (enabled) {
         m_sourceCursor = textCursor();
         m_editCursorWidth = qMax(1, cursorWidth());
@@ -1697,7 +1708,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
         // part of resetting its control. Presentation is derived state, never
         // a saveable edit, so normalize that Qt bookkeeping immediately.
         m_readDocument->setModified(false);
-        restoreScrollAnchor(scrollAnchor);
+        restoreReadScrollPosition(scrollAnchor);
     } else {
         if (m_readCursorChanged) {
             m_sourceCursor = MarkdownReadRenderer::mapToSourceCursor(
@@ -1728,7 +1739,7 @@ void MarkdownEditor::setReadMode(bool enabled) {
             m_highlighter->rehighlight();
         applyVisualBlockFormats();
         updateMascotLineState();
-        restoreScrollAnchor(scrollAnchor);
+        restoreReadScrollPosition(scrollAnchor);
         // Release the rendered text promptly; edit mode keeps only the small
         // empty document shell until Read Mode is entered again.
         m_readDocument->clear();
@@ -1738,8 +1749,8 @@ void MarkdownEditor::setReadMode(bool enabled) {
     viewport()->update();
 }
 
-MarkdownEditor::ScrollAnchor MarkdownEditor::captureScrollAnchor() const {
-    ScrollAnchor anchor;
+ReadScrollPosition MarkdownEditor::captureReadScrollPosition() const {
+    ReadScrollPosition anchor;
     anchor.fallbackRatio = currentScrollRatio();
     if (!m_sourceDocument || !document())
         return anchor;
@@ -1768,7 +1779,8 @@ MarkdownEditor::ScrollAnchor MarkdownEditor::captureScrollAnchor() const {
     return anchor;
 }
 
-void MarkdownEditor::restoreScrollAnchor(const ScrollAnchor &anchor) {
+void MarkdownEditor::restoreReadScrollPosition(
+    const ReadScrollPosition &anchor) {
     QTextDocument *const expected = document();
     const quint64 generation = ++m_scrollRestoreGeneration;
     const auto restore = [this, anchor, expected, generation] {
@@ -3550,6 +3562,29 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *event) {
             const qreal delta = QFontMetricsF(font()).lineSpacing() *
                                 (event->key() == Qt::Key_Up ? -1.0 : 1.0);
             smoothScrollBy(delta, 105);
+            event->accept();
+            return;
+        }
+        if (mods == Qt::NoModifier && event->key() == Qt::Key_G) {
+            stopSmoothScroll();
+            verticalScrollBar()->setValue(verticalScrollBar()->minimum());
+            m_smoothScrollTarget = verticalScrollBar()->value();
+            event->accept();
+            return;
+        }
+        if (mods == Qt::ShiftModifier && event->key() == Qt::Key_G) {
+            stopSmoothScroll();
+            // The range deliberately extends by one viewport so manual
+            // scrolling can move the final line to the top. G should instead
+            // stop at the natural content bottom, with the last line visible.
+            verticalScrollBar()->setValue(contentBottomScrollValue());
+            m_smoothScrollTarget = verticalScrollBar()->value();
+            event->accept();
+            return;
+        }
+        if (mods == Qt::NoModifier && event->key() == Qt::Key_I) {
+            stopSmoothScroll();
+            emit noteIndexRequested();
             event->accept();
             return;
         }

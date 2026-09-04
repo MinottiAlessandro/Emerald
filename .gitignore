@@ -5,6 +5,7 @@ build-perf*/
 build-editor-tests/
 build-security/
 build-fuzz/
+build-fil-c/
 *.AppImage
 *.user
 .cache/

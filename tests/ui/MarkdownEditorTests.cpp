@@ -3226,6 +3226,36 @@ int main(int argc, char **argv) {
           QStringLiteral("native trackpad deltas should remain direct and "
                          "pixel exact"));
 
+    sendKey(editor, QEvent::KeyPress, Qt::Key_G, Qt::NoModifier,
+            QStringLiteral("g"));
+    check(editor.verticalScrollBar()->value() ==
+                  editor.verticalScrollBar()->minimum() &&
+              editor.smoothScrollTarget() ==
+                  editor.verticalScrollBar()->minimum(),
+          QStringLiteral("g should jump to the top in Read Mode"));
+    const int contentBottom = qMax(
+        editor.verticalScrollBar()->minimum(),
+        editor.document()->documentLayout()->documentSize().toSize().height() -
+            editor.verticalScrollBar()->pageStep());
+    check(contentBottom < editor.verticalScrollBar()->maximum(),
+          QStringLiteral("the test note should retain a scroll-past-end area "
+                         "after its natural content bottom"));
+    sendKey(editor, QEvent::KeyPress, Qt::Key_G, Qt::ShiftModifier,
+            QStringLiteral("G"));
+    check(editor.verticalScrollBar()->value() ==
+                  contentBottom &&
+              editor.smoothScrollTarget() ==
+                  contentBottom,
+          QStringLiteral("G should show the final written line without "
+                         "entering the scroll-past-end area in Read Mode"));
+    bool noteIndexRequested = false;
+    QObject::connect(&editor, &MarkdownEditor::noteIndexRequested,
+                     [&noteIndexRequested] { noteIndexRequested = true; });
+    sendKey(editor, QEvent::KeyPress, Qt::Key_I, Qt::NoModifier,
+            QStringLiteral("i"));
+    check(noteIndexRequested,
+          QStringLiteral("i should request the note index in Read Mode"));
+
     sendKey(editor, QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
             QStringLiteral("a"));
     check(editor.toPlainText() == readingSource,

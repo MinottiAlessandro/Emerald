@@ -988,6 +988,181 @@ void testWikiHeadingNavigation() {
   settings.clear();
 }
 
+void testReadModeNavigationState() {
+  QSettings settings;
+  settings.clear();
+  QTemporaryDir vault;
+  check(vault.isValid(), QStringLiteral("read-position vault exists"));
+  if (!vault.isValid())
+    return;
+
+  QStringList alphaRows{QStringLiteral("# Alpha start"),
+                        QStringLiteral("[[Beta#Middle]]")};
+  for (int i = 0; i < 100; ++i)
+    alphaRows.append(QStringLiteral("Alpha reading paragraph %1").arg(i));
+  alphaRows.append(QStringLiteral("## Alpha end"));
+  for (int i = 0; i < 30; ++i)
+    alphaRows.append(QStringLiteral("Alpha tail %1").arg(i));
+
+  QStringList betaRows{QStringLiteral("# Beta start")};
+  for (int i = 0; i < 30; ++i)
+    betaRows.append(QStringLiteral("Beta introduction %1").arg(i));
+  betaRows.append(QStringLiteral("## Middle"));
+  for (int i = 0; i < 55; ++i)
+    betaRows.append(QStringLiteral("Beta middle paragraph %1").arg(i));
+  betaRows.append(QStringLiteral("### End section"));
+  for (int i = 0; i < 35; ++i)
+    betaRows.append(QStringLiteral("Beta tail %1").arg(i));
+
+  const QString alpha = vault.filePath(QStringLiteral("Alpha.md"));
+  const QString beta = vault.filePath(QStringLiteral("Beta.md"));
+  check(writeFile(alpha, alphaRows.join(QLatin1Char('\n'))) &&
+            writeFile(beta, betaRows.join(QLatin1Char('\n'))),
+        QStringLiteral("read-position fixtures are writable"));
+  settings.setValue(QStringLiteral("lastVault"), vault.path());
+  VaultSettings::setValue(vault.path(), QStringLiteral("lastNote"),
+                          QStringLiteral("Alpha.md"));
+  VaultSettings::setValue(vault.path(), QStringLiteral("readMode"),
+                          QStringLiteral("true"));
+
+  const auto samePosition = [](const ReadScrollPosition &left,
+                               const ReadScrollPosition &right) {
+    return qAbs(left.sourcePosition - right.sourcePosition) <= 2 &&
+           qAbs(left.viewportOffset - right.viewportOffset) <= 3.0;
+  };
+
+  ReadScrollPosition persistedAlpha;
+  {
+    MainWindow window;
+    window.resize(1000, 520);
+    window.show();
+    auto *editor =
+        window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+    auto *title = window.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    auto *back = window.findChild<QAction *>(QStringLiteral("backAction"));
+    auto *forward =
+        window.findChild<QAction *>(QStringLiteral("forwardAction"));
+    auto *popup = window.findChild<SearchPopup *>(
+        QStringLiteral("searchPopup"));
+    check(waitUntil([editor, title] {
+            return editor && title && editor->readMode() &&
+                   title->text() == QStringLiteral("Alpha") &&
+                   editor->verticalScrollBar()->maximum() > 200;
+          }) &&
+              back && forward && popup,
+          QStringLiteral("read-position window opens Alpha in Read Mode"));
+    if (!editor || !title || !back || !forward || !popup) {
+      window.close();
+      settings.clear();
+      return;
+    }
+
+    editor->verticalScrollBar()->setValue(
+        editor->verticalScrollBar()->maximum() / 2);
+    QApplication::processEvents();
+    const ReadScrollPosition alphaPosition =
+        editor->captureReadScrollPosition();
+
+    QMetaObject::invokeMethod(editor, "linkClicked", Qt::DirectConnection,
+                              Q_ARG(QString,
+                                    QStringLiteral("Beta#Middle")));
+    check(waitUntil([editor, title] {
+            return title->text() == QStringLiteral("Beta") &&
+                   editor->sourceTextCursor().block().text() ==
+                       QStringLiteral("## Middle");
+          }),
+          QStringLiteral("a heading link overrides Beta's remembered position"));
+
+    editor->setFocus();
+    sendKey(editor, QEvent::KeyPress, Qt::Key_I, Qt::NoModifier,
+            QStringLiteral("i"));
+    auto *indexTitle = popup->findChild<QLabel *>(
+        QStringLiteral("searchPopupTitle"));
+    auto *indexInput =
+        popup->findChild<QLineEdit *>(QStringLiteral("searchInput"));
+    auto *indexResults =
+        popup->findChild<QListWidget *>(QStringLiteral("searchResults"));
+    check(waitUntil([popup] { return popup->isVisible(); }) && indexTitle &&
+              indexInput && indexResults &&
+              indexTitle->text() == QStringLiteral("Note index") &&
+              indexResults->count() == 3,
+          QStringLiteral("i opens the current note's complete heading index"));
+    if (indexInput) {
+      indexInput->setText(QStringLiteral("End section"));
+      sendKey(indexInput, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    }
+    check(waitUntil([editor, popup] {
+            return !popup->isVisible() &&
+                   editor->sourceTextCursor().block().text() ==
+                       QStringLiteral("### End section");
+          }),
+          QStringLiteral("selecting an index heading moves the Read Mode view"));
+
+    editor->verticalScrollBar()->setValue(
+        editor->verticalScrollBar()->maximum() * 3 / 4);
+    QApplication::processEvents();
+    const ReadScrollPosition betaPosition =
+        editor->captureReadScrollPosition();
+
+    back->trigger();
+    check(waitUntil([editor, title, alphaPosition, samePosition] {
+            return title->text() == QStringLiteral("Alpha") &&
+                   samePosition(editor->captureReadScrollPosition(),
+                                alphaPosition);
+          }),
+          QStringLiteral("Back restores Alpha's exact reading anchor"));
+    forward->trigger();
+    check(waitUntil([editor, title, betaPosition, samePosition] {
+            return title->text() == QStringLiteral("Beta") &&
+                   samePosition(editor->captureReadScrollPosition(),
+                                betaPosition);
+          }),
+          QStringLiteral("Forward restores Beta's history-specific anchor"));
+
+    QMetaObject::invokeMethod(editor, "linkClicked", Qt::DirectConnection,
+                              Q_ARG(QString,
+                                    QStringLiteral("#Beta start")));
+    check(waitUntil([editor] {
+            return editor->sourceTextCursor().block().text() ==
+                   QStringLiteral("# Beta start");
+          }),
+          QStringLiteral("same-note heading links still move within the note"));
+    back->trigger();
+    check(waitUntil([title] {
+            return title->text() == QStringLiteral("Alpha");
+          }),
+          QStringLiteral("same-note heading links do not add history entries"));
+
+    editor->verticalScrollBar()->setValue(
+        editor->verticalScrollBar()->maximum() * 2 / 3);
+    QApplication::processEvents();
+    persistedAlpha = editor->captureReadScrollPosition();
+    window.close();
+    QApplication::processEvents();
+  }
+
+  {
+    MainWindow restored;
+    restored.resize(1000, 520);
+    restored.show();
+    auto *editor =
+        restored.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+    auto *title = restored.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    check(waitUntil([editor, title, persistedAlpha, samePosition] {
+            return editor && title && editor->readMode() &&
+                   title->text() == QStringLiteral("Alpha") &&
+                   editor->verticalScrollBar()->maximum() > 200 &&
+                   samePosition(editor->captureReadScrollPosition(),
+                                persistedAlpha);
+          }),
+          QStringLiteral("a note's last reading anchor survives restart"));
+    restored.close();
+    QApplication::processEvents();
+  }
+
+  settings.clear();
+}
+
 void testFullWidthEditorPreference() {
   QSettings settings;
   settings.clear();
@@ -1948,6 +2123,7 @@ int main(int argc, char **argv) {
   testLastClosedVault();
   testVaultSwitcherModifiedOrder();
   testWikiHeadingNavigation();
+  testReadModeNavigationState();
   testFullWidthEditorPreference();
   testFileTreeSortPreference();
   testReleaseChannelPreference();

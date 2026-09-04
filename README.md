@@ -98,7 +98,7 @@ it opens or installs a download.
 - **Ctrl+Enter** starts a new line below without splitting the current one — and keeps the list going (or clears an empty bullet).
 - **Wrap the selection** — select text and press `(`, `[`, `*`, `_`, `=`, `'`, `"`, `` ` ``, `~` or `$` to surround it (brackets close with their match; `$` wraps a multi-line selection as one span).
 - **Folding** on heading sections, fenced blocks, and nested list trees.
-- **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block ordinary edits. Select text and press `Ctrl+Shift+H` to add or remove a persistent `==highlight==`; if any part of the selection is not highlighted, Emerald fills the gaps, otherwise it removes the selected highlight. Plain ↑/↓ scroll the page while search, including matches inside rendered code blocks, links, folding and text selection remain available. Switching between Read and Edit Mode preserves the same source-backed viewport anchor, so even rapidly toggling a wrapped list does not make the page drift.
+- **Read Mode** — toggle it per vault from **Settings → Vault** or with `Ctrl+E` to render every line without a caret and block ordinary edits. Select text and press `Ctrl+Shift+H` to add or remove a persistent `==highlight==`; if any part of the selection is not highlighted, Emerald fills the gaps, otherwise it removes the selected highlight. Plain ↑/↓ scroll the page, `g` / `G` jump to the top / last written line, and `i` opens a filterable heading index. Search—including matches inside rendered code blocks—links, folding, and text selection remain available. Each note remembers its source-backed reading position across navigation and restarts; switching between Read and Edit Mode preserves the same viewport anchor, so even rapidly toggling a wrapped list does not make the page drift.
 - **Markdown-aware spell checking** — US English is included and works entirely offline. Misspelled prose is underlined incrementally without disturbing bold, links, or other live-preview styling; code, math, URLs, HTML, images, and wiki-link targets are skipped. Right-click a misspelling for corrections, **Add to personal dictionary**, or **Ignore for this session**. Settings can download independently verified Italian, German, French, and Spanish packs with visible percentage progress, activate several dictionaries together, and remember the language stack per vault.
 
 **Math** *(no dependencies — a small built-in TeX-subset typesetter)*
@@ -161,6 +161,8 @@ it opens or installs a download.
 | Open Graph View | `Ctrl+Shift+G` |
 | Toggle Read Mode | `Ctrl+E` |
 | Toggle selected Read Mode highlight | `Ctrl+Shift+H` |
+| Open current note index in Read Mode | `i` |
+| Top / last written line in Read Mode | `g` / `G` |
 | Settings | `Ctrl+,` |
 | Back / Forward | `Alt+←` / `Alt+→` |
 | Quick Jump to visible link | Hold `Alt`, then type its hint |

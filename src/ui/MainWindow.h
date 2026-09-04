@@ -4,6 +4,7 @@
 #include "core/LinkGraphIndex.h"
 #include "core/SearchIndex.h"
 #include "core/StandaloneFile.h"
+#include "ReadScrollPosition.h"
 #include <QDateTime>
 #include <QHash>
 #include <QList>
@@ -12,6 +13,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <optional>
 
 class Vault;
 class MarkdownEditor;
@@ -104,7 +106,9 @@ private:
     // vault passes false so it always opens fully collapsed.
     void refreshTree(bool preserveExpansion = true);
     void openNoteByPath(const QString &path, bool record = true,
-                        bool saveBeforeOpen = true);
+                        bool saveBeforeOpen = true,
+                        std::optional<ReadScrollPosition> restorePosition =
+                            std::nullopt);
     void showGraphView(bool local, const QString &rootPath, bool record = true,
                        bool saveBeforeOpen = true);
     void showNotePage();
@@ -144,6 +148,7 @@ private:
     void openSearch();
     void openQuickOpen();
     void openBrokenLinks();
+    void openNoteIndex();
     void openBrokenLinkSource(const QString &path, int position, int length);
     void insertTemplate(); // open the template picker (Ctrl+T)
     void insertImage();    // copy/select an image and insert a Markdown link
@@ -200,6 +205,7 @@ private:
         Kind kind = Kind::Note;
         QString path;
         QString viewState;
+        std::optional<ReadScrollPosition> readScrollPosition;
 
         bool operator==(const PageLocation &other) const {
             return kind == other.kind && path == other.path;
@@ -218,6 +224,8 @@ private:
     // also folds in the open note's current caret).
     void saveCursorPositions();
     void loadCursorPositions();
+    void saveReadScrollPositions();
+    void loadReadScrollPositions();
 
     Vault *m_vault = nullptr;
     SearchIndex m_searchIndex;
@@ -292,6 +300,7 @@ private:
     QVector<PageLocation> m_history; // notes and graph pages (browser-style)
     int m_histIndex = -1;
     QHash<QString, int> m_cursorPositions; // note path -> last caret position
+    QHash<QString, ReadScrollPosition> m_readScrollPositions;
     QHash<QString, NoteFileMeta> m_noteMeta; // path -> title/size/mtime snapshot
     int m_indexGeneration = 0;
     int m_editorColumnWidth = 820;

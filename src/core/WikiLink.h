@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -9,6 +10,12 @@ class QRegularExpression;
 // follows a link — the highlighter, the editor, and the link index — shares
 // this pattern and cleaning rule so they can never drift apart.
 namespace WikiLink {
+
+struct Heading {
+    QString text;
+    int level = 0;
+    int position = -1;
+};
 
 // Matches [[target]]. Capture group 1 is the inner text (which may still carry
 // a |alias or #heading). The inner class excludes '[' and ']' so a stray,
@@ -34,6 +41,10 @@ QString displayText(const QString &inner);
 // ATX headings available for [[Note#...]] completion, in source order and
 // excluding fenced code/comments. Duplicate names are returned once.
 QStringList headings(const QString &markdown);
+
+// Every ATX heading used by the in-note index. Unlike completion, duplicate
+// names are retained because each row points to its exact source occurrence.
+QList<Heading> headingOutline(const QString &markdown);
 
 // Source position of the first matching ATX heading outside fenced code and
 // author-only comments. Matching is case-insensitive; -1 means not found.

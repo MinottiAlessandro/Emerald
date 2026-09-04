@@ -534,12 +534,16 @@ QString manualText() {
         "**Ctrl+Shift+H** to add or remove a saved `==highlight==`: if any of "
         "the selection is not highlighted Emerald fills the gaps, otherwise it "
         "removes the selected highlight. The plain "
-        "**↑** and **↓** keys scroll the page; links, search, folding and "
+        "**↑** and **↓** keys scroll the page, **g** / **G** jump to its top "
+        "/ last written line, and **i** opens a filterable index of its "
+        "headings. Links, "
+        "search, folding and "
         "selection/copy keep working, while checkboxes and saved highlights are "
         "the deliberate editable exceptions. Switching between Read and Edit "
         "Mode keeps the same source line at the same viewport position—even on "
         "long wrapped lists—so repeated toggles do not drift. Read Mode is "
-        "remembered separately for each vault.\n"
+        "remembered separately for each vault, and each note returns to its "
+        "last reading position across navigation and restarts.\n"
         "\n"
         "Ordinary mouse-wheel steps ease smoothly between pixel positions; "
         "high-resolution trackpad movement stays native and direct.\n"
@@ -1402,6 +1406,7 @@ MainWindow::MainWindow(const QString &standalonePath, QWidget *parent)
     qApp->installEventFilter(this);
     loadSettings();
     loadCursorPositions(); // remembered per-note caret positions, across restarts
+    loadReadScrollPositions();
 
     m_saveTimer = new QTimer(this);
     m_saveTimer->setSingleShot(true);
@@ -1515,6 +1520,8 @@ void MainWindow::buildUi() {
             &MainWindow::navigateBack);
     connect(m_editor, &MarkdownEditor::navigateForward, this,
             &MainWindow::navigateForward);
+    connect(m_editor, &MarkdownEditor::noteIndexRequested, this,
+            &MainWindow::openNoteIndex);
     connect(m_editor, &MarkdownEditor::noticeRequested, this,
             [this](const QString &text) { notify(text, 2000); });
     connect(m_editor, &MarkdownEditor::imageFilesInserted, this,
@@ -1777,6 +1784,22 @@ void MainWindow::buildUi() {
             &MainWindow::onTemplateChosen);
     connect(m_searchPopup, &SearchPopup::brokenLinkRequested, this,
             &MainWindow::openBrokenLinkSource);
+    connect(m_searchPopup, &SearchPopup::headingRequested, this,
+            [this](int position) {
+                if (!m_editor || !m_editor->readMode() || position < 0)
+                    return;
+                QTextCursor cursor(m_editor->sourceDocument());
+                cursor.setPosition(qMin(
+                    position,
+                    qMax(0, m_editor->sourceDocument()->characterCount() - 1)));
+                m_editor->setSourceTextCursor(cursor);
+                m_editor->centerCursor();
+                QTimer::singleShot(0, m_editor,
+                                   [editor = m_editor] {
+                                       editor->centerCursor();
+                                       editor->setFocus();
+                                   });
+            });
 
     // In-note find bar, floating at the top-right of the editor.
     m_findBar = new QFrame(m_editor);
@@ -1871,6 +1894,9 @@ void MainWindow::buildShortcutCheatsheet() {
         {tr("Open Graph View"),
          chord(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_G)},
         {tr("Toggle Read Mode"), chord(Qt::ControlModifier, Qt::Key_E)},
+        {tr("Open note index"), QStringLiteral("i")},
+        {tr("Top / last line in Read Mode"),
+         QStringLiteral("g  /  G")},
         {tr("Back / forward"),
          joined(chord(Qt::AltModifier, Qt::Key_Left),
                 chord(Qt::AltModifier, Qt::Key_Right))},
@@ -2673,6 +2699,9 @@ void MainWindow::setReadMode(bool enabled, bool persist) {
     if (!hasDocumentSession())
         enabled = false;
     const bool changed = m_readMode != enabled;
+
+    if (changed && !enabled && m_editor && m_editor->readMode())
+        captureCurrentPageState();
 
     // Flush a writable buffer before locking it. Once m_readMode flips, every
     // path that can mutate a vault is intentionally blocked.
@@ -3855,6 +3884,7 @@ bool MainWindow::openStandaloneFile(const QString &path) {
         return false;
     }
 
+    captureCurrentPageState();
     saveCurrent();
     if (m_vault && m_graphPage)
         VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),
@@ -3915,8 +3945,18 @@ bool MainWindow::openStandaloneFile(const QString &path) {
         qMax(minPos, m_editor->sourceDocument()->characterCount() - 1)));
     m_editor->setSourceTextCursor(cursor);
     m_editor->setFocus();
-    MarkdownEditor *editor = m_editor;
-    QTimer::singleShot(0, editor, [editor] { editor->centerCursor(); });
+    if (m_editor->readMode()) {
+        const auto remembered = m_readScrollPositions.constFind(m_currentPath);
+        ReadScrollPosition target;
+        if (remembered != m_readScrollPositions.cend())
+            target = remembered.value();
+        else
+            target.sourcePosition = minPos;
+        m_editor->restoreReadScrollPosition(target);
+    } else {
+        MarkdownEditor *editor = m_editor;
+        QTimer::singleShot(0, editor, [editor] { editor->centerCursor(); });
+    }
     refreshMascot();
     if (m_fileReadOnly)
         QTimer::singleShot(0, this, [this] {
@@ -4046,6 +4086,7 @@ void MainWindow::openVault(const QString &path) {
         }
     }
 
+    captureCurrentPageState();
     saveCurrent();
     if (m_vault && m_graphPage)
         VaultSettings::setValue(m_vault->root(), QStringLiteral("graphState"),
@@ -4374,10 +4415,19 @@ void MainWindow::markNoteMetaCurrent(const QString &path, const QString &title) 
     m_noteMeta.insert(path, noteFileMeta(note));
 }
 
-void MainWindow::openNoteByPath(const QString &path, bool record,
-                                bool saveBeforeOpen) {
+void MainWindow::openNoteByPath(
+    const QString &path, bool record, bool saveBeforeOpen,
+    std::optional<ReadScrollPosition> restorePosition) {
     if (!m_vault || path.isEmpty())
         return;
+    // Selecting a heading in the current note is an in-page movement, not a
+    // browser-history visit. Avoid reloading the note or disturbing its current
+    // reading position; the caller can reveal the requested heading directly.
+    if (m_activePage == PageLocation::Kind::Note && m_currentPath == path &&
+        QFileInfo::exists(path)) {
+        m_editor->setFocus();
+        return;
+    }
     if (record)
         captureCurrentPageState();
     if (!QFileInfo::exists(path)) {
@@ -4422,6 +4472,12 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
     showNotePage();
     updateNavActions();
 
+    if (m_editor->readMode() && !restorePosition.has_value()) {
+        const auto remembered = m_readScrollPositions.constFind(path);
+        if (remembered != m_readScrollPositions.cend())
+            restorePosition = remembered.value();
+    }
+
     // Always restore the caret to where it last sat in this note (remembered in
     // m_cursorPositions, persisted across restarts) — whether arriving via the
     // back/forward arrows, a tree click, a link, or launch. A note never visited
@@ -4436,12 +4492,22 @@ void MainWindow::openNoteByPath(const QString &path, bool record,
         qMax(minPos, m_editor->sourceDocument()->characterCount() - 1)));
     m_editor->setSourceTextCursor(c);
     m_editor->setFocus();
-    // Bring the restored caret into view, centred. Deferred to the event loop:
-    // centring inline runs against the just-loaded document before its layout
-    // and viewport have settled, which leaves the view stuck at the top while
-    // the caret sits offscreen lower down.
-    MarkdownEditor *ed = m_editor;
-    QTimer::singleShot(0, ed, [ed] { ed->centerCursor(); });
+    if (m_editor->readMode()) {
+        ReadScrollPosition target;
+        if (restorePosition.has_value()) {
+            target = *restorePosition;
+        } else {
+            // A note with no reading history starts at its first visible source
+            // position, independent of an old Edit Mode caret.
+            target.sourcePosition = minPos;
+        }
+        m_editor->restoreReadScrollPosition(target);
+    } else {
+        // Bring the restored edit caret into view, centred. Deferred to the
+        // event loop because the newly-loaded document lays out lazily.
+        MarkdownEditor *ed = m_editor;
+        QTimer::singleShot(0, ed, [ed] { ed->centerCursor(); });
+    }
     refreshMascot(); // mirror this note's inline seed (the editor parsed it on load)
     if (m_mobileLayout)
         showMobileEditor();
@@ -4564,6 +4630,9 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
                 location.path = newPath;
         if (m_cursorPositions.contains(oldPath))
             m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
+        if (m_readScrollPositions.contains(oldPath))
+            m_readScrollPositions[newPath] =
+                m_readScrollPositions.take(oldPath);
         watchCurrent();
         refreshTree(false);
         updateVaultTitle();
@@ -4593,6 +4662,8 @@ void MainWindow::renameCurrent(const QString &rawTitle) {
             location.path = newPath;
     if (m_cursorPositions.contains(oldPath))
         m_cursorPositions[newPath] = m_cursorPositions.take(oldPath);
+    if (m_readScrollPositions.contains(oldPath))
+        m_readScrollPositions[newPath] = m_readScrollPositions.take(oldPath);
     m_searchIndex.renamePath(oldPath, newPath);
     m_searchIndex.updateNote(newPath, newTitle, m_editor->toPlainText());
     m_linkGraphIndex.renamePath(oldPath, newPath, newTitle);
@@ -4802,8 +4873,14 @@ void MainWindow::syncOpenNoteFromDisk() {
         }
     }
 
-    // No local edits: reload, keeping the caret roughly where it was.
+    // No local edits: reload, keeping the caret and Read Mode viewport roughly
+    // where they were even if the rendered document's height changes.
     const int caret = m_editor->sourceTextCursor().position();
+    const std::optional<ReadScrollPosition> readPosition =
+        m_editor->readMode()
+            ? std::optional<ReadScrollPosition>(
+                  m_editor->captureReadScrollPosition())
+            : std::nullopt;
     m_editor->clearFolds(); // reloading replaces the content; drop stale folds
     m_loading = true;
     m_editor->setPlainText(disk);
@@ -4827,6 +4904,10 @@ void MainWindow::syncOpenNoteFromDisk() {
     QTextCursor c = m_editor->sourceTextCursor();
     c.setPosition(qMin(caret, int(disk.size())));
     m_editor->setSourceTextCursor(c);
+    if (readPosition.has_value()) {
+        m_editor->restoreReadScrollPosition(*readPosition);
+        m_readScrollPositions.insert(m_currentPath, *readPosition);
+    }
     notify(tr("Reloaded — changed on disk"), 3000);
 }
 
@@ -4916,6 +4997,8 @@ void MainWindow::onLinkClicked(const QString &destination) {
     cursor.setPosition(position);
     m_editor->setSourceTextCursor(cursor);
     m_editor->centerCursor();
+    QTimer::singleShot(0, m_editor,
+                       [editor = m_editor] { editor->centerCursor(); });
 }
 
 void MainWindow::navigateBack() {
@@ -4949,7 +5032,8 @@ void MainWindow::navigateForward() {
 void MainWindow::openHistoryLocation(const PageLocation &location,
                                      bool saveBeforeOpen) {
     if (location.kind == PageLocation::Kind::Note)
-        openNoteByPath(location.path, false, saveBeforeOpen);
+        openNoteByPath(location.path, false, saveBeforeOpen,
+                       location.readScrollPosition);
     else {
         showGraphView(location.kind == PageLocation::Kind::LocalGraph,
                       location.path, false, saveBeforeOpen);
@@ -4959,6 +5043,21 @@ void MainWindow::openHistoryLocation(const PageLocation &location,
 }
 
 void MainWindow::captureCurrentPageState() {
+    if (m_activePage == PageLocation::Kind::Note && m_editor &&
+        m_editor->readMode() && !m_currentPath.isEmpty()) {
+        m_editor->stopSmoothScroll();
+        const ReadScrollPosition position =
+            m_editor->captureReadScrollPosition();
+        m_readScrollPositions.insert(m_currentPath, position);
+        if (m_histIndex >= 0 && m_histIndex < m_history.size()) {
+            PageLocation &location = m_history[m_histIndex];
+            if (location.kind == PageLocation::Kind::Note &&
+                location.path == m_currentPath)
+                location.readScrollPosition = position;
+        }
+        return;
+    }
+
     if (!m_graphPage || !m_pageStack ||
         m_pageStack->currentWidget() != m_graphPage || m_histIndex < 0 ||
         m_histIndex >= m_history.size())
@@ -5037,6 +5136,47 @@ void MainWindow::loadCursorPositions() {
         m_cursorPositions.insert(it.key(), it.value().toInt());
 }
 
+void MainWindow::saveReadScrollPositions() {
+    captureCurrentPageState();
+    QVariantMap stored;
+    for (auto it = m_readScrollPositions.constBegin();
+         it != m_readScrollPositions.constEnd(); ++it) {
+        QVariantMap position;
+        position.insert(QStringLiteral("sourcePosition"),
+                        it.value().sourcePosition);
+        position.insert(QStringLiteral("viewportOffset"),
+                        it.value().viewportOffset);
+        position.insert(QStringLiteral("fallbackRatio"),
+                        it.value().fallbackRatio);
+        stored.insert(it.key(), position);
+    }
+    QSettings().setValue(QStringLiteral("readScrollPositions"), stored);
+}
+
+void MainWindow::loadReadScrollPositions() {
+    const QVariantMap stored =
+        QSettings().value(QStringLiteral("readScrollPositions")).toMap();
+    for (auto it = stored.constBegin(); it != stored.constEnd(); ++it) {
+        const QVariantMap value = it.value().toMap();
+        if (value.isEmpty())
+            continue;
+        ReadScrollPosition position;
+        position.sourcePosition =
+            value.value(QStringLiteral("sourcePosition"), -1).toInt();
+        position.viewportOffset =
+            value.value(QStringLiteral("viewportOffset"), 0.0).toDouble();
+        position.fallbackRatio =
+            value.value(QStringLiteral("fallbackRatio"), 0.0).toDouble();
+        if (!qIsFinite(position.viewportOffset))
+            position.viewportOffset = 0.0;
+        if (!qIsFinite(position.fallbackRatio))
+            position.fallbackRatio = 0.0;
+        position.fallbackRatio =
+            qBound(0.0, position.fallbackRatio, 1.0);
+        m_readScrollPositions.insert(it.key(), position);
+    }
+}
+
 void MainWindow::selectInTree(const QString &path) {
     auto *model = static_cast<NoteTreeModel *>(m_noteTreeModel);
     const QModelIndex idx = model ? model->indexForPath(path) : QModelIndex();
@@ -5053,6 +5193,20 @@ void MainWindow::selectInTree(const QString &path) {
 void MainWindow::openSearch() {
     if (m_vault)
         m_searchPopup->showCentered(false);
+}
+
+void MainWindow::openNoteIndex() {
+    if (!m_editor || !m_searchPopup || !m_editor->readMode() ||
+        m_activePage != PageLocation::Kind::Note)
+        return;
+
+    QList<SearchPopup::HeadingItem> items;
+    const QList<WikiLink::Heading> headings =
+        WikiLink::headingOutline(m_editor->toPlainText());
+    items.reserve(headings.size());
+    for (const WikiLink::Heading &heading : headings)
+        items.append({heading.text, heading.level, heading.position});
+    m_searchPopup->showHeadings(items);
 }
 
 void MainWindow::openQuickOpen() {
@@ -5628,6 +5782,17 @@ void MainWindow::clearStaleSettingsFor(const QString &path, bool isFolder) {
         VaultSettings::remove(root, QStringLiteral("templatesFolder"));
     if (last == rel || (isFolder && last.startsWith(rel + QLatin1Char('/'))))
         VaultSettings::remove(root, QStringLiteral("lastNote"));
+
+    const auto clearRememberedPositions = [&](auto &positions) {
+        const QStringList rememberedPaths = positions.keys();
+        for (const QString &rememberedPath : rememberedPaths)
+            if (rememberedPath == path ||
+                (isFolder &&
+                 rememberedPath.startsWith(path + QLatin1Char('/'))))
+                positions.remove(rememberedPath);
+    };
+    clearRememberedPositions(m_cursorPositions);
+    clearRememberedPositions(m_readScrollPositions);
 }
 
 // After a deletion: rescan, and if the open note was removed (on its own or
@@ -5817,8 +5982,18 @@ void MainWindow::moveItems(const QStringList &srcPaths, const QString &destDirIn
         remap(m_currentPath);
         for (PageLocation &location : m_history)
             remap(location.path);
-        if (m_cursorPositions.contains(srcPath))
-            m_cursorPositions[newPath] = m_cursorPositions.take(srcPath);
+        const auto remapRememberedPositions = [&](auto &positions) {
+            const QStringList rememberedPaths = positions.keys();
+            for (const QString &oldRememberedPath : rememberedPaths) {
+                QString newRememberedPath = oldRememberedPath;
+                remap(newRememberedPath);
+                if (newRememberedPath != oldRememberedPath)
+                    positions.insert(newRememberedPath,
+                                     positions.take(oldRememberedPath));
+            }
+        };
+        remapRememberedPositions(m_cursorPositions);
+        remapRememberedPositions(m_readScrollPositions);
         ++moved;
     }
     if (moved == 0) {
@@ -5877,6 +6052,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         QSettings().setValue(QStringLiteral("lastClosedVault"),
                              m_vault->root());
     saveCursorPositions(); // remember caret positions for the next launch
+    saveReadScrollPositions();
     if (m_mobileLayout && !m_desktopSplitterSizes.isEmpty()) {
         const QList<int> mobileSizes = m_splitter->sizes();
         m_splitter->setSizes(m_desktopSplitterSizes);

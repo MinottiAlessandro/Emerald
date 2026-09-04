@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Emerald VERSION 2.2.2 LANGUAGES CXX)
+project(Emerald VERSION 2.3.0 LANGUAGES CXX)
 
 # Native package metadata stays numeric, while development builds may append a
 # SemVer prerelease suffix to the version shown by Emerald and its updater.
@@ -178,6 +178,7 @@ add_executable(emerald WIN32 MACOSX_BUNDLE
   src/ui/GraphPage.h
   src/ui/GraphPage.cpp
   src/ui/MarkdownEditor.h
+  src/ui/ReadScrollPosition.h
   src/ui/MarkdownEditor.cpp
   src/ui/MarkdownCallout.h
   src/ui/MarkdownReadRenderer.h
@@ -390,6 +391,7 @@ if(EMERALD_BUILD_PERF_TESTS)
     src/core/SpellChecker.h
     src/core/SpellChecker.cpp
     src/ui/MarkdownEditor.h
+    src/ui/ReadScrollPosition.h
     src/ui/MarkdownEditor.cpp
     src/ui/AppTheme.h
     src/ui/AppTheme.cpp
@@ -442,6 +444,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/core/SpellChecker.h
     src/core/SpellChecker.cpp
     src/ui/MarkdownEditor.h
+    src/ui/ReadScrollPosition.h
     src/ui/MarkdownEditor.cpp
     src/ui/AppTheme.h
     src/ui/AppTheme.cpp
@@ -525,6 +528,7 @@ if(EMERALD_BUILD_EDITOR_TESTS)
     src/ui/GraphPage.h
     src/ui/GraphPage.cpp
     src/ui/MarkdownEditor.h
+    src/ui/ReadScrollPosition.h
     src/ui/MarkdownEditor.cpp
     src/ui/MarkdownCallout.h
     src/ui/MarkdownReadRenderer.h

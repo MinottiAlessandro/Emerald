@@ -202,6 +202,16 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Read Mode** (`Ctrl+E` or **Settings → Vault → Read mode**) removes the
       caret and renders the current line like the rest of the note. Plain ↑/↓
       smoothly scroll the page by one visual line without moving a text cursor. ◆
+- [ ] Scroll midway through a long note in Read Mode, follow a link to another
+      note, then use Back and Forward. Each history entry returns to the same
+      source line and viewport offset; closing and reopening Emerald also
+      restores the note's last reading position. A same-note heading link moves
+      within the page without adding another Back/Forward entry. ◆
+- [ ] In Read Mode, `g` jumps to the top, `G` places the last written line at
+      the bottom of the viewport without entering the scroll-past-end area, and
+      `i` opens a filterable **Note index** containing every real Markdown
+      heading in source order. Choosing a duplicate heading opens that exact
+      occurrence; headings inside comments and fenced code are absent. ◆
 - [ ] On a long list with several wrapped and nested items, scroll to the middle
       and rapidly toggle Read/Edit Mode at least eight times. The same source
       line remains at the same viewport height and the page does not accumulate
@@ -315,6 +325,8 @@ Verify each fires and that menu items show their shortcut label.
 | Open Graph View                    | `Ctrl+Shift+G`                 | [ ] |
 | Toggle Read Mode                   | `Ctrl+E`                       | [ ] |
 | Toggle selected Read Mode highlight | `Ctrl+Shift+H`                | [ ] |
+| Open current note index (Read Mode) | `i`                           | [ ] |
+| Top / last written line (Read Mode) | `g` / `G`                     | [ ] |
 | Settings                           | `Ctrl+,`                       | [ ] |
 | Back / Forward                     | `Alt+←` / `Alt+→`              | [ ] |
 | Quick Jump to visible link         | Hold `Alt`, then type hint     | [ ] |
