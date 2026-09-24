@@ -299,6 +299,7 @@ private:
         bool active = false; // the caret is inside this block (show raw markup)
     };
     // Visit fenced code blocks that intersect `clip` in viewport coordinates.
+    // includeCode reads the full code body even when it extends beyond clip.
     void forEachCodeBlock(const QRectF &clip,
                           const std::function<void(const CodeBlock &)> &fn,
                           bool includeCode = false) const;

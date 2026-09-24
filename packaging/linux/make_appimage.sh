@@ -88,6 +88,7 @@ echo ">> bundling Qt + generating $OUTPUT"
 "$TOOLS_DIR/linuxdeploy-${ARCH}.AppImage" \
   --appdir "$APPDIR" \
   --plugin qt \
+  --custom-apprun "$ROOT/packaging/linux/AppRun" \
   --desktop-file "$APPDIR/usr/share/applications/emerald.desktop" \
   --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/emerald.png" \
   --output appimage

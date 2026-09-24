@@ -97,7 +97,7 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] Code boxes have padded text, a bordered body, a language pill and clear separation above/below.
 - [ ] Inline code has a rounded background, including when it wraps.
 - [ ] Caret **inside** the block reveals BOTH the opening and closing fences. ★
-- [ ] Copy button copies the block's code.
+- [ ] In Edit and Read Mode, the copy button copies the whole block without its fences, including lines below the viewport. Indentation and blank lines are preserved, and the note and current selection stay unchanged.
 - [ ] **Selecting the whole block + something outside** shows the raw source (` ``` `), NOT both the rendered box and raw backticks at once. ★
 - [ ] No hairline/overpainted seam under the code-box header. ★
 - [ ] Lines inside a code block render verbatim (no bullets, rules, headings).
@@ -349,6 +349,7 @@ Verify each fires and that menu items show their shortcut label.
 ## 17. Platform-specific launch
 - [ ] **Linux x86-64**: `chmod +x Emerald-x86_64.AppImage` then run.
 - [ ] **Linux ARM64**: runs on a glibc ≥ 2.39 system.
+- [ ] **Linux AppImage process name**: launch the package, including from a path containing spaces and with a Markdown file argument. Confirm the process is named `emerald` in the system monitor (`ps -p <pid> -o comm=`), the requested file opens, and the bundled Qt plugins still load.
 - [ ] **macOS**: first launch **right-click → Open → Open**; if still blocked, `xattr -cr /Applications/Emerald.app`.
 - [ ] **Windows**: install `Emerald-win64-setup.exe`; Emerald appears under **Open with** and Default Apps for `.md`/`.markdown`. The portable ZIP still runs without registration.
 - [ ] Each package runs with no separate Qt install (bundled runtime).

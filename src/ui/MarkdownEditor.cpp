@@ -4201,10 +4201,12 @@ void MarkdownEditor::forEachCodeBlock(
     for (QTextBlock b = start; b.isValid(); b = b.next()) {
         const bool isCode = b.userState() == 1; // MarkdownHighlighter::StateCode
         const QRectF geo = blockViewportRect(b);
-        if (geo.top() > clip.bottom()) {
+        // Painting and hover checks can stop at the clip. Copying must finish
+        // the current region, even when only its header is in the hit-test area.
+        if (geo.top() > clip.bottom() && (!inCode || !includeCode)) {
             if (inCode)
                 emitRegion(geo.top(), b.blockNumber());
-            break;
+            return;
         }
         if (isCode && !inCode) { // opening fence = the header row
             inCode = true;

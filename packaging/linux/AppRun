@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+
+# linuxdeploy wraps this launcher with the Qt environment hooks. Execute the
+# actual binary after those hooks so Linux reports "emerald" as the process
+# name instead of inheriting the AppRun.wrapped symlink name.
+app_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$app_dir/usr/bin/emerald" "$@"

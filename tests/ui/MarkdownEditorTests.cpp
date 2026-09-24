@@ -921,6 +921,63 @@ int main(int argc, char **argv) {
               !editor.document()->isUndoAvailable(),
           QStringLiteral("code-box padding must preserve source and undo history"));
 
+    // Click the Edit Mode header through the viewport, including blocks whose
+    // contents extend beyond the button's hit-test area or the visible page.
+    {
+        MarkdownEditor copyEditor;
+        copyEditor.resize(420, 220);
+        copyEditor.show();
+        auto checkCodeCopy = [&](const QString &source, int openingLine,
+                                 const QString &expected,
+                                 const QString &description) {
+            copyEditor.setPlainText(source);
+            copyEditor.moveCursor(QTextCursor::EndOfBlock,
+                                  QTextCursor::KeepAnchor);
+            const QTextCursor selection = copyEditor.textCursor();
+            const QTextBlock opening =
+                copyEditor.document()->findBlockByNumber(openingLine);
+            settleLayout(copyEditor, opening);
+            const QRectF header = copyEditor.document()->documentLayout()
+                                      ->blockBoundingRect(opening);
+            copyEditor.verticalScrollBar()->setValue(qRound(header.top()));
+            QApplication::processEvents();
+            const QPoint copyPoint(
+                qRound(copyEditor.viewport()->width() -
+                       copyEditor.document()->documentMargin() * 0.5 - 16),
+                qRound(header.center().y() -
+                       copyEditor.verticalScrollBar()->value()));
+            QApplication::clipboard()->setText(QStringLiteral("unchanged"));
+            clickEditor(copyEditor, copyPoint);
+            check(QApplication::clipboard()->text() == expected,
+                  description + QStringLiteral(" should copy the complete "
+                                               "unfenced code"));
+            check(copyEditor.textCursor().position() == selection.position() &&
+                      copyEditor.textCursor().anchor() == selection.anchor(),
+                  description + QStringLiteral(" should preserve the selection"));
+            check(copyEditor.toPlainText() == source &&
+                      !copyEditor.document()->isUndoAvailable(),
+                  description + QStringLiteral(" should not edit the document"));
+        };
+        checkCodeCopy(paddedCodeSource, 1, QStringLiteral("const int value = 7;"),
+                      QStringLiteral("Edit Mode Copy"));
+        checkCodeCopy(QStringLiteral("before\n```\nfirst\n```\nbetween\n"
+                                     "~~~text\n  café\n\n\tsecond  \n~~~\nafter"),
+                      5, QStringLiteral("  café\n\n\tsecond  "),
+                      QStringLiteral("Copy from a later tilde-fenced block"));
+        QStringList longCode;
+        for (int i = 0; i < 80; ++i)
+            longCode << QStringLiteral("    line %1").arg(i);
+        const QString longBody = longCode.join(QLatin1Char('\n'));
+        checkCodeCopy(QStringLiteral("before\n```text\n") + longBody +
+                          QStringLiteral("\n```\nafter"),
+                      1, longBody, QStringLiteral("Copy below the viewport"));
+        checkCodeCopy(QStringLiteral("before\n```\n```\nafter"), 1, QString(),
+                      QStringLiteral("Copy from an empty block"));
+        checkCodeCopy(QStringLiteral("before\n```text\nfirst\nlast"), 1,
+                      QStringLiteral("first\nlast"),
+                      QStringLiteral("Copy from an unclosed block"));
+    }
+
     const QString tableSource = QStringLiteral(
         "| Name  | Score |\n| :---- | ----: |\n| Ada   |    10 |\n"
         "| Grace |     9 |\nafter table");
