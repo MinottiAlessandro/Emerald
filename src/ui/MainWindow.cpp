@@ -74,6 +74,7 @@
 #include <QProcess>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QScrollBar>
 #include <QSizePolicy>
 #include <QResizeEvent>
 #include <QTextBrowser>
@@ -573,10 +574,12 @@ QString manualText() {
         "- **History** — the back / forward arrows (Alt+Left / Alt+Right "
         "or the mouse side buttons) walk back and forward through the notes "
         "you've opened.\n"
-        "- **Find in note** — Ctrl+F opens a find bar; Enter and Shift+Enter step "
-        "through the matches.\n"
-        "- **Search vault** — Ctrl+Shift+F searches the text of every note; "
-        "Ctrl+P jumps to a note by title.\n"
+        "- **Find in note** — Ctrl+F highlights every match; Enter and "
+        "Shift+Enter step through them, with the current match shown slightly "
+        "lighter.\n"
+        "- **Search vault** — Ctrl+Shift+F lists individual matches across notes. "
+        "Arrow keys preview a result, Enter keeps it, and Esc restores your "
+        "starting note and position. Ctrl+P jumps to a note by title.\n"
         "\n"
         "Emerald watches the vault for files changed, created, renamed, or "
         "deleted by other programs and refreshes the tree and search index. If "
@@ -1446,6 +1449,8 @@ MainWindow::MainWindow(const QString &standalonePath, QWidget *parent)
         if (!m_loading) {
             m_saveTimer->start();
             maybeAutoGenerateMascot();
+            if (m_findBar && m_findBar->isVisible())
+                updateFindCounter();
         }
     });
     connect(m_editor, &MarkdownEditor::sourceChanged, this, [this] {
@@ -1771,6 +1776,7 @@ void MainWindow::buildUi() {
     m_splitHandle = m_splitter->handle(1);
 
     m_searchPopup = new SearchPopup(&m_searchIndex, this);
+    m_searchPopup->setPreviewViewport(m_editor->viewport());
     connect(m_searchPopup, &SearchPopup::openRequested, this,
             [this](const QString &path, const QString &query) {
                 openNoteByPath(path);
@@ -1778,6 +1784,19 @@ void MainWindow::buildUi() {
                 if (!tokens.isEmpty())
                     m_editor->jumpToMatch(tokens.first());
             });
+    connect(m_searchPopup, &SearchPopup::searchStarted, this,
+            &MainWindow::beginSearchPreview);
+    connect(m_searchPopup, &SearchPopup::previewRequested, this,
+            &MainWindow::previewSearchMatch);
+    connect(m_searchPopup, &SearchPopup::previewGeometryChanged, this,
+            &MainWindow::positionSearchPreview);
+    connect(m_searchPopup, &SearchPopup::matchAccepted, this,
+            [this](const QString &path, int position, int length) {
+                previewSearchMatch(path, position, length);
+                finishSearchPreview(true);
+            });
+    connect(m_searchPopup, &SearchPopup::searchCancelled, this,
+            [this] { finishSearchPreview(false); });
     connect(m_searchPopup, &SearchPopup::openVaultRequested, this,
             &MainWindow::openVault);
     connect(m_searchPopup, &SearchPopup::templateRequested, this,
@@ -1809,6 +1828,7 @@ void MainWindow::buildUi() {
     fh->setSpacing(4);
     m_findInput = new QLineEdit(m_findBar);
     m_findInput->setObjectName(QStringLiteral("findInput"));
+    m_findInput->setFrame(false);
     m_findInput->setPlaceholderText(tr("Find in note…  (Enter / Shift+Enter)"));
     m_findCounter = new QLabel(tr("0 / 0"), m_findBar);
     m_findCounter->setObjectName(QStringLiteral("findMatchCounter"));
@@ -2750,6 +2770,8 @@ void MainWindow::updateReadModeUi() {
 
     if (m_editor)
         m_editor->setReadMode(locked);
+    if (m_findBar && m_findBar->isVisible())
+        updateFindCounter();
     if (m_titleEdit)
         m_titleEdit->setReadOnly(locked || !hasDocument);
     if (m_readModeAction) {
@@ -4071,6 +4093,8 @@ void MainWindow::openVaultSwitcher() {
 }
 
 void MainWindow::openVault(const QString &path) {
+    if (m_searchPreview && m_searchPopup)
+        m_searchPopup->hide();
     // Vault-specific controls in a modeless Settings window describe the vault
     // that was open when the window was created. Unwind its deepest open child,
     // then Settings itself, before switching so its stack-scoped transaction
@@ -4420,6 +4444,8 @@ void MainWindow::openNoteByPath(
     std::optional<ReadScrollPosition> restorePosition) {
     if (!m_vault || path.isEmpty())
         return;
+    if (record && m_searchPreview)
+        m_searchPopup->hide();
     // Selecting a heading in the current note is an in-page movement, not a
     // browser-history visit. Avoid reloading the note or disturbing its current
     // reading position; the caller can reveal the requested heading directly.
@@ -4439,7 +4465,7 @@ void MainWindow::openNoteByPath(
     }
     // Remember where the caret sat in the note we're leaving, so returning to
     // it (e.g. via the backlink history) lands back at the same spot.
-    if (!m_currentPath.isEmpty() && m_currentPath != path)
+    if (!m_searchPreview && !m_currentPath.isEmpty() && m_currentPath != path)
         m_cursorPositions[m_currentPath] =
             m_editor->sourceTextCursor().position();
     if (saveBeforeOpen)
@@ -4464,9 +4490,9 @@ void MainWindow::openNoteByPath(
     m_titleEdit->blockSignals(false);
     setWindowTitle(QStringLiteral("Emerald — %1").arg(m_currentTitle));
     selectInTree(path);
-    VaultSettings::setValue(
-        m_vault->root(), QStringLiteral("lastNote"),
-        QDir(m_vault->root()).relativeFilePath(path));
+    if (!m_searchPreview)
+        VaultSettings::setValue(m_vault->root(), QStringLiteral("lastNote"),
+                                QDir(m_vault->root()).relativeFilePath(path));
     if (record)
         pushHistory({PageLocation::Kind::Note, path});
     showNotePage();
@@ -4502,7 +4528,7 @@ void MainWindow::openNoteByPath(
             target.sourcePosition = minPos;
         }
         m_editor->restoreReadScrollPosition(target);
-    } else {
+    } else if (!m_searchPreview) {
         // Bring the restored edit caret into view, centred. Deferred to the
         // event loop because the newly-loaded document lays out lazily.
         MarkdownEditor *ed = m_editor;
@@ -4520,6 +4546,7 @@ void MainWindow::showNotePage() {
         m_pageStack->setCurrentWidget(m_notePage);
     if (m_findBar)
         m_findBar->setVisible(false);
+    m_editor->highlightSearchMatches(QString());
     refreshMascot();
     updateReadModeUi();
 }
@@ -4540,6 +4567,8 @@ void MainWindow::showGraphView(bool local, const QString &rootPath, bool record,
                                bool saveBeforeOpen) {
     if (!m_vault || !m_graphPage)
         return;
+    if (record && m_searchPreview)
+        m_searchPopup->hide();
     if (record)
         captureCurrentPageState();
     if (saveBeforeOpen)
@@ -4564,6 +4593,7 @@ void MainWindow::showGraphView(bool local, const QString &rootPath, bool record,
         m_pageStack->setCurrentWidget(m_graphPage);
     if (m_findBar)
         m_findBar->hide();
+    m_editor->highlightSearchMatches(QString());
     if (m_mascot)
         m_mascot->hide();
     if (record)
@@ -5190,6 +5220,113 @@ void MainWindow::selectInTree(const QString &path) {
         m_noteTree->selectionModel()->clearSelection();
 }
 
+void MainWindow::beginSearchPreview() {
+    if (!m_vault || !m_editor)
+        return;
+    if (m_searchPreview)
+        finishSearchPreview(false);
+    if (!m_currentPath.isEmpty())
+        saveCurrent();
+    m_editor->stopSmoothScroll();
+    captureCurrentPageState();
+    SearchPreview state;
+    state.notePath = m_currentPath;
+    state.page = {m_activePage, m_activePage == PageLocation::Kind::GlobalGraph
+                                    ? QString()
+                                    : m_currentPath};
+    if (m_activePage != PageLocation::Kind::Note && m_graphPage) {
+        state.page.path =
+            m_graphPage->isLocal() ? m_graphPage->localRoot() : QString();
+        state.page.viewState = m_graphPage->sessionState();
+    }
+    const QTextCursor cursor = m_editor->sourceTextCursor();
+    state.position = cursor.position();
+    state.anchor = cursor.anchor();
+    state.scroll = m_editor->captureReadScrollPosition();
+    state.folds = m_editor->foldedSourcePositions();
+    state.horizontalScroll = m_editor->horizontalScrollBar()->value();
+    if (m_currentPath.isEmpty()) {
+        state.draftText = m_editor->toPlainText();
+        state.draftTitle = m_titleEdit->text();
+        state.draftDirectory = m_pendingNoteDir;
+        state.draftModified = m_editor->sourceDocument()->isModified();
+    } else {
+        m_cursorPositions[m_currentPath] = state.position;
+    }
+    m_searchPreview = state;
+}
+
+void MainWindow::previewSearchMatch(const QString &path, int position,
+                                    int length) {
+    if (!m_searchPreview || !m_vault || !QFileInfo::exists(path))
+        return;
+    m_searchPreview->previewed = true;
+    openNoteByPath(path, false, !m_currentPath.isEmpty());
+    if (m_currentPath == path) {
+        m_editor->revealSourceMatch(position, length);
+        positionSearchPreview();
+    }
+}
+
+void MainWindow::positionSearchPreview() {
+    if (!m_searchPreview || !m_searchPreview->previewed ||
+        !m_searchPopup->isVisible())
+        return;
+    const int popupTop = m_editor->viewport()
+                             ->mapFromGlobal(m_searchPopup->mapToGlobal(QPoint()))
+                             .y();
+    m_editor->positionSearchMatchAbove(popupTop - 12);
+}
+
+void MainWindow::finishSearchPreview(bool accept) {
+    if (!m_searchPreview)
+        return;
+    const SearchPreview state = *m_searchPreview;
+    if (accept && state.previewed) {
+        m_searchPreview.reset();
+        pushHistory({PageLocation::Kind::Note, m_currentPath});
+        VaultSettings::setValue(
+            m_vault->root(), QStringLiteral("lastNote"),
+            QDir(m_vault->root()).relativeFilePath(m_currentPath));
+    } else if (state.previewed) {
+        if (!state.notePath.isEmpty()) {
+            openNoteByPath(state.notePath, false, true);
+        } else {
+            saveCurrent();
+            m_loading = true;
+            m_editor->clearFolds();
+            m_editor->setPlainText(state.draftText);
+            m_editor->setImagePaths(state.draftDirectory, m_vault->root());
+            m_editor->sourceDocument()->setModified(state.draftModified);
+            m_currentPath.clear();
+            m_currentTitle.clear();
+            m_pendingNoteDir = state.draftDirectory;
+            const QSignalBlocker titleSignals(m_titleEdit);
+            m_titleEdit->setText(state.draftTitle);
+            m_loading = false;
+            watchCurrent();
+            showNotePage();
+            selectInTree(QString());
+            setWindowTitle(QStringLiteral("Emerald — New Note"));
+        }
+        m_editor->restoreFoldedSourcePositions(state.folds);
+        QTextCursor cursor(m_editor->sourceDocument());
+        const int end = m_editor->sourceDocument()->characterCount() - 1;
+        cursor.setPosition(qBound(0, state.anchor, end));
+        cursor.setPosition(qBound(0, state.position, end),
+                           QTextCursor::KeepAnchor);
+        m_editor->setSourceTextCursor(cursor);
+        m_editor->restoreReadScrollPosition(state.scroll);
+        m_editor->horizontalScrollBar()->setValue(state.horizontalScroll);
+        if (state.page.kind != PageLocation::Kind::Note)
+            openHistoryLocation(state.page, false);
+        m_searchPreview.reset();
+    } else {
+        m_searchPreview.reset();
+    }
+    updateNavActions();
+}
+
 void MainWindow::openSearch() {
     if (m_vault)
         m_searchPopup->showCentered(false);
@@ -5512,30 +5649,13 @@ void MainWindow::findInFile(bool forward) {
 }
 
 void MainWindow::updateFindCounter() {
-    if (!m_findCounter || !m_findInput || !m_editor)
+    if (!m_findCounter || !m_findInput || !m_editor || m_updatingFind)
         return;
-    const QString query = m_findInput->text();
-    if (query.isEmpty()) {
-        m_findCounter->setText(tr("0 / 0"));
-        return;
-    }
-
-    const int selectedStart =
-        m_editor->sourceTextCursor().selectionStart();
-    int current = 0;
-    int total = 0;
-    QTextCursor search(m_editor->sourceDocument());
-    while (true) {
-        const QTextCursor match =
-            m_editor->sourceDocument()->find(query, search);
-        if (match.isNull())
-            break;
-        ++total;
-        if (match.selectionStart() == selectedStart)
-            current = total;
-        search.setPosition(match.selectionEnd());
-    }
+    m_updatingFind = true;
+    const auto [current, total] =
+        m_editor->highlightSearchMatches(m_findInput->text());
     m_findCounter->setText(tr("%1 / %2").arg(current).arg(total));
+    m_updatingFind = false;
 }
 
 void MainWindow::positionFindBar() {
@@ -5611,6 +5731,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         auto *ke = static_cast<QKeyEvent *>(event);
         if (ke->key() == Qt::Key_Escape) {
             m_findBar->hide();
+            m_editor->highlightSearchMatches(QString());
             m_editor->setFocus();
             return true;
         }
@@ -6034,6 +6155,8 @@ void MainWindow::newFolderIn(const QString &dir) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    if (m_searchPreview && m_searchPopup)
+        m_searchPopup->hide();
     // Dialog actions keep synchronous, stack-scoped results through small
     // non-modal event loops. Unwind the deepest visible child first, then retry
     // closing so no parent window can destroy a dialog whose loop is active.

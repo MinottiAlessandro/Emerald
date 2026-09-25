@@ -296,16 +296,15 @@ QLabel#searchPopupDismissHint {
     font-size: 11px;
 }
 QLineEdit#searchInput {
-    background: #181c19;
+    background: transparent;
     color: #d7eee2;
-    border: 1px solid #294035;
-    border-radius: 5px;
+    border: none;
     padding: 7px 9px;
     font-size: 14px;
     selection-background-color: #1f4a33;
 }
 QLineEdit#searchInput:focus {
-    border-color: #39bd79;
+    border: none;
 }
 QListWidget#searchResults {
     background: transparent;
@@ -334,15 +333,14 @@ QFrame#findBar {
     border-radius: 6px;
 }
 QLineEdit#findInput {
-    background: #181c19;
+    background: transparent;
     color: #d7eee2;
-    border: 1px solid #294035;
-    border-radius: 4px;
+    border: none;
     padding: 5px 8px;
     selection-background-color: #1f4a33;
 }
 QLineEdit#findInput:focus {
-    border: 1px solid #2bbf74;
+    border: none;
 }
 
 /* Hold-to-view keyboard shortcut cheatsheet. It is a child overlay of the

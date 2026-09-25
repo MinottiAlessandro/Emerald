@@ -988,6 +988,251 @@ void testWikiHeadingNavigation() {
   settings.clear();
 }
 
+void testSearchPreview() {
+  for (bool readMode : {false, true}) {
+    QSettings settings;
+    settings.clear();
+    settings.setValue(QStringLiteral("editorFontSize"), 18);
+    QTemporaryDir vault;
+    const QString alpha = vault.filePath(QStringLiteral("Alpha.md"));
+    const QString beta = vault.filePath(QStringLiteral("Beta.md"));
+    QStringList rows;
+    for (int i = 0; i < 100; ++i)
+      rows.append(i == 10 || i == 70
+                      ? QStringLiteral("needle in Alpha")
+                      : QStringLiteral("Alpha paragraph %1").arg(i));
+    writeFile(alpha, rows.join(QLatin1Char('\n')));
+    writeFile(beta,
+              QStringLiteral("start\nneedle in Beta\nlast needle\n```cpp\n") +
+                  QStringLiteral("ordinary code line\n").repeated(30) +
+                  QStringLiteral("needle code needle\n```\nend"));
+    settings.setValue(QStringLiteral("lastVault"), vault.path());
+    VaultSettings::setValue(vault.path(), QStringLiteral("lastNote"),
+                            QStringLiteral("Alpha.md"));
+    VaultSettings::setValue(vault.path(), QStringLiteral("readMode"),
+                            readMode ? QStringLiteral("true")
+                                     : QStringLiteral("false"));
+    MainWindow window;
+    window.resize(1000, 520);
+    window.show();
+    auto *editor = window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+    auto *title = window.findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    auto *search =
+        window.findChild<QAction *>(QStringLiteral("searchVaultAction"));
+    auto *popup = window.findChild<SearchPopup *>();
+    auto *input = window.findChild<QLineEdit *>(QStringLiteral("searchInput"));
+    auto *results =
+        window.findChild<QListWidget *>(QStringLiteral("searchResults"));
+    auto *back = window.findChild<QAction *>(QStringLiteral("backAction"));
+    check(waitUntil([&] {
+            return editor && title && title->text() == QStringLiteral("Alpha");
+          }) &&
+              search && popup && input && results && back,
+          QStringLiteral("search preview fixture opens"));
+    if (!editor || !title || !search || !popup || !input || !results || !back)
+      continue;
+    QTextCursor start(editor->sourceDocument()->findBlockByNumber(45));
+    start.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor, 5);
+    editor->setSourceTextCursor(start);
+    editor->centerCursor();
+    QApplication::processEvents();
+    const int originalPosition = editor->sourceTextCursor().position();
+    const int originalAnchor = editor->sourceTextCursor().anchor();
+    const ReadScrollPosition scroll = editor->captureReadScrollPosition();
+    const bool backBefore = back->isEnabled();
+    search->trigger();
+    check(waitUntil([&] {
+            input->clear();
+            input->setText(QStringLiteral("needle"));
+            return results->count() == 6;
+          }),
+          QStringLiteral("global search lists all occurrences across notes"));
+    check(results->currentRow() == -1 &&
+              title->text() == QStringLiteral("Alpha") &&
+              editor->sourceTextCursor().position() == originalPosition,
+          QStringLiteral(
+              "typing alone does not select a result or move the editor"));
+    sendKey(input, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QApplication::processEvents();
+    check(results->currentRow() == 0 && input->hasFocus() &&
+              editor->sourceTextCursor().selectedText() ==
+                  QStringLiteral("needle"),
+          QStringLiteral("arrow preview selects the exact occurrence and "
+                         "retains search focus"));
+    const auto previewAbovePopup = [&] {
+      const QRectF match = editor->searchMatchRect();
+      const int popupTop = editor->viewport()
+                               ->mapFromGlobal(popup->mapToGlobal(QPoint()))
+                               .y();
+      if (!(match.top() >= 0 && match.bottom() <= popupTop - 8 &&
+            qAbs(match.bottom() - (popupTop - 12)) <= 2))
+        QTextStream(stderr) << "Preview geometry: mode=" << readMode
+                            << " match=" << match.top() << ":" << match.bottom()
+                            << " popup=" << popupTop << " scroll="
+                            << editor->verticalScrollBar()->value() << '\n';
+      return match.top() >= 0 && match.bottom() <= popupTop - 8 &&
+             qAbs(match.bottom() - (popupTop - 12)) <= 2;
+    };
+    check(previewAbovePopup(),
+          QStringLiteral("global search scrolls the match just above the popup"));
+    check(!input->hasFrame(),
+          QStringLiteral("global search input has no inner frame"));
+    window.resize(1040, 600);
+    QApplication::processEvents();
+    QApplication::processEvents();
+    check(previewAbovePopup(),
+          QStringLiteral("resizing keeps the preview above the popup"));
+    const QString qaDir = qEnvironmentVariable("EMERALD_SEARCH_QA_DIR");
+    if (!qaDir.isEmpty())
+      window.grab().save(qaDir + (readMode
+                                      ? QStringLiteral("/global-read.png")
+                                      : QStringLiteral("/global-edit.png")));
+    while (results->currentRow() < results->count() - 1 &&
+           title->text() != QStringLiteral("Beta"))
+      sendKey(input, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    check(title->text() == QStringLiteral("Beta") && popup->isVisible(),
+          QStringLiteral("arrow preview crosses notes without closing search"));
+    // Cancel before deferred centering runs: it must not displace restoration.
+    sendKey(input, QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::processEvents();
+    const auto restored = editor->captureReadScrollPosition();
+    check(title->text() == QStringLiteral("Alpha") &&
+              editor->sourceTextCursor().position() == originalPosition &&
+              editor->sourceTextCursor().anchor() == originalAnchor &&
+              qAbs(restored.sourcePosition - scroll.sourcePosition) <= 2 &&
+              qAbs(restored.viewportOffset - scroll.viewportOffset) <= 3 &&
+              back->isEnabled() == backBefore,
+          QStringLiteral("Escape restores the note, selection, scroll and "
+                         "history in %1 mode "
+                         "(note %2, cursor %3/%4 expected %5/%6, scroll %7/%8 "
+                         "expected %9/%10, back %11/%12)")
+              .arg(readMode ? QStringLiteral("Read") : QStringLiteral("Edit"))
+              .arg(title->text())
+              .arg(editor->sourceTextCursor().position())
+              .arg(editor->sourceTextCursor().anchor())
+              .arg(originalPosition)
+              .arg(originalAnchor)
+              .arg(restored.sourcePosition)
+              .arg(restored.viewportOffset)
+              .arg(scroll.sourcePosition)
+              .arg(scroll.viewportOffset)
+              .arg(back->isEnabled())
+              .arg(backBefore));
+    search->trigger();
+    input->setText(QStringLiteral("needle"));
+    do {
+      sendKey(input, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    } while (results->currentRow() < results->count() - 1 &&
+             title->text() != QStringLiteral("Beta"));
+    while (results->currentRow() < results->count() - 1)
+      sendKey(input, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    check(editor->sourceTextCursor().selectedText() ==
+                  QStringLiteral("needle") &&
+              editor->sourceTextCursor().selectionStart() ==
+                  results->currentItem()->data(Qt::UserRole + 1).toInt(),
+          QStringLiteral("previews distinguish repeated occurrences inside a "
+                         "rendered code block"));
+    QApplication::processEvents();
+    check(previewAbovePopup(),
+          QStringLiteral("a match inside a tall code block stays above the popup"));
+    if (!qaDir.isEmpty())
+      window.grab().save(qaDir + (readMode
+                                      ? QStringLiteral("/global-code-read.png")
+                                      : QStringLiteral("/global-code-edit.png")));
+    const int acceptedPosition = editor->sourceTextCursor().selectionStart();
+    sendKey(input, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::processEvents();
+    check(!popup->isVisible() && title->text() == QStringLiteral("Beta") &&
+              editor->sourceTextCursor().selectionStart() == acceptedPosition &&
+              back->isEnabled(),
+          QStringLiteral(
+              "Enter keeps the previewed result as a normal history visit"));
+    auto *findAction =
+        window.findChild<QAction *>(QStringLiteral("findAction"));
+    auto *findInput =
+        window.findChild<QLineEdit *>(QStringLiteral("findInput"));
+    if (findAction && findInput) {
+      const QFont editorFont = editor->font();
+      const QFont sourceFont = editor->sourceDocument()->defaultFont();
+      const QFont displayFont = editor->document()->defaultFont();
+      findAction->trigger();
+      findInput->setText(QStringLiteral("needle"));
+      QApplication::processEvents();
+      const auto fontsUnchanged = [&] {
+        return editor->font() == editorFont &&
+               editor->sourceDocument()->defaultFont() == sourceFont &&
+               editor->document()->defaultFont() == displayFont;
+      };
+      check(fontsUnchanged(),
+            QStringLiteral("local highlighting preserves configured fonts"));
+      findInput->clear();
+      QApplication::processEvents();
+      check(fontsUnchanged(),
+            QStringLiteral("clearing Find preserves configured fonts"));
+      findInput->setText(QStringLiteral("needle"));
+      QApplication::processEvents();
+      check(!findInput->hasFrame(),
+            QStringLiteral("local search input has no inner frame"));
+      if (!qaDir.isEmpty())
+        window.grab().save(qaDir + (readMode
+                                        ? QStringLiteral("/local-read.png")
+                                        : QStringLiteral("/local-edit.png")));
+      sendKey(findInput, QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+      check(editor->extraSelections().isEmpty(),
+            QStringLiteral("Escape clears local highlights"));
+      check(fontsUnchanged(),
+            QStringLiteral("closing Find preserves configured fonts"));
+    }
+    back->trigger();
+    QApplication::processEvents();
+    check(title->text() == QStringLiteral("Alpha"),
+          QStringLiteral("Back skips temporary search previews"));
+    auto *graphAction =
+        window.findChild<QAction *>(QStringLiteral("graphViewAction"));
+    auto *graph = window.findChild<GraphPage *>();
+    auto *pages = window.findChild<QStackedWidget *>();
+    check(graphAction && graph && pages,
+          QStringLiteral("graph search controls exist"));
+    if (graphAction && graph && pages) {
+      graphAction->trigger();
+      const QString graphState = graph->sessionState();
+      search->trigger();
+      input->setText(QStringLiteral("needle"));
+      sendKey(input, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+      sendKey(input, QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+      QApplication::processEvents();
+      check(pages->currentWidget() == graph &&
+                graph->sessionState() == graphState,
+            QStringLiteral(
+                "cancelling search from a graph restores its page and camera"));
+      back->trigger();
+    }
+    if (!readMode) {
+      auto *newNote =
+          window.findChild<QAction *>(QStringLiteral("newNoteAction"));
+      check(newNote != nullptr, QStringLiteral("new-note action exists"));
+      if (newNote) {
+        newNote->trigger();
+        editor->insertPlainText(QStringLiteral("Unsaved draft body"));
+        const int draftPosition = editor->sourceTextCursor().position();
+        search->trigger();
+        input->setText(QStringLiteral("needle"));
+        sendKey(input, QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        sendKey(input, QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::processEvents();
+        check(title->text().isEmpty() &&
+                  editor->toPlainText() ==
+                      QStringLiteral("Unsaved draft body") &&
+                  editor->sourceTextCursor().position() == draftPosition,
+              QStringLiteral("cancelling search preserves an unnamed draft"));
+      }
+    }
+    window.close();
+    QApplication::processEvents();
+    settings.clear();
+  }
+}
+
 void testReadModeNavigationState() {
   QSettings settings;
   settings.clear();
@@ -2124,6 +2369,7 @@ int main(int argc, char **argv) {
   testVaultSwitcherModifiedOrder();
   testWikiHeadingNavigation();
   testReadModeNavigationState();
+  testSearchPreview();
   testFullWidthEditorPreference();
   testFileTreeSortPreference();
   testReleaseChannelPreference();

@@ -145,8 +145,10 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] **Broken Links** (`Ctrl+Shift+B`, gear menu, or **Settings → Vault → Broken links → Review…**) opens a search-style popup. Confirm missing targets and targets containing only whitespace are labelled correctly; populated targets and links inside inline/fenced code are absent. Type to filter, then press Enter or click a row and confirm its source note opens with the exact `[[link]]` selected. An issue-free vault shows “No broken links found”. ◆
 
 ## 9. Search
-- [ ] **Find in note** (`Ctrl+F`) shows `current / total`; Enter and Shift+Enter update the counter while stepping through matches.
-- [ ] **Search vault** (`Ctrl+Shift+F`) — popup with ranked results and `current / total`; type to filter, ↑/↓ to move and update the counter, Enter jumps to the selected match.
+- [ ] **Find in note** (`Ctrl+F`) highlights all matches at once, with a slightly lighter current match, in both Edit and Read Mode (including code blocks). Enter and Shift+Enter step through matches and update `current / total`; clearing the query or closing Find removes the highlights. The configured font and text size stay unchanged throughout. The input has no inner border.
+- [ ] **Search vault** (`Ctrl+Shift+F`) lists every occurrence, including repeated matches on one line and more than 30 results, ranked across notes with source line numbers. Exact phrases rank above separated terms and word prefixes. Comments and mascot headers remain excluded.
+- [ ] Global search starts with `0 / total` and no selected result. Typing never moves the editor; the first arrow selects a result, and further arrows preview each exact occurrence just above the floating popup, including in other notes and inside tall code blocks. Resizing keeps the match visible, and typing focus stays in search. The input has no inner border.
+- [ ] Enter keeps the previewed note and match. Esc restores the note, selection, and scroll position where search began in Edit and Read Mode. Temporary previews do not fill Back/Forward history. Opening another search utility cancels the preview.
 
 ## 9a. Graph View
 - [ ] **Open Graph View** (`Ctrl+Shift+G` or **Settings → Vault → Graph view → Open global**). It replaces the note in the central pane; no dialog, dock, or second top-level window appears. ◆

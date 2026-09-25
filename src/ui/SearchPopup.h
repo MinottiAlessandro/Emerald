@@ -35,6 +35,8 @@ public:
 
     // titlesOnly = a quick "go to note" picker that matches note titles only.
     void showCentered(bool titlesOnly = false);
+    // Leave visible note text above the floating full-text search popup.
+    void setPreviewViewport(QWidget *viewport);
 
     // A quick vault switcher: show the given vault folders (full paths) in the
     // caller's order, filter by name, and emit openVaultRequested() for a pick.
@@ -54,6 +56,11 @@ public:
 
 signals:
     void openRequested(const QString &path, const QString &query);
+    void searchStarted();
+    void previewRequested(const QString &path, int position, int length);
+    void previewGeometryChanged();
+    void matchAccepted(const QString &path, int position, int length);
+    void searchCancelled();
     void openVaultRequested(const QString &path);
     void templateRequested(const QString &path);
     void brokenLinkRequested(const QString &path, int position, int length);
@@ -77,6 +84,7 @@ private:
     QLineEdit *m_input = nullptr;
     QListWidget *m_results = nullptr;
     bool m_titlesOnly = false;
+    bool m_searchSessionActive = false;
     bool m_vaultMode = false;     // listing vault folders instead of notes
     bool m_templateMode = false;  // listing template files instead of notes
     bool m_brokenLinkMode = false; // listing broken wiki-link occurrences
@@ -86,4 +94,5 @@ private:
     QList<BrokenLinkItem> m_brokenLinkItems;
     QList<HeadingItem> m_headingItems;
     QPointer<QWidget> m_previousFocus;
+    QPointer<QWidget> m_previewViewport;
 };

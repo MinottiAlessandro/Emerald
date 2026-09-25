@@ -978,6 +978,37 @@ int main(int argc, char **argv) {
                       QStringLiteral("Copy from an unclosed block"));
     }
 
+    for (bool readMode : {false, true}) {
+        MarkdownEditor findEditor;
+        findEditor.resize(420, 220);
+        findEditor.show();
+        const QString source = QStringLiteral(
+            "needle and NEEDLE\n```text\nneedle needle\n```\nlast needle");
+        findEditor.setPlainText(source);
+        findEditor.setReadMode(readMode);
+        findEditor.jumpToMatch(QStringLiteral("needle"));
+        const auto counts =
+            findEditor.highlightSearchMatches(QStringLiteral("needle"));
+        check(
+            counts.first == 1 && counts.second == 5,
+            QStringLiteral(
+                "highlight all includes prose and code in both editor modes"));
+        const auto highlights = findEditor.extraSelections();
+        check(highlights.size() == (readMode ? 3 : 5) &&
+                  highlights.first().format.background().color().lightness() >
+                      highlights.at(1).format.background().color().lightness(),
+              QStringLiteral(
+                  "all text matches are marked and the active one is lighter"));
+        check(findEditor.toPlainText() == source &&
+                  !findEditor.sourceDocument()->isModified() &&
+                  !findEditor.sourceDocument()->isUndoAvailable(),
+              QStringLiteral(
+                  "search highlighting preserves source and undo history"));
+        findEditor.highlightSearchMatches(QString());
+        check(findEditor.extraSelections().isEmpty(),
+              QStringLiteral("closing local search clears highlights"));
+    }
+
     const QString tableSource = QStringLiteral(
         "| Name  | Score |\n| :---- | ----: |\n| Ada   |    10 |\n"
         "| Grace |     9 |\nafter table");

@@ -8,6 +8,13 @@
 // Shared visual tokens for Markdown constructs rendered by both the live
 // editor highlighter and the presentation-only Read Mode document.
 namespace MarkdownStyle {
+inline QColor searchBackground(bool current = false) {
+    const QColor base = AppTheme::color(QColor(0x31, 0x51, 0x40));
+    return current ? base.lighter(130) : base;
+}
+inline QColor searchForeground() {
+    return AppTheme::color(QColor(0xe1, 0xf4, 0xea));
+}
 inline QColor highlightForeground() {
     return AppTheme::color(QColor(0x10, 0x18, 0x14));
 }

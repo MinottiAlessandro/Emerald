@@ -14,10 +14,22 @@
 QList<SearchIndex::Result> SearchIndex::search(const QString &query, int) const {
     if (query.isEmpty())
         return {};
-    return {{QStringLiteral("/vault/One.md"), QStringLiteral("One"), {}, 3},
-            {QStringLiteral("/vault/Two.md"), QStringLiteral("Two"), {}, 2},
-            {QStringLiteral("/vault/Three.md"), QStringLiteral("Three"), {},
-             1}};
+    return {
+        {QStringLiteral("/vault/One.md"),
+         QStringLiteral("One"),
+         {},
+         3,
+         10,
+         6,
+         2},
+        {QStringLiteral("/vault/One.md"),
+         QStringLiteral("One"),
+         {},
+         2,
+         40,
+         6,
+         5},
+        {QStringLiteral("/vault/Three.md"), QStringLiteral("Three"), {}, 1}};
 }
 
 QList<SearchIndex::Result> SearchIndex::searchTitles(const QString &, int) const {
@@ -91,15 +103,55 @@ int main(int argc, char **argv) {
               QStringLiteral("accepting a broken link dismisses the popup"));
 
         popup.showCentered(false);
+        int previews = 0;
+        int accepted = 0;
+        int cancelled = 0;
+        int previewPosition = -1;
+        QObject::connect(&popup, &SearchPopup::previewRequested,
+                         [&](const QString &, int position, int) {
+                             ++previews;
+                             previewPosition = position;
+                         });
+        QObject::connect(&popup, &SearchPopup::matchAccepted,
+                         [&](const QString &, int, int) { ++accepted; });
+        QObject::connect(&popup, &SearchPopup::searchCancelled,
+                         [&] { ++cancelled; });
         input->setText(QStringLiteral("needle"));
         QApplication::processEvents();
         check(results->count() == 3 && counter && counter->isVisible() &&
-                  counter->text() == QStringLiteral("1 / 3"),
-              QStringLiteral("vault search shows the selected match and total"));
+                  counter->text() == QStringLiteral("0 / 3") &&
+                  results->currentRow() == -1 && previews == 0,
+              QStringLiteral(
+                  "vault search starts with no selected result or preview"));
+        QApplication::sendEvent(input, &enter);
+        check(popup.isVisible() && accepted == 0,
+              QStringLiteral("Enter without a selection does not open a note"));
         QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(input, &down);
+        check(counter->text() == QStringLiteral("1 / 3") && previews == 1 &&
+                  previewPosition == 10 && input->hasFocus(),
+              QStringLiteral(
+                  "the first arrow selects and previews the first occurrence"));
         QApplication::sendEvent(input, &down);
         check(counter && counter->text() == QStringLiteral("2 / 3"),
               QStringLiteral("vault search counter follows result navigation"));
+        check(previewPosition == 40 && previews == 2,
+              QStringLiteral(
+                  "a second occurrence in the same note has its own preview"));
+        input->setText(QStringLiteral("changed"));
+        check(results->currentRow() == -1 && previews == 2,
+              QStringLiteral(
+                  "query changes clear selection without previewing a result"));
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(input, &escape);
+        check(cancelled == 1 && accepted == 0,
+              QStringLiteral("Escape cancels the preview session"));
+        popup.showCentered(false);
+        input->setText(QStringLiteral("needle"));
+        QApplication::sendEvent(input, &down);
+        QApplication::sendEvent(input, &enter);
+        check(accepted == 1 && cancelled == 1 && !popup.isVisible(),
+              QStringLiteral("Enter commits without also cancelling"));
 
         popup.showCentered(true);
         QApplication::processEvents();

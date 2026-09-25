@@ -1658,8 +1658,154 @@ bool MarkdownEditor::findAndCenter(const QString &text,
     // and a newly-opened note may not have completed its first viewport layout.
     // Re-centre once on the settled layout; the context object cancels this
     // safely if the editor is destroyed first.
-    QTimer::singleShot(0, this, [this] { centerCursor(); });
+    const quint64 generation = m_scrollRestoreGeneration;
+    QTimer::singleShot(0, this, [this, generation] {
+        if (generation == m_scrollRestoreGeneration)
+            centerCursor();
+    });
     return true;
+}
+
+QPair<int, int> MarkdownEditor::highlightSearchMatches(const QString &query) {
+    QList<QTextEdit::ExtraSelection> highlights;
+    QList<int> positions;
+    const int selectedStart = sourceTextCursor().selectionStart();
+    if (!query.isEmpty()) {
+        QTextCursor search(document());
+        while (true) {
+            const QTextCursor match = document()->find(query, search);
+            if (match.isNull())
+                break;
+            const int sourceStart =
+                m_readMode ? MarkdownReadRenderer::mapToSourceCursor(
+                                 m_sourceDocument, match)
+                                 .selectionStart()
+                           : match.selectionStart();
+            positions.append(sourceStart);
+            QTextCharFormat format;
+            format.setBackground(
+                MarkdownStyle::searchBackground(sourceStart == selectedStart));
+            format.setForeground(MarkdownStyle::searchForeground());
+            highlights.append({match, format});
+            search = match;
+        }
+    }
+    setExtraSelections(highlights);
+    // The real selection is painted over extra selections. Give it the same
+    // slightly lighter color while the find overlay owns the selection.
+    const QString searchStyle =
+        query.isEmpty()
+            ? QString()
+            : QStringLiteral(
+                  "selection-background-color: %1; selection-color: %2;")
+                  .arg(MarkdownStyle::searchBackground(true).name(),
+                       MarkdownStyle::searchForeground().name());
+    if (styleSheet() != searchStyle) {
+        // Qt repolishes the widget even for a selection-color-only change and
+        // can replace its explicit font with the application's smaller font.
+        // Restore both fonts without rebuilding the Markdown presentation.
+        const QFont editorFont = font();
+        const QFont documentFont = document()->defaultFont();
+        setStyleSheet(searchStyle);
+        setFont(editorFont);
+        document()->setDefaultFont(documentFont);
+    }
+
+    if (m_readMode && m_readDocument) {
+        QList<QTextCursor> objects;
+        for (QTextBlock block = m_readDocument->firstBlock(); block.isValid();
+             block = block.next())
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const QTextFragment fragment = it.fragment();
+                if (MarkdownReadObjectRenderer::kind(fragment.charFormat()) !=
+                    MarkdownReadObjectRenderer::Kind::CodeBlock)
+                    continue;
+                QTextCursor cursor(m_readDocument);
+                cursor.setPosition(fragment.position());
+                cursor.setPosition(fragment.position() + fragment.length(),
+                                   QTextCursor::KeepAnchor);
+                objects.append(cursor);
+            }
+        for (QTextCursor &object : objects) {
+            QTextCharFormat format = object.charFormat();
+            const QTextCharFormat original = format;
+            MarkdownReadObjectRenderer::setCodeSearchQuery(format, query);
+            MarkdownReadObjectRenderer::setCodeSearchMatch(format, -1, 0);
+            if (!query.isEmpty()) {
+                const QString code =
+                    MarkdownReadObjectRenderer::codeText(format);
+                const int sourceStart =
+                    MarkdownReadObjectRenderer::codeSourceStart(format);
+                int from = 0;
+                while (from < code.size()) {
+                    const int at =
+                        code.indexOf(query, from, Qt::CaseInsensitive);
+                    if (at < 0)
+                        break;
+                    positions.append(sourceStart + at);
+                    if (sourceStart + at == selectedStart)
+                        MarkdownReadObjectRenderer::setCodeSearchMatch(
+                            format, at, query.size());
+                    from = at + query.size();
+                }
+            }
+            if (format != original)
+                object.setCharFormat(format);
+        }
+        m_readDocument->setModified(false);
+    }
+    std::sort(positions.begin(), positions.end());
+    const int selected = positions.indexOf(selectedStart);
+    return {selected < 0 ? 0 : selected + 1, positions.size()};
+}
+
+void MarkdownEditor::revealSourceMatch(int position, int length) {
+    QTextCursor cursor(m_sourceDocument);
+    const int start = qBound(firstContentPosition(), position,
+                             m_sourceDocument->characterCount() - 1);
+    cursor.setPosition(start);
+    cursor.setPosition(
+        qMin(start + qMax(0, length), m_sourceDocument->characterCount() - 1),
+        QTextCursor::KeepAnchor);
+    const int sourceBlock = cursor.blockNumber();
+    const auto oldSize = m_folds.size();
+    m_folds.erase(
+        std::remove_if(m_folds.begin(), m_folds.end(),
+                       [sourceBlock](const Fold &fold) {
+                           return fold.anchor.isValid() && fold.end.isValid() &&
+                                  sourceBlock > fold.anchor.blockNumber() &&
+                                  sourceBlock <= fold.end.blockNumber();
+                       }),
+        m_folds.end());
+    if (m_folds.size() != oldSize)
+        reapplyFolds();
+    setSourceTextCursor(cursor);
+    if (m_readMode) {
+        // A long code block maps many source characters to one read object.
+        // Both ends of a late match can map to the object's trailing edge;
+        // select the actual object before changing its search decoration.
+        QTextCursor object(textCursor().block());
+        QTextCharFormat format = readObjectFormat(object.block());
+        const int codeStart =
+            MarkdownReadObjectRenderer::codeSourceStart(format);
+        if (codeStart >= 0 && start >= codeStart &&
+            start + length <=
+                codeStart +
+                    MarkdownReadObjectRenderer::codeSourceLength(format)) {
+            object.movePosition(QTextCursor::NextCharacter,
+                                QTextCursor::KeepAnchor);
+            MarkdownReadObjectRenderer::setCodeSearchMatch(
+                format, start - codeStart, length);
+            object.setCharFormat(format);
+            m_readDocument->setModified(false);
+        }
+    }
+    centerCursor();
+    const quint64 generation = m_scrollRestoreGeneration;
+    QTimer::singleShot(0, this, [this, generation] {
+        if (generation == m_scrollRestoreGeneration)
+            centerCursor();
+    });
 }
 
 void MarkdownEditor::centerCursor() {
@@ -1669,6 +1815,37 @@ void MarkdownEditor::centerCursor() {
     ++m_scrollRestoreGeneration;
     const int delta = cursorRect().center().y() - viewport()->height() / 2;
     verticalScrollBar()->setValue(verticalScrollBar()->value() + delta);
+}
+
+QRectF MarkdownEditor::searchMatchRect() const {
+    QTextCursor cursor = textCursor();
+    cursor.setPosition(cursor.selectionStart());
+    if (m_readMode) {
+        const QTextBlock block = cursor.block();
+        const QRectF codeMatch = MarkdownReadObjectRenderer::codeSearchMatchRect(
+            readObjectFormat(block), readObjectRect(block));
+        if (!codeMatch.isEmpty())
+            return codeMatch;
+    }
+    return cursorRect(cursor);
+}
+
+void MarkdownEditor::positionSearchMatchAbove(int viewportBottom) {
+    stopSmoothScroll();
+    const quint64 generation = ++m_scrollRestoreGeneration;
+    const auto align = [this, viewportBottom, generation] {
+        if (generation != m_scrollRestoreGeneration)
+            return;
+        const QRectF match = searchMatchRect();
+        const qreal bottom = qMax(match.height(), qreal(viewportBottom));
+        updateScrollPastEndRange();
+        verticalScrollBar()->setValue(qRound(verticalScrollBar()->value() +
+                                             match.bottom() - bottom));
+    };
+    align();
+    // A new note or a resize lays out lazily. Escape invalidates this pass via
+    // the same generation used for restoring the original reading position.
+    QTimer::singleShot(0, this, align);
 }
 
 void MarkdownEditor::setReadMode(bool enabled) {
@@ -4435,6 +4612,24 @@ void MarkdownEditor::toggleFoldAt(const QTextBlock &heading) {
 // QTextBlock::text() on freed memory and crash. Clearing the list first means
 // reapplyFolds() early-returns on the empty set instead.
 void MarkdownEditor::clearFolds() { m_folds.clear(); }
+
+QList<int> MarkdownEditor::foldedSourcePositions() const {
+    QList<int> positions;
+    for (const Fold &fold : m_folds)
+        if (fold.anchor.isValid())
+            positions.append(fold.anchor.position());
+    return positions;
+}
+
+void MarkdownEditor::restoreFoldedSourcePositions(const QList<int> &positions) {
+    clearFolds();
+    reapplyFolds();
+    for (int position : positions) {
+        const QTextBlock block = m_sourceDocument->findBlock(position);
+        if (block.isValid() && block.position() == position)
+            toggleFoldAt(block);
+    }
+}
 
 void MarkdownEditor::reapplyFolds() {
     if (m_applyingFolds)

@@ -2,6 +2,7 @@
 
 #include "AppTheme.h"
 #include "MathRender.h"
+#include "MarkdownStyle.h"
 
 #include <QApplication>
 #include <QFileInfo>
@@ -97,7 +98,8 @@ QPixmap imagePixmap(const QString &path, const QSize &logicalSize, qreal dpr) {
 }
 
 void drawWrappedCode(QPainter &painter, const QRectF &rect, const QString &code,
-                     const QFont &font, int matchStart, int matchLength) {
+                     const QFont &font, int matchStart, int matchLength,
+                     const QString &query) {
     QTextOption option;
     option.setWrapMode(QTextOption::WrapAnywhere);
     const QStringList lines = code.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
@@ -121,13 +123,31 @@ void drawWrappedCode(QPainter &painter, const QRectF &rect, const QString &code,
         }
         layout.endLayout();
         QList<QTextLayout::FormatRange> selections;
+        if (!query.isEmpty()) {
+            int from = 0;
+            while (from < text.size()) {
+                const int at = text.indexOf(query, from, Qt::CaseInsensitive);
+                if (at < 0)
+                    break;
+                QTextCharFormat highlight;
+                highlight.setBackground(MarkdownStyle::searchBackground());
+                highlight.setForeground(MarkdownStyle::searchForeground());
+                selections.append({at, int(query.size()), highlight});
+                from = at + query.size();
+            }
+        }
         const int lineEnd = lineStart + text.size();
         const int selectedStart = qMax(lineStart, matchStart);
         const int selectedEnd = qMin(lineEnd, matchEnd);
         if (selectedStart < selectedEnd) {
             QTextCharFormat selection;
-            selection.setBackground(palette.brush(QPalette::Highlight));
-            selection.setForeground(palette.brush(QPalette::HighlightedText));
+            selection.setBackground(
+                query.isEmpty()
+                    ? palette.brush(QPalette::Highlight)
+                    : QBrush(MarkdownStyle::searchBackground(true)));
+            selection.setForeground(
+                query.isEmpty() ? palette.brush(QPalette::HighlightedText)
+                                : QBrush(MarkdownStyle::searchForeground()));
             selections.append({selectedStart - lineStart,
                                selectedEnd - selectedStart, selection});
         }
@@ -363,10 +383,10 @@ void MarkdownReadObjectRenderer::drawObject(QPainter *painter,
         const QFont font = codeFont(character.font());
         painter->setFont(font);
         painter->setPen(AppTheme::color(QColor(0xc7, 0xdd, 0xd1)));
-        drawWrappedCode(*painter, body,
-                        format.stringProperty(PayloadProperty), font,
-                        format.intProperty(CodeSearchMatchStartProperty),
-                        format.intProperty(CodeSearchMatchLengthProperty));
+        drawWrappedCode(*painter, body, format.stringProperty(PayloadProperty),
+                        font, format.intProperty(CodeSearchMatchStartProperty),
+                        format.intProperty(CodeSearchMatchLengthProperty),
+                        format.stringProperty(CodeSearchQueryProperty));
         break;
     }
     case Kind::None:
@@ -476,6 +496,56 @@ QString MarkdownReadObjectRenderer::codeText(const QTextCharFormat &format) {
     return kind(format) == Kind::CodeBlock
                ? format.stringProperty(PayloadProperty)
                : QString();
+}
+
+QRectF MarkdownReadObjectRenderer::codeSearchMatchRect(
+    const QTextCharFormat &format, const QRectF &objectRect) {
+    const int matchStart = codeSearchMatchStart(format);
+    if (matchStart < 0 || objectRect.isEmpty())
+        return {};
+    const int matchLength = codeSearchMatchLength(format);
+    const QFont font = codeFont(format.font());
+    const qreal width = qMax(1.0, objectRect.width() - 2 * CodePadding);
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapAnywhere);
+    qreal y = objectRect.top() + CodeHeaderHeight + CodePadding;
+    int offset = 0;
+    const QStringList lines = codeText(format).split(QLatin1Char('\n'));
+    for (const QString &text : lines) {
+        QTextLayout layout(text.isEmpty() ? QStringLiteral(" ") : text, font);
+        layout.setTextOption(option);
+        layout.beginLayout();
+        QRectF match;
+        while (true) {
+            QTextLine line = layout.createLine();
+            if (!line.isValid())
+                break;
+            line.setLineWidth(width);
+            const int start = matchStart - offset;
+            const int end = line.textStart() + line.textLength();
+            if (start >= line.textStart() && start < end) {
+                const qreal x1 = line.cursorToX(start);
+                const qreal x2 = line.cursorToX(qMin(start + matchLength, end));
+                match = QRectF(objectRect.left() + CodePadding + qMin(x1, x2),
+                               y, qMax(1.0, qAbs(x2 - x1)), line.height());
+                break;
+            }
+            y += line.height();
+        }
+        layout.endLayout();
+        if (!match.isEmpty())
+            return match;
+        offset += text.size() + 1;
+    }
+    return {};
+}
+
+void MarkdownReadObjectRenderer::setCodeSearchQuery(QTextCharFormat &format,
+                                                    const QString &query) {
+    if (query.isEmpty())
+        format.clearProperty(CodeSearchQueryProperty);
+    else
+        format.setProperty(CodeSearchQueryProperty, query);
 }
 
 int MarkdownReadObjectRenderer::codeSourceStart(

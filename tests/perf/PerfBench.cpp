@@ -563,6 +563,14 @@ int main(int argc, char **argv) {
     }
     addMetric(metrics, QStringLiteral("search_p50"), median(searchTimes), QStringLiteral("ms"));
     addMetric(metrics, QStringLiteral("search_p95"), percentile(searchTimes, 0.95), QStringLiteral("ms"));
+    QVector<double> allMatchTimes;
+    for (const QString &query : queries)
+        allMatchTimes << timeMs([&] {
+            volatile int count = index.search(query, 0).size();
+            Q_UNUSED(count);
+        });
+    addMetric(metrics, QStringLiteral("search_all_p95"),
+              percentile(allMatchTimes, 0.95), QStringLiteral("ms"));
     addCurrentRssMetric(QStringLiteral("rss_after_search_current"));
 
     const Note updateNote = vault.notes().at(qMin(10, vault.notes().size() - 1));

@@ -80,6 +80,13 @@ public:
     void jumpToMatch(const QString &text);
     bool findAndCenter(const QString &text,
                        QTextDocument::FindFlags flags = {});
+    // Highlight every visible-text match without changing Markdown or undo.
+    // Returns {current, total}; an empty query removes the highlights.
+    QPair<int, int> highlightSearchMatches(const QString &query);
+    void revealSourceMatch(int position, int length);
+    // Viewport geometry of the first highlighted line, including code objects.
+    QRectF searchMatchRect() const;
+    void positionSearchMatchAbove(int viewportBottom);
     void centerCursor();
 
     // Reading presentation: swap the Markdown source for a separate,
@@ -113,6 +120,8 @@ public:
     // (loading/reloading a note, clearing on a vault switch) so the stale fold
     // blocks are never dereferenced by reapplyFolds() during the load.
     void clearFolds();
+    QList<int> foldedSourcePositions() const;
+    void restoreFoldedSourcePositions(const QList<int> &positions);
 
     // An application-level Alt chord has taken ownership of the keyboard.
     // Cancel both pending and visible Quick Jump state immediately so link

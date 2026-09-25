@@ -584,6 +584,18 @@ if(EMERALD_BUILD_CORE_TESTS)
   emerald_enable_sanitizers(emerald_core_tests)
   add_test(NAME emerald_core_tests COMMAND emerald_core_tests)
 
+  add_executable(emerald_search_index_tests
+    tests/core/SearchIndexTests.cpp
+    src/core/SearchIndex.cpp
+    src/core/Vault.cpp
+    src/core/WikiLink.cpp
+    src/core/MarkdownWikiLinkScanner.cpp
+  )
+  target_include_directories(emerald_search_index_tests PRIVATE src)
+  target_link_libraries(emerald_search_index_tests PRIVATE Qt6::Core)
+  emerald_enable_sanitizers(emerald_search_index_tests)
+  add_test(NAME emerald_search_index_tests COMMAND emerald_search_index_tests)
+
   add_executable(emerald_update_channel_tests
     tests/core/UpdateChannelTests.cpp
     src/core/UpdateChannel.h

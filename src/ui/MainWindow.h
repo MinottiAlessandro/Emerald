@@ -146,6 +146,10 @@ private:
     void watchVaultDirs();
     void selectInTree(const QString &path);
     void openSearch();
+    void beginSearchPreview();
+    void previewSearchMatch(const QString &path, int position, int length);
+    void positionSearchPreview();
+    void finishSearchPreview(bool accept);
     void openQuickOpen();
     void openBrokenLinks();
     void openNoteIndex();
@@ -219,6 +223,21 @@ private:
     // keeping the index on the current note when it survived.
     void pruneHistory();
     void updateNavActions();
+    struct SearchPreview {
+        PageLocation page;
+        QString notePath;
+        QString draftText;
+        QString draftTitle;
+        QString draftDirectory;
+        int position = 0;
+        int anchor = 0;
+        int horizontalScroll = 0;
+        ReadScrollPosition scroll;
+        QList<int> folds;
+        bool draftModified = false;
+        bool previewed = false;
+    };
+    std::optional<SearchPreview> m_searchPreview;
     // Per-note caret positions, remembered so reopening a note restores the
     // caret. Persisted to settings so it survives restarts (saveCursorPositions
     // also folds in the open note's current caret).
@@ -250,6 +269,7 @@ private:
     QFrame *m_findBar = nullptr;       // in-note find overlay
     QLineEdit *m_findInput = nullptr;
     QLabel *m_findCounter = nullptr;
+    bool m_updatingFind = false;
     QFrame *m_shortcutCheatsheet = nullptr; // visible only while Alt+X is held
     QBoxLayout *m_shortcutColumnsLayout = nullptr;
     QTimer *m_shortcutReleaseTimer = nullptr; // filters native repeat releases
