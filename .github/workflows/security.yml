@@ -63,6 +63,7 @@ jobs:
         run: >-
           cmake --build build-security --target
           emerald_core_tests
+          emerald_search_index_tests
           emerald_update_channel_tests
           emerald_runtime_environment_tests
           emerald_linux_update_tests
