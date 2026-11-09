@@ -92,35 +92,44 @@ class PfxEntry : public AffEntry {
   PfxEntry& operator=(const PfxEntry&) = delete;
 
   bool allowCross() const { return ((opts & aeXPRODUCT) != 0); }
+
+  bool applies_to(const struct hentry* he,
+                  const FLAG needflag,
+                  const TraceCtx* t) const;
+
   struct hentry* checkword(const std::string& word,
-                           int start,
-                           int len,
+                           size_t start,
+                           size_t len,
                            char in_compound,
-                           const FLAG needflag = FLAG_NULL);
+                           const FLAG needflag,
+                           AffixScratch& scratch);
 
   struct hentry* check_twosfx(const std::string& word,
-                              int start,
-                              int len,
+                              size_t start,
+                              size_t len,
                               char in_compound,
-                              const FLAG needflag = FLAG_NULL);
+                              const FLAG needflag,
+                              AffixScratch& scratch);
 
   std::string check_morph(const std::string& word,
-                          int start,
-                          int len,
+                          size_t start,
+                          size_t len,
                           char in_compound,
-                          const FLAG needflag = FLAG_NULL);
+                          const FLAG needflag,
+                          AffixScratch& scratch);
 
   std::string check_twosfx_morph(const std::string& word,
-                                 int start,
-                                 int len,
+                                 size_t start,
+                                 size_t len,
                                  char in_compound,
-                                 const FLAG needflag = FLAG_NULL);
+                                 const FLAG needflag,
+                                 AffixScratch& scratch);
 
   FLAG getFlag() { return aflag; }
   const char* getKey() { return appnd.c_str(); }
   std::string add(const char* word, size_t len);
 
-  inline int getKeyLen() { return appnd.size(); }
+  inline size_t getKeyLen() { return appnd.size(); }
 
   inline const char* getMorph() { return morphcode; }
 
@@ -165,28 +174,42 @@ class SfxEntry : public AffEntry {
   explicit SfxEntry(AffixMgr* pmgr);
 
   bool allowCross() const { return ((opts & aeXPRODUCT) != 0); }
+
+  std::string get_condition() const override;
+
+  bool applies_to(const struct hentry* he,
+                  int optflags,
+                  PfxEntry* ep,
+                  const FLAG cclass,
+                  const FLAG needflag,
+                  const FLAG badflag,
+                  const TraceCtx* t) const;
+
   struct hentry* checkword(const std::string& word,
-                           int start,
-                           int len,
+                           size_t start,
+                           size_t len,
                            int optflags,
                            PfxEntry* ppfx,
                            const FLAG cclass,
                            const FLAG needflag,
-                           const FLAG badflag);
+                           const FLAG badflag,
+                           AffixScratch& scratch);
 
   struct hentry* check_twosfx(const std::string& word,
-                              int start,
-                              int len,
+                              size_t start,
+                              size_t len,
                               int optflags,
                               PfxEntry* ppfx,
-                              const FLAG needflag = FLAG_NULL);
+                              const FLAG needflag,
+                              AffixScratch& scratch);
 
   std::string check_twosfx_morph(const std::string& word,
-                                 int start,
-                                 int len,
+                                 size_t start,
+                                 size_t len,
                                  int optflags,
                                  PfxEntry* ppfx,
-                                 const FLAG needflag = FLAG_NULL);
+                                 const FLAG needflag,
+                                 AffixScratch& scratch);
   struct hentry* get_next_homonym(struct hentry* he);
   struct hentry* get_next_homonym(struct hentry* word,
                                   int optflags,
@@ -204,7 +227,7 @@ class SfxEntry : public AffEntry {
   inline unsigned short getContLen() { return contclasslen; }
   inline const char* getAffix() { return appnd.c_str(); }
 
-  inline int getKeyLen() { return appnd.size(); }
+  inline size_t getKeyLen() { return appnd.size(); }
 
   inline SfxEntry* getNext() { return next; }
   inline SfxEntry* getNextNE() { return nextne; }
