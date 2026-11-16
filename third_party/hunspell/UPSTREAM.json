@@ -1,10 +1,10 @@
 {
   "name": "Hunspell",
-  "version": "1.7.3",
-  "tag": "v1.7.3",
-  "sourceArchive": "https://github.com/hunspell/hunspell/archive/refs/tags/v1.7.3.tar.gz",
-  "sourceArchiveSha256": "933be3dac6fd55f6e752331a170efb7e33800e40fae1156d8434cc8c85379a1b",
-  "vendoredTreeSha256": "3bec9a0b172a4fba015feb4fcc56b85ca89b4be9ea76da72951c0f3fdc70b942",
+  "version": "1.7.6",
+  "tag": "v1.7.6",
+  "sourceArchive": "https://github.com/hunspell/hunspell/archive/refs/tags/v1.7.6.tar.gz",
+  "sourceArchiveSha256": "4fa9c52a5337fb0a3e03f3212b6372d0159eac3d1a3e6e938e8897ff3d9c3d0c",
+  "vendoredTreeSha256": "340beb8b9c4c4192e79db153d712a440c5585f1a9dc814fe82489aed3e8d3cc1",
   "vendoredPath": "src/hunspell",
   "vendoredFiles": "The complete upstream src/hunspell directory, unmodified."
 }

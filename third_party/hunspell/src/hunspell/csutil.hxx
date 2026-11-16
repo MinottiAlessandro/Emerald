@@ -84,10 +84,6 @@
 #include "w_char.hxx"
 #include "htypes.hxx"
 
-#ifdef MOZILLA_CLIENT
-#include "nscore.h"  // for mozalloc headers
-#endif
-
 // casing
 #define NOCAP 0
 #define INITCAP 1
@@ -139,6 +135,20 @@ LIBHUNSPELL_DLL_EXPORTED std::string& u16_u8(std::string& dest,
 LIBHUNSPELL_DLL_EXPORTED int u8_u16(std::vector<w_char>& dest,
                                     const std::string& src,
                                     bool only_convert_first_letter = false);
+
+inline bool is_utf8_cont(char c) {
+  return (static_cast<unsigned char>(c) & 0xc0) == 0x80;
+}
+
+// Unlike u8_u16, doesn't warn on malformed sequences.
+inline size_t utf8_next(const std::string& s, size_t pos) {
+  if (pos < s.size()) {
+    ++pos;
+    while (pos < s.size() && is_utf8_cont(s[pos]))
+      ++pos;
+  }
+  return pos;
+}
 
 // remove end of line char(s)
 LIBHUNSPELL_DLL_EXPORTED void mychomp(std::string& s);
@@ -257,6 +267,10 @@ LIBHUNSPELL_DLL_EXPORTED bool parse_array(const std::string& line,
 
 LIBHUNSPELL_DLL_EXPORTED int fieldlen(const char* r);
 
+// append the field of each compound word part of desc except the last, return the offset of that
+// last part, or 0 if desc has no compound word part
+size_t append_compound_parts(const std::string& desc, std::string& result);
+
 LIBHUNSPELL_DLL_EXPORTED bool copy_field(std::string& dest,
                                          const std::string& morph,
                                          const std::string& var);
@@ -318,6 +332,23 @@ inline const char* HENTRY_DATA2(
 inline char* HENTRY_FIND(struct hentry* h, const char* p) {
   char* data = HENTRY_DATA(h);
   return data ? strstr(data, p) : nullptr;
+}
+
+// COMPLEXPREFIXES stores both the word and its morphology in reverse order.
+// Keep synthesized stem fields in that representation too: the final reversal
+// in analyze() must restore st:word, and explicit stem fields must be detected.
+inline void append_morph_stem(std::string& result, const struct hentry* h, bool complexprefixes) {
+  const char* data = HENTRY_DATA(h);
+  if (data && strstr(data, complexprefixes ? ":ts" : MORPH_STEM))
+    return;
+  result.push_back(MSEP_FLD);
+  if (complexprefixes) {
+    result.append(HENTRY_WORD(h));
+    result.append(":ts");
+  } else {
+    result.append(MORPH_STEM);
+    result.append(HENTRY_WORD(h));
+  }
 }
 
 #endif
