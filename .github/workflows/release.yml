@@ -44,10 +44,9 @@ jobs:
           # Intel. The install-qt-action Qt is already universal2, so this only
           # adds the main binary's second slice (negligible size). Single-quote
           # the semicolon list so bash keeps it as one cmake argument.
-          # Pinned to macos-14: the migrated macos-latest (macOS 26 / AppleClang
-          # 21) SDK dropped the legacy AGL framework that Qt 6.8.1 still links,
-          # giving "ld: framework 'AGL' not found". macos-14's SDK still ships it.
-          - { os: macos-14,          name: macos,       cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'", qt_arch: '' }
+          # macOS 14 runners are retired. Use macOS 15 with Xcode 16.4 below:
+          # the macOS 26 SDK dropped AGL, which Qt 6.8.1 still links against.
+          - { os: macos-15,          name: macos,       cmake_args: "-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'", qt_arch: '' }
           - { os: windows-latest,    name: windows,     cmake_args: '', qt_arch: '' }
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -61,6 +60,11 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/azure-cli.list
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           sudo rm -f /etc/apt/sources.list.d/packages-microsoft-com*.list
+
+      - name: Select macOS SDK compatible with Qt 6.8
+        if: matrix.name == 'macos'
+        run: |
+          echo "DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer" >> "$GITHUB_ENV"
 
       - name: Install Qt
         uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
