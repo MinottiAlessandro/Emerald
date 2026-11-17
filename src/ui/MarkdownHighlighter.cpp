@@ -163,9 +163,8 @@ void MarkdownHighlighter::setActiveBlock(int caretBlock, int anchorBlock,
     m_selLast = newLast;
     m_caretColumn = caretColumn;
     m_hasSelection = hasSelection;
-    // Moving within one source line cannot change which Markdown markers are
-    // revealed. It can only move into/out of the word spelling deliberately
-    // suppresses under the caret, so revisit this one block exactly once.
+    // Moving within a line can reveal an image token or change the word whose
+    // spelling is suppressed under the caret. Revisit this block exactly once.
     if (sameBlockState) {
         if (QTextDocument *doc = document())
             rehighlightBlock(doc->findBlockByNumber(caretBlock));
@@ -858,6 +857,32 @@ void MarkdownHighlighter::applyImages(const QString &text,
         }
         if (overlaps)
             continue;
+
+        const bool editingImage = reveal &&
+            (m_hasSelection || m_caretColumn < 0 ||
+             (m_caretColumn >= start && m_caretColumn < end));
+        if (!editingImage && m_inlineImageSizer) {
+            const QSizeF size = m_inlineImageSizer(image);
+            // Reserve one indivisible glyph for the preview. Keeping the rest
+            // tiny avoids splitting the image itself at spaces in alt text or
+            // paths when the paragraph wraps. The source stays plain Markdown.
+            QFont placeholderFont = document()->defaultFont();
+            const qreal height = QFontMetricsF(placeholderFont).height();
+            placeholderFont.setPointSizeF(placeholderFont.pointSizeF() *
+                                          qMax(1.0, size.height() / height));
+            QTextCharFormat placeholder;
+            placeholder.setFont(placeholderFont);
+            placeholder.setForeground(Qt::transparent);
+            placeholder.setFontLetterSpacingType(QFont::AbsoluteSpacing);
+            placeholder.setFontLetterSpacing(size.width() -
+                QFontMetricsF(placeholderFont).horizontalAdvance(text.mid(start, 1)));
+            placeholder.setProperty(InlineImageSizeProperty, size);
+            setFormat(start, image.length, conceal());
+            setFormat(start, 1, placeholder);
+            for (int i = start; i < end && i < consumed.size(); ++i)
+                consumed[i] = true;
+            continue;
+        }
 
         const QTextCharFormat wrapper =
             reveal ? inlineFormat(m_marker) : conceal();

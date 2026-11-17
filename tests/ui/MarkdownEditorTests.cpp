@@ -1966,6 +1966,95 @@ int main(int argc, char **argv) {
           QStringLiteral("reference and Obsidian image forms should become "
                          "Edit Mode block previews"));
 
+    // Covers remain rendered while typing adjacent prose, but reveal their
+    // source when entered or selected. Verify actual pixels and text geometry,
+    // not just the highlighter's reservation metadata.
+    {
+        const QString song = QStringLiteral(
+            "- ![Album cover|64x64](wide.png) Song — Artist");
+        editor.resize(640, 320);
+        editor.setPlainText(song);
+        editor.moveCursor(QTextCursor::End);
+        const QTextBlock row = editor.document()->firstBlock();
+        settleLayout(editor, row);
+        auto renderedCover = [&editor, expectedEditImagePixel] {
+            QImage rendered(editor.viewport()->size(),
+                            QImage::Format_ARGB32_Premultiplied);
+            rendered.fill(Qt::transparent);
+            editor.viewport()->render(&rendered);
+            return containsPixel(rendered, expectedEditImagePixel);
+        };
+        QTextCursor title(row);
+        title.setPosition(song.indexOf(QStringLiteral("Song")));
+        QTextCursor cover(row);
+        cover.setPosition(2);
+        check(renderedCover() && row.layout()->lineCount() == 1 &&
+                  editor.cursorRect(title).left() >=
+                      editor.cursorRect(cover).left() + 64 &&
+                  row.layout()->lineAt(0).height() >= 64,
+              QStringLiteral("a list cover should render beside editable song text"));
+        editor.insertPlainText(QStringLiteral(" name"));
+        settleLayout(editor, row);
+        check(renderedCover() && editor.toPlainText() == song + " name",
+              QStringLiteral("typing beside a cover should keep its preview and source"));
+        editor.undo();
+        check(editor.toPlainText() == song,
+              QStringLiteral("inline image formatting must not intercept undo"));
+        editor.setTextCursor(cover);
+        settleLayout(editor, row);
+        check(!renderedCover(),
+              QStringLiteral("entering the image token should reveal its source"));
+        editor.moveCursor(QTextCursor::End);
+        settleLayout(editor, row);
+        check(renderedCover(),
+              QStringLiteral("leaving the image token should restore the preview"));
+        editor.selectAll();
+        check(!renderedCover() && editor.textCursor().selectedText() == song,
+              QStringLiteral("selecting an inline cover should expose copyable Markdown"));
+        editor.moveCursor(QTextCursor::End);
+        editor.setReadMode(true);
+        check(renderedCover() && editor.toPlainText() == song,
+              QStringLiteral("Read Mode should retain inline covers and source"));
+        editor.setReadMode(false);
+        editor.resize(220, 320);
+        settleLayout(editor, editor.document()->firstBlock());
+        check(renderedCover() &&
+                  editor.document()->firstBlock().layout()->lineCount() > 1,
+              QStringLiteral("a cover should survive wrapping in a narrow editor"));
+
+        const QStringList dialects = {
+            QStringLiteral("![Album](wide.png)"),
+            QStringLiteral("![[wide.png|64]]"),
+            QStringLiteral("![Album][cover]")};
+        editor.resize(640, 320);
+        for (const QString &image : dialects) {
+            editor.setPlainText(image + QStringLiteral(" Song — Artist\n"
+                                                       "[cover]: wide.png"));
+            editor.moveCursor(QTextCursor::End);
+            settleLayout(editor, editor.document()->firstBlock());
+            check(renderedCover() && editor.document()->firstBlock()
+                      .layout()->lineAt(0).height() < 110,
+                  QStringLiteral("inline image dialect should use a thumbnail: ") + image);
+        }
+        const QStringList literalImages = {
+            QStringLiteral("`![Album](wide.png)` Song"),
+            QStringLiteral("<!-- ![Album](wide.png) --> Song"),
+            QStringLiteral("```\n![Album](wide.png) Song\n```"),
+            QStringLiteral("\\![Album](wide.png) Song"),
+            QStringLiteral("![Missing](missing.png) Song")};
+        for (const QString &literal : literalImages) {
+            editor.setPlainText(literal + QStringLiteral("\nafter"));
+            editor.moveCursor(QTextCursor::End);
+            settleLayout(editor, editor.document()->firstBlock());
+            check(!renderedCover(),
+                  QStringLiteral("literal or missing image must not paint a cover: ") + literal);
+        }
+        editor.resize(520, 600);
+        editor.setPlainText(expandedImageSource);
+        editor.moveCursor(QTextCursor::End);
+        settleLayout(editor, editor.document()->firstBlock());
+    }
+
     QTextDocument expandedReadDocument;
     MarkdownReadRenderer::Options expandedReadOptions;
     expandedReadOptions.baseFont = editor.font();

@@ -581,6 +581,10 @@ MarkdownEditor::MarkdownEditor(QWidget *parent) : QTextEdit(parent) {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     m_highlighter = new MarkdownHighlighter(document());
+    m_highlighter->setInlineImageSizer([this](const MarkdownImage::Image &image) {
+        return m_readObjectRenderer->intrinsicSize(
+            m_sourceDocument, 0, inlineImageFormat(image));
+    });
     m_spellChecker = new SpellChecker(this);
     m_highlighter->setSpellChecker(m_spellChecker);
 
@@ -818,8 +822,10 @@ void MarkdownEditor::setImagePaths(const QString &basePath,
     // MainWindow updates paths immediately before setPlainText when opening a
     // note; that single source replacement rebuilds Read Mode with the new
     // paths. Avoid parsing the old note once here and the new note again there.
-    if (!m_readMode)
+    if (!m_readMode) {
+        m_highlighter->rehighlight();
         applyImagePreviewFormats();
+    }
     viewport()->update();
 }
 
@@ -1440,6 +1446,17 @@ QSize MarkdownEditor::imageSourceSize(const QString &path) const {
     while (m_imageSizeCacheOrder.size() > MaxImageMetadataEntries)
         m_imageSizeCache.remove(m_imageSizeCacheOrder.takeFirst());
     return size;
+}
+
+QTextCharFormat MarkdownEditor::inlineImageFormat(
+    const MarkdownImage::Image &image) const {
+    const QString path = ContentSecurity::resolveLocalImage(
+        image.target, m_imageBasePath, m_imageRootPath);
+    return MarkdownReadObjectRenderer::imageFormat(
+        font(), path, image.target, image.description, image.title,
+        imageSourceSize(path), viewport()->width(),
+        qBound(qreal(120), viewport()->height() * 0.62, qreal(520)),
+        image.dimensions.width, image.dimensions.height, true);
 }
 
 QSizeF MarkdownEditor::imagePreviewSize(const QTextBlock &block) const {
@@ -5096,6 +5113,12 @@ void MarkdownEditor::resizeEvent(QResizeEvent *event) {
     scheduleScrollPastEndRangeUpdate();
     if (!m_readMode) {
         applyImagePreviewFormats(); // source media rows depend on viewport width
+        // Inline image reservations also depend on the available column width.
+        for (QTextBlock block = document()->firstBlock(); block.isValid();
+             block = block.next()) {
+            if (block.text().contains(QLatin1Char('!')))
+                m_highlighter->rehighlightBlock(block);
+        }
     } else if (!m_readResizeQueued) {
         m_readResizeQueued = true;
         QTimer::singleShot(0, this, [this] {
@@ -5472,6 +5495,44 @@ void MarkdownEditor::paintEvent(QPaintEvent *event) {
             imgPainter.setClipRect(imageRect.adjusted(1, 1, -1, -1));
             imgPainter.drawPixmap(topLeft, pm);
             imgPainter.setClipping(false);
+        }
+    }
+
+    // Inline previews use the exact slot reserved by the highlighter, including
+    // on the active line while the caret is outside the image's source token.
+    {
+        QPainter painter(viewport());
+        painter.setRenderHint(QPainter::Antialiasing);
+        for (QTextBlock block = firstVisibleTextBlock(); block.isValid();
+             block = block.next()) {
+            if (!block.isVisible() || !block.layout())
+                continue;
+            const QRectF geo = blockViewportRect(block);
+            if (geo.top() > event->rect().bottom())
+                break;
+            if (geo.bottom() < event->rect().top())
+                continue;
+            for (const auto &range : block.layout()->formats()) {
+                if (!range.format.hasProperty(
+                        MarkdownHighlighter::InlineImageSizeProperty))
+                    continue;
+                const auto image = MarkdownImage::imageAt(
+                    commentMaskedBlockText(block), range.start, m_imageReferences);
+                const QTextLine line =
+                    block.layout()->lineForTextPosition(range.start);
+                if (!image.valid || !line.isValid())
+                    continue;
+                const QSizeF size = range.format.property(
+                    MarkdownHighlighter::InlineImageSizeProperty).toSizeF();
+                const qreal x1 = line.cursorToX(range.start);
+                const qreal x2 = line.cursorToX(range.start + 1);
+                const QRectF rect(geo.left() + qMin(x1, x2),
+                                  geo.top() + line.y() +
+                                      (line.height() - size.height()) / 2,
+                                  size.width(), size.height());
+                m_readObjectRenderer->drawObject(&painter, rect, document(),
+                    block.position() + range.start, inlineImageFormat(image));
+            }
         }
     }
 

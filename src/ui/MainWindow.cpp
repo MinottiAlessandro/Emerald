@@ -5608,11 +5608,9 @@ void MainWindow::insertImageMarkdownLines(const QStringList &lines) {
     if (c.position() < m_editor->firstContentPosition())
         c.setPosition(m_editor->firstContentPosition());
 
-    QString insertion = lines.join(QLatin1Char('\n'));
-    if (!c.atBlockStart())
-        insertion.prepend(QLatin1Char('\n'));
-    if (!c.atBlockEnd())
-        insertion.append(QLatin1Char('\n'));
+    // Attach at the caret so covers can be followed by song/artist text, also
+    // inside list items. A space leaves the caret outside the image token.
+    const QString insertion = lines.join(QLatin1Char(' ')) + QLatin1Char(' ');
 
     c.beginEditBlock();
     c.insertText(insertion);

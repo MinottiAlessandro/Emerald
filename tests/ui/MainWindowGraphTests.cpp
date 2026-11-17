@@ -2029,6 +2029,61 @@ void testCustomThemes() {
   AppTheme::apply(*qApp, AppTheme::Id::Dark);
 }
 
+void testInlineImageInsertion() {
+  QTemporaryDir vault;
+  const QString note = vault.filePath(QStringLiteral("Songs.md"));
+  const QString original = QStringLiteral("- Song — Artist");
+  check(vault.isValid() && writeFile(note, original),
+        QStringLiteral("inline image fixture exists"));
+  QSettings settings;
+  settings.clear();
+  settings.setValue(QStringLiteral("lastVault"), vault.path());
+  settings.setValue(QStringLiteral("lastNote"), note);
+  settings.sync();
+  MainWindow window;
+  window.show();
+  auto *editor = window.findChild<MarkdownEditor *>(QStringLiteral("editor"));
+  check(editor && waitUntil([&] { return editor->toPlainText() == original; }),
+        QStringLiteral("song note opens for inline insertion"));
+  if (!editor)
+    return;
+  QTextCursor cursor(editor->document());
+  cursor.setPosition(2);
+  editor->setTextCursor(cursor);
+  QImage cover(32, 32, QImage::Format_ARGB32_Premultiplied);
+  cover.fill(Qt::magenta);
+  QMetaObject::invokeMethod(editor, "imagePasted", Qt::DirectConnection,
+                            Q_ARG(QImage, cover));
+  const QString pasted = editor->toPlainText();
+  check(pasted.startsWith(QStringLiteral("- ![")) &&
+            pasted.endsWith(QStringLiteral(") Song — Artist")) &&
+            !pasted.contains(QLatin1Char('\n')) &&
+            editor->textCursor().position() == pasted.indexOf(QStringLiteral("Song")),
+        QStringLiteral("pasting an image keeps the list and following text on one line"));
+  editor->insertPlainText(QStringLiteral("Favourite "));
+  check(editor->toPlainText().endsWith(QStringLiteral(" Favourite Song — Artist")),
+        QStringLiteral("typing can continue immediately after the inserted cover"));
+  editor->undo();
+  editor->undo();
+  check(editor->toPlainText() == original,
+        QStringLiteral("image insertion is a single undoable source edit"));
+
+  const QString coverPath = vault.filePath(QStringLiteral("cover.png"));
+  check(cover.save(coverPath), QStringLiteral("dropped image fixture exists"));
+  cursor = QTextCursor(editor->document());
+  cursor.setPosition(2);
+  editor->setTextCursor(cursor);
+  QMetaObject::invokeMethod(editor, "imageFilesInserted", Qt::DirectConnection,
+                            Q_ARG(QStringList, QStringList{coverPath}));
+  check(editor->toPlainText().startsWith(QStringLiteral("- ![")) &&
+            editor->toPlainText().endsWith(QStringLiteral(") Song — Artist")) &&
+            !editor->toPlainText().contains(QLatin1Char('\n')),
+        QStringLiteral("file image insertion also preserves the surrounding line"));
+  window.close();
+  QApplication::processEvents();
+  settings.clear();
+}
+
 void testStandaloneFileSession() {
   QTemporaryDir previousVault;
   QTemporaryDir files;
@@ -2375,6 +2430,7 @@ int main(int argc, char **argv) {
   testReleaseChannelPreference();
   testThemePreference();
   testCustomThemes();
+  testInlineImageInsertion();
   testStandaloneFileSession();
   testWhatsNewAfterUpdate();
   testNonModalDialogsAndUpdateProgress();

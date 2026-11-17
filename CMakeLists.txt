@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Emerald VERSION 2.3.0 LANGUAGES CXX)
+project(Emerald VERSION 2.3.1 LANGUAGES CXX)
 
 # Native package metadata stays numeric, while development builds may append a
 # SemVer prerelease suffix to the version shown by Emerald and its updater.

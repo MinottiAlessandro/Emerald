@@ -212,6 +212,7 @@ private:
     QString resolvedImagePath(const QTextBlock &block) const;
     QSize imageSourceSize(const QString &path) const;
     QSizeF imagePreviewSize(const QTextBlock &block) const;
+    QTextCharFormat inlineImageFormat(const MarkdownImage::Image &image) const;
     qreal imagePreviewContentHeight(const QTextBlock &block) const;
     QRectF imagePreviewArea(const QTextBlock &block) const;
     void applyImagePreviewFormats();

@@ -6,6 +6,8 @@
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
+#include <QSizeF>
+#include <functional>
 
 // Inline live-preview highlighter.
 //
@@ -51,6 +53,12 @@ public:
     // MarkdownEditor refreshes this compact lookup once per source edit so
     // individual block highlights stay incremental.
     void setImageReferences(const MarkdownImage::References &references);
+
+    // The editor owns local-file resolution and viewport-aware image sizing.
+    void setInlineImageSizer(std::function<QSizeF(const MarkdownImage::Image &)> sizer) {
+        m_inlineImageSizer = std::move(sizer);
+    }
+    static constexpr int InlineImageSizeProperty = QTextFormat::UserProperty + 380;
 
     // The base point size headings scale from; call when the editor font size
     // changes so heading sizes track it.
@@ -132,8 +140,8 @@ private:
     void applyInternetLinks(const QString &text, QList<bool> &consumed,
                             bool reveal);
     // All image dialects share MarkdownImage's parser. Standalone images are
-    // handled earlier as block previews; this pass keeps inline image source
-    // compact without pretending it is an ordinary clickable link.
+    // handled earlier as block previews; inline images reserve a painted slot
+    // unless the caret is inside their token or the line is selected.
     void applyImages(const QString &text, QList<bool> &consumed, bool reveal);
     // Inline math $…$: on the active line dim the $ and tint the raw body so it
     // stays editable; off it, hide the source but reserve the formula's rendered
@@ -183,6 +191,7 @@ private:
     bool m_suspended = false;
     class SpellChecker *m_spellChecker = nullptr;
     MarkdownImage::References m_imageReferences;
+    std::function<QSizeF(const MarkdownImage::Image &)> m_inlineImageSizer;
 
     QTextCharFormat m_heading;
     QTextCharFormat m_bold;

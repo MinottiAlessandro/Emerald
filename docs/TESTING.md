@@ -120,7 +120,10 @@ move the caret back onto the line, confirm the raw markers reappear.
 - [ ] Pasting image data saves a PNG under `_attachments`; pasting or dropping
       one or more image files inserts each readable image and skips invalid files.
 - [ ] A standalone local image keeps its aspect ratio and grows/shrinks with the editor viewport without exceeding the viewport-height cap.
-- [ ] Moving the caret onto an image line reveals compact editable Markdown source; moving away restores the preview without an undo step.
+- [ ] Moving the caret onto a standalone image line reveals compact editable Markdown source; moving away restores the preview without an undo step.
+- [ ] Insert, paste, or drop a cover after `- ` or `- [ ] ` and type a song title and artist beside it. It stays on the same line and remains rendered while editing adjacent text.
+- [ ] Inline covers default to thumbnails up to 96 pixels in both modes. Check explicit sizes with `![Cover|64](cover.png)` and `![[cover.png|64]]`, reference images, multiple covers on a line, and narrow wrapped lists.
+- [ ] Move into an inline image token or select its line to reveal its Markdown; leaving the token restores the cover. Copy, undo, redo, save, and reopen preserve the source.
 - [ ] A missing image shows a bounded fallback card with its target instead of leaving a large blank area.
 
 ## 7b. HTML comments

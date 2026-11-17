@@ -172,12 +172,16 @@ qreal MarkdownReadObjectRenderer::availableWidth(QTextDocument *document,
 QSizeF MarkdownReadObjectRenderer::fittedImageSize(const QTextFormat &format,
                                                    qreal width) {
     const QSize source = format.property(SourceSizeProperty).toSize();
-    const qreal maxHeight =
+    qreal maxHeight =
         qMax(qreal(72.0), format.property(MaxHeightProperty).toDouble());
     const int requestedWidth =
         format.intProperty(RequestedWidthProperty);
     const int requestedHeight =
         format.intProperty(RequestedHeightProperty);
+    if (format.boolProperty(InlinePlacementProperty) && requestedWidth <= 0) {
+        width = qMin(width, qreal(96.0));
+        maxHeight = qMin(maxHeight, qreal(96.0));
+    }
     QSizeF preferred;
     if (requestedWidth > 0) {
         qreal height = requestedHeight;
